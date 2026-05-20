@@ -1,0 +1,249 @@
+:root {
+  font-family: -apple-system, "Segoe UI", "Inter", sans-serif;
+  font-size: 14px;
+  color: #e6e6e6;
+  background: #0e0e0e;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body, html, #root {
+  margin: 0;
+  background: #0e0e0e;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 540px;
+  margin: 0 auto;
+  padding: 32px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.empty {
+  color: #555;
+  text-align: center;
+  padding: 80px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #1c1c1c;
+  padding-bottom: 16px;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+.status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #555;
+  transition: background 200ms ease;
+}
+
+.status-listening .dot { background: #5ec8c0; box-shadow: 0 0 0 4px rgba(94, 200, 192, 0.15); }
+.status-processing .dot,
+.status-injecting .dot { background: #d4a657; }
+.status-done .dot { background: #5ec8c0; }
+.status-error .dot { background: #d46b6b; }
+
+section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+section h3 {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+input[type="password"], input[type="text"] {
+  flex: 1;
+  background: #161616;
+  color: #e6e6e6;
+  border: 1px solid #262626;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+input[type="password"]:focus, input[type="text"]:focus {
+  border-color: #5ec8c0;
+}
+
+button {
+  background: #1a1a1a;
+  color: #e6e6e6;
+  border: 1px solid #262626;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: #5ec8c0;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: #5ec8c0;
+  color: #0e0e0e;
+  border-color: #5ec8c0;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #6ed5cd;
+  border-color: #6ed5cd;
+}
+
+.muted { color: #8a8a8a; margin: 0; }
+.small { font-size: 11px; }
+.ok { color: #5ec8c0; font-size: 12px; margin: 0; }
+.err { color: #d46b6b; font-size: 12px; margin: 0; word-break: break-word; }
+
+a { color: #5ec8c0; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+kbd {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  color: #d0d0d0;
+}
+
+.modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mode {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid #1c1c1c;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.mode:hover { border-color: #2a2a2a; }
+.mode.selected { border-color: #5ec8c0; background: rgba(94, 200, 192, 0.05); }
+
+.mode input { margin-top: 3px; accent-color: #5ec8c0; }
+
+.mode-label { font-weight: 500; font-size: 13px; }
+.mode-hint { font-size: 12px; color: #8a8a8a; margin-top: 2px; }
+
+.hotkey-row {
+  align-items: center;
+}
+
+.hotkey-display {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  background: #161616;
+  border: 1px solid #262626;
+  border-radius: 6px;
+  padding: 9px 12px;
+  min-height: 38px;
+}
+
+.plus {
+  color: #555;
+  margin: 0 2px;
+  font-size: 12px;
+}
+
+footer {
+  margin-top: auto;
+  border-top: 1px solid #1c1c1c;
+  padding-top: 12px;
+  text-align: center;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.modal {
+  background: #141414;
+  border: 1px solid #262626;
+  border-radius: 10px;
+  padding: 24px;
+  max-width: 420px;
+  width: calc(100% - 48px);
+}
+
+.modal h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modal p {
+  margin: 0 0 12px;
+  line-height: 1.5;
+  font-size: 13px;
+  color: #c8c8c8;
+}
+
+.modal .primary {
+  margin-top: 8px;
+}
