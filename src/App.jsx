@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import HomeView from "./views/HomeView.jsx";
 import SettingsView from "./views/SettingsView.jsx";
+import DictionaryView from "./views/DictionaryView.jsx";
 import "./App.css";
 
 const ICONS = {
@@ -70,7 +71,7 @@ const ICONS = {
 const SECTIONS = [
   { id: "home", label: "Home", working: true },
   { id: "insights", label: "Insights", working: false },
-  { id: "dictionary", label: "Dictionary", working: false },
+  { id: "dictionary", label: "Dictionary", working: true },
   { id: "snippets", label: "Snippets", working: false },
   { id: "transforms", label: "Transforms", working: false },
   { id: "style", label: "Style", working: false },
@@ -150,7 +151,8 @@ function App() {
         {section === "settings" && (
           <SettingsView config={config} updateConfig={updateConfig} />
         )}
-        {!["home", "settings"].includes(section) && <ComingSoon id={section} />}
+        {section === "dictionary" && <DictionaryView />}
+        {!["home", "settings", "dictionary"].includes(section) && <ComingSoon id={section} />}
       </main>
     </div>
   );

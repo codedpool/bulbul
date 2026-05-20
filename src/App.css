@@ -587,6 +587,163 @@ kbd {
   transform: translateX(16px);
 }
 
+/* ─────────── Dictionary ─────────── */
+
+.add-entry {
+  background: #111;
+  border: 1px solid #1c1c1c;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.add-entry-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-entry-row input[type="text"] {
+  flex: 1;
+}
+
+.arrow {
+  color: #5a5a5a;
+  font-size: 13px;
+  padding: 0 2px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.case-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: #161616;
+  border: 1px solid #262626;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #6e6e6e;
+  font-size: 11px;
+  font-weight: 600;
+  user-select: none;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.case-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.case-toggle:has(input:checked) {
+  border-color: #5ec8c0;
+  background: rgba(94, 200, 192, 0.10);
+  color: #5ec8c0;
+}
+
+.entries-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.entries-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.entries {
+  display: flex;
+  flex-direction: column;
+}
+
+.entry-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid #161616;
+  font-size: 13px;
+}
+
+.entry-row:first-child {
+  border-top: none;
+}
+
+.entry-from {
+  color: #c8c8c8;
+  font-weight: 500;
+  min-width: 110px;
+}
+
+.entry-to {
+  color: #5ec8c0;
+  font-weight: 500;
+  flex: 1;
+}
+
+.entry-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #6e6e6e;
+  font-size: 11px;
+}
+
+.hits {
+  font-variant-numeric: tabular-nums;
+}
+
+.entry-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #8a8a8a;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.icon-btn:hover {
+  background: #1a1a1a;
+  color: #e6e6e6;
+  border-color: #262626;
+}
+
+.icon-btn.danger:hover {
+  color: #d46b6b;
+  border-color: rgba(212, 107, 107, 0.30);
+}
+
+.small-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.entry-row.editing {
+  background: rgba(94, 200, 192, 0.04);
+}
+
+.entry-row.editing input[type="text"] {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
 /* ─────────── Privacy modal ─────────── */
 
 .modal-overlay {
