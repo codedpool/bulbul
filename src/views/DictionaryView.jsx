@@ -1,17 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 export default function DictionaryView() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [draftFrom, setDraftFrom] = useState("");
-  const [draftTo, setDraftTo] = useState("");
-  const [draftCase, setDraftCase] = useState(false);
-  const [draftError, setDraftError] = useState("");
+  const [search, setSearch] = useState("");
+  const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [editFrom, setEditFrom] = useState("");
-  const [editTo, setEditTo] = useState("");
-  const [editCase, setEditCase] = useState(false);
 
   useEffect(() => { load(); }, []);
 
@@ -26,175 +21,244 @@ export default function DictionaryView() {
     }
   }
 
-  async function add() {
-    setDraftError("");
-    const from = draftFrom.trim();
-    const to = draftTo.trim();
-    if (!from || !to) {
-      setDraftError("Both fields are required.");
-      return;
-    }
-    try {
-      await invoke("add_dictionary_entry", {
-        fromWord: from,
-        toWord: to,
-        caseSensitive: draftCase,
-      });
-      setDraftFrom("");
-      setDraftTo("");
-      setDraftCase(false);
-      await load();
-    } catch (e) {
-      setDraftError(String(e));
-    }
+  async function addEntry(payload) {
+    await invoke("add_dictionary_entry", {
+      fromWord: payload.fromWord,
+      toWord: payload.toWord,
+      caseSensitive: payload.caseSensitive,
+    });
+    setAdding(false);
+    await load();
   }
 
-  function startEdit(entry) {
-    setEditingId(entry.id);
-    setEditFrom(entry.from_word);
-    setEditTo(entry.to_word);
-    setEditCase(entry.case_sensitive);
-  }
-
-  function cancelEdit() {
+  async function saveEdit(id, payload) {
+    await invoke("update_dictionary_entry", {
+      id,
+      fromWord: payload.fromWord,
+      toWord: payload.toWord,
+      caseSensitive: payload.caseSensitive,
+    });
     setEditingId(null);
-  }
-
-  async function saveEdit() {
-    try {
-      await invoke("update_dictionary_entry", {
-        id: editingId,
-        fromWord: editFrom,
-        toWord: editTo,
-        caseSensitive: editCase,
-      });
-      setEditingId(null);
-      await load();
-    } catch (e) {
-      alert(String(e));
-    }
+    await load();
   }
 
   async function remove(id) {
-    try {
-      await invoke("delete_dictionary_entry", { id });
-      await load();
-    } catch (e) {
-      alert(String(e));
-    }
+    await invoke("delete_dictionary_entry", { id });
+    await load();
   }
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter(
+      (e) =>
+        e.from_word.toLowerCase().includes(q) ||
+        e.to_word.toLowerCase().includes(q),
+    );
+  }, [entries, search]);
 
   return (
     <div className="page dictionary-page">
-      <header className="page-header">
-        <h1>Dictionary</h1>
-        <p className="muted small">
-          Replace transcribed words automatically. Applied after Groq cleanup, before injection. Case-insensitive by default.
-        </p>
+      <header className="page-header dictionary-header">
+        <div>
+          <h1>Dictionary</h1>
+          <p className="muted small">
+            Names, brands, jargon — Bulbul passes these to Whisper as a hint and substitutes them after transcription.
+          </p>
+        </div>
+        <button
+          className="primary"
+          onClick={() => { setEditingId(null); setAdding(true); }}
+        >
+          <PlusIcon /> Add new
+        </button>
       </header>
 
-      <section className="add-entry">
-        <div className="add-entry-row">
+      <div className="dict-toolbar">
+        <div className="search-input">
+          <SearchIcon />
           <input
             type="text"
-            placeholder="when I say..."
-            value={draftFrom}
-            onChange={(e) => { setDraftFrom(e.target.value); setDraftError(""); }}
-            onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+            placeholder="Search entries…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             spellCheck={false}
           />
-          <span className="arrow">→</span>
-          <input
-            type="text"
-            placeholder="...write it like this"
-            value={draftTo}
-            onChange={(e) => { setDraftTo(e.target.value); setDraftError(""); }}
-            onKeyDown={(e) => { if (e.key === "Enter") add(); }}
-            spellCheck={false}
-          />
-          <label className="case-toggle" title="Match case exactly">
-            <input
-              type="checkbox"
-              checked={draftCase}
-              onChange={(e) => setDraftCase(e.target.checked)}
-            />
-            <span>Aa</span>
-          </label>
-          <button className="primary" onClick={add} disabled={!draftFrom.trim() || !draftTo.trim()}>
-            Add
-          </button>
+          {search && (
+            <button className="clear-search" onClick={() => setSearch("")} aria-label="Clear search">
+              ×
+            </button>
+          )}
         </div>
-        {draftError && <p className="err">{draftError}</p>}
-      </section>
+        <div className="dict-meta">
+          {filtered.length} of {entries.length}
+        </div>
+      </div>
 
-      <section className="entries-section">
-        <div className="entries-header">
-          <h3>Entries</h3>
-          <span className="muted small">
-            {entries.length} {entries.length === 1 ? "entry" : "entries"}
-          </span>
-        </div>
+      <div className="dict-entries">
+        {adding && (
+          <EntryForm
+            initial={{ from_word: "", to_word: "", case_sensitive: false }}
+            onSave={addEntry}
+            onCancel={() => setAdding(false)}
+          />
+        )}
 
         {loading ? (
           <div className="empty-state"><p className="muted">Loading…</p></div>
-        ) : entries.length === 0 ? (
+        ) : filtered.length === 0 && !adding ? (
           <div className="empty-state">
-            <p>No dictionary entries yet. Add one above.</p>
+            <p>{search ? "No matches." : "No dictionary entries yet. Click \"Add new\" to start."}</p>
           </div>
         ) : (
-          <div className="entries">
-            {entries.map((e) => editingId === e.id ? (
-              <div key={e.id} className="entry-row editing">
-                <input
-                  type="text"
-                  value={editFrom}
-                  onChange={(ev) => setEditFrom(ev.target.value)}
-                  onKeyDown={(ev) => { if (ev.key === "Enter") saveEdit(); if (ev.key === "Escape") cancelEdit(); }}
-                  autoFocus
-                />
-                <span className="arrow">→</span>
-                <input
-                  type="text"
-                  value={editTo}
-                  onChange={(ev) => setEditTo(ev.target.value)}
-                  onKeyDown={(ev) => { if (ev.key === "Enter") saveEdit(); if (ev.key === "Escape") cancelEdit(); }}
-                />
-                <label className="case-toggle" title="Match case exactly">
-                  <input
-                    type="checkbox"
-                    checked={editCase}
-                    onChange={(ev) => setEditCase(ev.target.checked)}
-                  />
-                  <span>Aa</span>
-                </label>
-                <div className="entry-actions">
-                  <button className="primary small-btn" onClick={saveEdit}>Save</button>
-                  <button className="small-btn" onClick={cancelEdit}>Cancel</button>
-                </div>
-              </div>
-            ) : (
-              <div key={e.id} className="entry-row">
-                <span className="entry-from">{e.from_word}</span>
-                <span className="arrow">→</span>
-                <span className="entry-to">{e.to_word}</span>
-                <span className="entry-meta">
-                  {e.case_sensitive && <span className="badge muted-badge">case</span>}
-                  <span className="hits">{e.hit_count} {e.hit_count === 1 ? "use" : "uses"}</span>
-                </span>
-                <div className="entry-actions">
-                  <button className="icon-btn" onClick={() => startEdit(e)} title="Edit">
-                    <EditIcon />
-                  </button>
-                  <button className="icon-btn danger" onClick={() => remove(e.id)} title="Delete">
-                    <TrashIcon />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+          filtered.map((e) => editingId === e.id ? (
+            <EntryForm
+              key={e.id}
+              initial={e}
+              onSave={(payload) => saveEdit(e.id, payload)}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <EntryRow
+              key={e.id}
+              entry={e}
+              onEdit={() => { setAdding(false); setEditingId(e.id); }}
+              onDelete={() => remove(e.id)}
+            />
+          ))
         )}
-      </section>
+      </div>
     </div>
+  );
+}
+
+function EntryRow({ entry, onEdit, onDelete }) {
+  const isSubstitution = entry.from_word.toLowerCase() !== entry.to_word.toLowerCase();
+  return (
+    <div className="dict-row">
+      <div className="dict-row-main">
+        {isSubstitution ? (
+          <>
+            <span className="dict-from">{entry.from_word}</span>
+            <span className="dict-arrow">→</span>
+            <span className="dict-term">{entry.to_word}</span>
+          </>
+        ) : (
+          <span className="dict-term">{entry.to_word}</span>
+        )}
+        {entry.case_sensitive && <span className="dict-case-tag">Aa</span>}
+      </div>
+      <div className="dict-row-meta">
+        <span className="dict-hits">{entry.hit_count} {entry.hit_count === 1 ? "use" : "uses"}</span>
+        <div className="dict-row-actions">
+          <button className="icon-btn" onClick={onEdit} aria-label="Edit"><EditIcon /></button>
+          <button className="icon-btn danger" onClick={onDelete} aria-label="Delete"><TrashIcon /></button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EntryForm({ initial, onSave, onCancel }) {
+  const [term, setTerm] = useState(initial.to_word || "");
+  const [showFrom, setShowFrom] = useState(
+    !!initial.from_word && initial.from_word.toLowerCase() !== (initial.to_word || "").toLowerCase(),
+  );
+  const [fromWord, setFromWord] = useState(initial.from_word || "");
+  const [caseSensitive, setCaseSensitive] = useState(!!initial.case_sensitive);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    const t = term.trim();
+    if (!t) {
+      setError("Term is required.");
+      return;
+    }
+    const payload = {
+      toWord: t,
+      fromWord: showFrom && fromWord.trim() ? fromWord.trim() : t,
+      caseSensitive,
+    };
+    try {
+      await onSave(payload);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  function onKey(e) {
+    if (e.key === "Enter") { e.preventDefault(); submit(); }
+    if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+  }
+
+  return (
+    <div className="dict-form">
+      <div className="dict-form-fields">
+        {showFrom && (
+          <>
+            <input
+              type="text"
+              placeholder="when I say..."
+              value={fromWord}
+              onChange={(e) => setFromWord(e.target.value)}
+              onKeyDown={onKey}
+              spellCheck={false}
+            />
+            <span className="dict-arrow">→</span>
+          </>
+        )}
+        <input
+          type="text"
+          placeholder={showFrom ? "...spell it like this" : "Term Bulbul should learn (e.g. \"Groq\", \"Romanch\")"}
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          onKeyDown={onKey}
+          autoFocus
+          spellCheck={false}
+        />
+        <label className="case-toggle" title="Match case exactly when substituting">
+          <input
+            type="checkbox"
+            checked={caseSensitive}
+            onChange={(e) => setCaseSensitive(e.target.checked)}
+          />
+          <span>Aa</span>
+        </label>
+      </div>
+
+      <div className="dict-form-actions">
+        <button
+          className={`text-btn ${showFrom ? "active" : ""}`}
+          onClick={() => setShowFrom((v) => !v)}
+          type="button"
+        >
+          {showFrom ? "− Remove auto-correct" : "+ Add an auto-correct"}
+        </button>
+        <div className="spacer" />
+        <button onClick={onCancel}>Cancel</button>
+        <button className="primary" onClick={submit} disabled={!term.trim()}>Save</button>
+      </div>
+
+      {error && <p className="err">{error}</p>}
+    </div>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
   );
 }
 
