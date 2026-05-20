@@ -14,14 +14,22 @@ html, body, #root {
   width: 100%;
   height: 100%;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 8px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 6px;
+  gap: 6px;
+}
+
+.pill-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .pill {
-  height: 28px;
-  width: 28px;
+  height: 16px;
+  width: 16px;
   background: rgba(14, 14, 14, 0.78);
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
@@ -32,10 +40,10 @@ html, body, #root {
   justify-content: center;
   gap: 0;
   padding: 0;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.02em;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
   overflow: hidden;
   transition:
     width 220ms cubic-bezier(0.22, 1, 0.36, 1),
@@ -46,19 +54,70 @@ html, body, #root {
 }
 
 .expanded .pill {
-  width: 224px;
-  height: 40px;
-  padding: 0 18px;
-  gap: 12px;
+  width: 96px;
+  height: 26px;
+  padding: 0 10px;
+  gap: 8px;
   background: rgba(14, 14, 14, 0.92);
 }
+
+.hovered.expanded .pill {
+  width: 70px;
+}
+
+.sat {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 7px;
+  background: rgba(14, 14, 14, 0.92);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: #e6e6e6;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), border-color 160ms ease, background 160ms ease;
+  opacity: 0;
+  transform: translateY(6px) scale(0.92);
+  animation: sat-in 200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes sat-in {
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.sat:hover {
+  border-color: rgba(94, 200, 192, 0.55);
+  background: rgba(20, 20, 20, 0.95);
+}
+
+.sat.open {
+  border-color: #5ec8c0;
+  background: rgba(94, 200, 192, 0.15);
+  color: #5ec8c0;
+}
+
+.lang-btn { font-variant-numeric: tabular-nums; }
+.lang-btn svg { display: block; }
+
+.polish-btn svg {
+  display: block;
+  color: #d4a657;
+}
+.polish-btn:hover svg { color: #ffd58a; }
 
 .pill-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  height: 18px;
   flex-shrink: 0;
 }
 
@@ -75,8 +134,8 @@ html, body, #root {
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.55);
   display: block;
@@ -88,11 +147,39 @@ html, body, #root {
   50%      { opacity: 0.85; transform: scale(1.15); }
 }
 
+.dots-row {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.dots-row span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  display: block;
+  animation: dots-pulse 1.6s ease-in-out infinite;
+}
+
+.dots-row span:nth-child(1) { animation-delay: 0s; }
+.dots-row span:nth-child(2) { animation-delay: 0.08s; }
+.dots-row span:nth-child(3) { animation-delay: 0.16s; }
+.dots-row span:nth-child(4) { animation-delay: 0.24s; }
+.dots-row span:nth-child(5) { animation-delay: 0.32s; }
+.dots-row span:nth-child(6) { animation-delay: 0.40s; }
+.dots-row span:nth-child(7) { animation-delay: 0.48s; }
+
+@keyframes dots-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.85); }
+  50%      { opacity: 0.95; transform: scale(1.0); }
+}
+
 .bars {
   display: flex;
   gap: 2px;
   align-items: center;
-  height: 16px;
+  height: 14px;
 }
 
 .bars span {
@@ -104,10 +191,10 @@ html, body, #root {
   transform-origin: center;
 }
 
-.bars span:nth-child(1) { animation-delay: -0.6s; height: 8px; }
-.bars span:nth-child(2) { animation-delay: -0.4s; height: 12px; }
-.bars span:nth-child(3) { animation-delay: -0.2s; height: 16px; }
-.bars span:nth-child(4) { animation-delay: 0s;    height: 10px; }
+.bars span:nth-child(1) { animation-delay: -0.6s; height: 6px; }
+.bars span:nth-child(2) { animation-delay: -0.4s; height: 10px; }
+.bars span:nth-child(3) { animation-delay: -0.2s; height: 14px; }
+.bars span:nth-child(4) { animation-delay: 0s;    height: 8px; }
 
 @keyframes bar {
   0%, 100% { transform: scaleY(0.45); }
@@ -115,8 +202,8 @@ html, body, #root {
 }
 
 .spinner {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border: 2px solid rgba(255, 255, 255, 0.12);
   border-top-color: #d4a657;
   border-radius: 50%;
@@ -128,7 +215,7 @@ html, body, #root {
 }
 
 .glyph {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1;
 }
@@ -141,3 +228,64 @@ html, body, #root {
 .pill-injecting .pill-label { color: #d4a657; }
 .pill-done .pill-label { color: #5ec8c0; }
 .pill-error .pill-label { color: #d46b6b; }
+
+.lang-dropdown {
+  width: 200px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: rgba(14, 14, 14, 0.94);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 4px 0;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  animation: dropdown-in 200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a2a transparent;
+}
+
+@keyframes dropdown-in {
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.lang-dropdown::-webkit-scrollbar { width: 6px; }
+.lang-dropdown::-webkit-scrollbar-track { background: transparent; }
+.lang-dropdown::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+
+.lang-option {
+  padding: 7px 14px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.lang-option:hover {
+  background: rgba(94, 200, 192, 0.10);
+}
+
+.lang-option.active {
+  background: rgba(94, 200, 192, 0.18);
+}
+
+.lang-option.active .lang-name { color: #5ec8c0; }
+
+.lang-code {
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: #888;
+  min-width: 28px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lang-option.active .lang-code { color: #5ec8c0; }
+
+.lang-name {
+  color: #c8c8c8;
+}
