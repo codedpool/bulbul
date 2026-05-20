@@ -290,6 +290,60 @@ fn get_recent_dictations(
 }
 
 #[tauri::command]
+fn get_insights_usage(state: tauri::State<'_, AppState>) -> Result<db::UsageStats, String> {
+    db::usage_stats(&state.db).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn get_voice_stats(state: tauri::State<'_, AppState>) -> Result<db::VoiceStats, String> {
+    let has_key = state.config.lock().has_api_key();
+    db::voice_stats(&state.db, has_key).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn refresh_voice_narrative(app: AppHandle) -> Result<db::VoiceStats, String> {
+    let state = app.state::<AppState>();
+    let cfg = state.config.lock().clone();
+    let db = state.db.clone();
+    if !cfg.has_api_key() {
+        return Err("Set your Groq API key in Settings first.".into());
+    }
+
+    // Gather a stats summary the model can reason about, plus recent samples.
+    let stats = db::voice_stats(&db, true).map_err(|e| format!("{e:#}"))?;
+    let mut summary_lines = Vec::<String>::new();
+    summary_lines.push(format!("Total words dictated: {}", stats.total_words));
+    if let Some(w) = &stats.most_used_word {
+        summary_lines.push(format!("Most used word: {}", w));
+    }
+    if let Some(w) = &stats.most_corrected_word {
+        summary_lines.push(format!("Most corrected word: {}", w));
+    }
+    if let Some(p) = &stats.catchphrase {
+        summary_lines.push(format!("Most repeated phrase: \"{}\"", p));
+    }
+    if let (Some(d), Some(h)) = (&stats.peak_day_name, &stats.peak_hour_label) {
+        summary_lines.push(format!("Peak time: {} at {}", d, h));
+    }
+    if let Some(app) = &stats.peak_app {
+        summary_lines.push(format!("Peak app: {}", app));
+    }
+    let stats_summary = summary_lines.join("\n");
+
+    let samples = db::voice_profile_context(&db).map_err(|e| format!("{e:#}"))?;
+
+    let (voice_narrative, peak_narrative) =
+        groq::generate_voice_profile(&cfg, &stats_summary, &samples)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+
+    db::save_voice_narrative(&db, &voice_narrative, &peak_narrative)
+        .map_err(|e| format!("{e:#}"))?;
+
+    db::voice_stats(&db, true).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 fn list_dictionary(state: tauri::State<'_, AppState>) -> Result<Vec<db::DictionaryEntry>, String> {
     db::list_dictionary(&state.db).map_err(|e| format!("{e:#}"))
 }
@@ -423,6 +477,9 @@ pub fn run() {
             set_overlay_height,
             get_home_stats,
             get_recent_dictations,
+            get_insights_usage,
+            get_voice_stats,
+            refresh_voice_narrative,
             list_dictionary,
             add_dictionary_entry,
             update_dictionary_entry,

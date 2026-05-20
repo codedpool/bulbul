@@ -217,6 +217,89 @@ pub async fn polish(cfg: &Config, text: &str) -> Result<String> {
     Ok(out.trim().to_string())
 }
 
+const VOICE_PROFILE_SYSTEM_PROMPT: &str = "You are writing a personalized 'voice profile' for a user of a voice dictation app called Bulbul.\n\
+\n\
+Write TWO short narrative blurbs (each 2-3 sentences), in second person (\"You...\"), describing:\n\
+1. voice_profile: the user's typical content, topics, and writing style\n\
+2. peak_blurb: what they tend to do during their peak time/app\n\
+\n\
+Be specific and friendly. Avoid generic phrases. Reference real apps and topics from the data.\n\
+\n\
+Return ONLY a JSON object, no preamble or markdown:\n\
+{\"voice_profile\": \"...\", \"peak_blurb\": \"...\"}";
+
+#[derive(Deserialize)]
+struct VoiceProfileResponse {
+    voice_profile: String,
+    peak_blurb: String,
+}
+
+pub async fn generate_voice_profile(
+    cfg: &Config,
+    stats_summary: &str,
+    samples: &str,
+) -> Result<(String, String)> {
+    if !cfg.has_api_key() {
+        return Err(anyhow!("Groq API key not set"));
+    }
+
+    let user_content = format!(
+        "Quick stats:\n{stats_summary}\n\nDictation samples:\n{samples}",
+        stats_summary = stats_summary,
+        samples = samples
+    );
+
+    let request = ChatRequest {
+        model: cfg.chat_model.as_str(),
+        messages: vec![
+            ChatMessage {
+                role: "system",
+                content: VOICE_PROFILE_SYSTEM_PROMPT.to_string(),
+            },
+            ChatMessage {
+                role: "user",
+                content: user_content,
+            },
+        ],
+        temperature: 0.4,
+    };
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{BASE_URL}/chat/completions"))
+        .bearer_auth(&cfg.groq_api_key)
+        .json(&request)
+        .send()
+        .await
+        .context("POST /chat/completions (voice profile)")?;
+
+    let status = resp.status();
+    let body = resp.text().await.context("reading voice profile body")?;
+    if !status.is_success() {
+        return Err(anyhow!("Groq voice {status}: {body}"));
+    }
+
+    let parsed: ChatResponse = serde_json::from_str(&body)
+        .with_context(|| format!("parsing voice profile body: {body}"))?;
+    let raw = parsed
+        .choices
+        .into_iter()
+        .next()
+        .map(|c| c.message.content)
+        .unwrap_or_default();
+
+    // Strip code fences if the model added them despite instructions.
+    let trimmed = raw.trim();
+    let trimmed = trimmed
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let parsed: VoiceProfileResponse = serde_json::from_str(trimmed)
+        .with_context(|| format!("parsing voice profile JSON: {trimmed}"))?;
+    Ok((parsed.voice_profile, parsed.peak_blurb))
+}
+
 /// Cheap call to confirm the API key works. Returns Ok(()) if Groq accepts it.
 pub async fn validate_key(api_key: &str) -> Result<()> {
     let client = reqwest::Client::new();

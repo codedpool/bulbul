@@ -35,7 +35,32 @@ CREATE TABLE IF NOT EXISTS dictionary (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dictionary_from
     ON dictionary(from_word COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS voice_profile (
+    id                  INTEGER PRIMARY KEY CHECK (id = 1),
+    voice_narrative     TEXT,
+    peak_narrative      TEXT,
+    last_generated_at   INTEGER,
+    last_word_count     INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO voice_profile (id, last_word_count) VALUES (1, 0);
 "#;
+
+const STOP_WORDS: &[&str] = &[
+    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been",
+    "being", "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "of", "in", "on", "at", "to",
+    "for", "with", "by", "from", "up", "about", "into", "through", "during", "before",
+    "after", "above", "below", "between", "i", "you", "he", "she", "it", "we", "they",
+    "me", "him", "her", "us", "them", "my", "your", "his", "its", "our", "their",
+    "this", "that", "these", "those", "what", "which", "who", "whom", "whose", "where",
+    "when", "why", "how", "all", "each", "every", "both", "few", "more", "most",
+    "other", "some", "such", "no", "not", "only", "own", "same", "so", "than", "too",
+    "very", "just", "as", "if", "any", "yes", "well", "okay", "ok", "yeah", "im",
+    "youre", "theyre", "weve", "ive", "dont", "doesnt", "didnt", "wont", "cant",
+    "isnt", "arent", "wasnt", "werent", "thats", "theres", "heres", "let", "lets",
+    "go", "going", "get", "got", "really", "actually", "basically", "kind", "sort",
+];
 
 const DEFAULT_DICTIONARY: &[(&str, &str)] = &[
     ("groq", "Groq"),
@@ -419,11 +444,527 @@ pub fn bump_dictionary_hits(db: &Db, hits: &[(i64, i64)]) -> Result<()> {
     Ok(())
 }
 
-fn compute_streak(conn: &Connection) -> i64 {
-    // Pull distinct local-date days (UTC for simplicity) from the activity log,
-    // walk backwards from today counting consecutive days.
+#[derive(Debug, Serialize)]
+pub struct AppCategoryUsage {
+    pub category: String,
+    pub count: i64,
+    pub percentage: f32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HeatmapDay {
+    pub date: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsageStats {
+    pub wpm: f32,
+    pub wpm_percentile: f32,
+    pub total_words: i64,
+    pub words_this_month: i64,
+    pub words_last_month: i64,
+    pub mom_change_pct: Option<f32>,
+    pub total_fixes: i64,
+    pub ai_fixes: i64,
+    pub dictionary_fixes: i64,
+    pub day_streak: i64,
+    pub longest_streak: i64,
+    pub total_apps_used: i64,
+    pub app_usage: Vec<AppCategoryUsage>,
+    pub heatmap: Vec<HeatmapDay>,
+}
+
+pub fn usage_stats(db: &Db) -> Result<UsageStats> {
+    let conn = db.lock();
+
+    let total_words: i64 = conn
+        .query_row("SELECT COALESCE(SUM(word_count), 0) FROM dictations", [], |r| r.get(0))
+        .unwrap_or(0);
+    let total_fixes: i64 = conn
+        .query_row("SELECT COALESCE(SUM(fix_count), 0) FROM dictations", [], |r| r.get(0))
+        .unwrap_or(0);
+    let dictionary_fixes: i64 = conn
+        .query_row("SELECT COALESCE(SUM(hit_count), 0) FROM dictionary", [], |r| r.get(0))
+        .unwrap_or(0);
+    let ai_fixes = (total_fixes - dictionary_fixes).max(0);
+
+    // WPM over all dictation duration.
+    let (words_all, ms_all): (i64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(word_count), 0), COALESCE(SUM(duration_ms), 0) FROM dictations",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or((0, 0));
+    let wpm = if ms_all > 0 {
+        (words_all as f64 / (ms_all as f64 / 60_000.0)) as f32
+    } else {
+        0.0
+    };
+
+    // Month-over-month words.
+    let words_this_month: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(word_count), 0) FROM dictations
+             WHERE date(ts, 'unixepoch') >= date('now', 'start of month')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let words_last_month: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(word_count), 0) FROM dictations
+             WHERE date(ts, 'unixepoch') >= date('now', 'start of month', '-1 month')
+               AND date(ts, 'unixepoch') <  date('now', 'start of month')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let mom_change_pct = if words_last_month > 0 {
+        Some((words_this_month - words_last_month) as f32 / words_last_month as f32 * 100.0)
+    } else if words_this_month > 0 {
+        None
+    } else {
+        Some(0.0)
+    };
+
+    let day_streak = compute_streak(&conn);
+    let longest_streak = compute_longest_streak(&conn);
+
+    // Distinct apps with at least one dictation.
+    let total_apps_used: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT foreground_app) FROM dictations WHERE foreground_app IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // Per-category dictation counts.
+    let app_usage = compute_app_usage(&conn);
+
+    // Heatmap: last 90 days by date.
+    let heatmap = compute_heatmap(&conn, 90);
+
+    Ok(UsageStats {
+        wpm,
+        wpm_percentile: wpm_percentile_estimate(wpm),
+        total_words,
+        words_this_month,
+        words_last_month,
+        mom_change_pct,
+        total_fixes,
+        ai_fixes,
+        dictionary_fixes,
+        day_streak,
+        longest_streak,
+        total_apps_used,
+        app_usage,
+        heatmap,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct VoiceStats {
+    pub most_used_word: Option<String>,
+    pub most_corrected_word: Option<String>,
+    pub catchphrase: Option<String>,
+    pub peak_day_name: Option<String>,
+    pub peak_hour_label: Option<String>,
+    pub peak_app: Option<String>,
+    pub peak_app_category: Option<String>,
+    pub voice_narrative: Option<String>,
+    pub peak_narrative: Option<String>,
+    pub last_generated_at: Option<i64>,
+    pub words_since_last_gen: i64,
+    pub min_words_to_refresh: i64,
+    pub total_words: i64,
+    pub has_api_key: bool,
+}
+
+const MIN_WORDS_BEFORE_REFRESH: i64 = 200;
+
+pub fn voice_stats(db: &Db, has_api_key: bool) -> Result<VoiceStats> {
+    let conn = db.lock();
+
+    let total_words: i64 = conn
+        .query_row("SELECT COALESCE(SUM(word_count), 0) FROM dictations", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    let texts = pull_cleaned_texts(&conn, 500);
+    let raw_pairs = pull_text_pairs(&conn, 500);
+
+    let most_used_word = top_meaningful_word(&texts);
+    let most_corrected_word = top_corrected_word(&raw_pairs);
+    let catchphrase = top_catchphrase(&texts);
+
+    let peak = conn
+        .query_row(
+            "SELECT
+                strftime('%w', ts, 'unixepoch', 'localtime') AS dow,
+                strftime('%H', ts, 'unixepoch', 'localtime') AS hour,
+                COUNT(*) AS n
+             FROM dictations
+             GROUP BY dow, hour
+             HAVING n > 0
+             ORDER BY n DESC
+             LIMIT 1",
+            [],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .ok();
+
+    let (peak_day_name, peak_hour_label, peak_app, peak_app_category) = match peak {
+        Some((dow, hour)) => {
+            let day = day_name(&dow).to_string();
+            let hour_label = format_hour(&hour);
+            let app = conn
+                .query_row(
+                    "SELECT foreground_app FROM dictations
+                     WHERE strftime('%w', ts, 'unixepoch', 'localtime') = ?
+                       AND strftime('%H', ts, 'unixepoch', 'localtime') = ?
+                       AND foreground_app IS NOT NULL
+                     GROUP BY foreground_app
+                     ORDER BY COUNT(*) DESC
+                     LIMIT 1",
+                    [&dow, &hour],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok();
+            let category = app.as_deref().map(|a| categorize_app(a).to_string());
+            (Some(day), Some(hour_label), app, category)
+        }
+        None => (None, None, None, None),
+    };
+
+    let (voice_narrative, peak_narrative, last_generated_at, last_word_count): (
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        i64,
+    ) = conn
+        .query_row(
+            "SELECT voice_narrative, peak_narrative, last_generated_at, last_word_count
+             FROM voice_profile WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap_or((None, None, None, 0));
+
+    let words_since_last_gen = (total_words - last_word_count).max(0);
+
+    Ok(VoiceStats {
+        most_used_word,
+        most_corrected_word,
+        catchphrase,
+        peak_day_name,
+        peak_hour_label,
+        peak_app,
+        peak_app_category,
+        voice_narrative,
+        peak_narrative,
+        last_generated_at,
+        words_since_last_gen,
+        min_words_to_refresh: MIN_WORDS_BEFORE_REFRESH,
+        total_words,
+        has_api_key,
+    })
+}
+
+pub fn save_voice_narrative(
+    db: &Db,
+    voice_narrative: &str,
+    peak_narrative: &str,
+) -> Result<()> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = db.lock();
+    let total_words: i64 = conn
+        .query_row("SELECT COALESCE(SUM(word_count), 0) FROM dictations", [], |r| r.get(0))
+        .unwrap_or(0);
+    conn.execute(
+        "UPDATE voice_profile SET
+            voice_narrative = ?,
+            peak_narrative = ?,
+            last_generated_at = ?,
+            last_word_count = ?
+         WHERE id = 1",
+        params![voice_narrative, peak_narrative, now, total_words],
+    )?;
+    Ok(())
+}
+
+pub fn voice_profile_context(db: &Db) -> Result<String> {
+    let conn = db.lock();
+    let texts = pull_cleaned_texts(&conn, 30);
+    let stats_summary = format!(
+        "Recent dictation samples (most recent first, one per line):\n{}",
+        texts
+            .iter()
+            .take(30)
+            .map(|t| format!("- {}", t.chars().take(280).collect::<String>()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    Ok(stats_summary)
+}
+
+fn pull_cleaned_texts(conn: &Connection, limit: i64) -> Vec<String> {
     let mut stmt = match conn.prepare(
-        "SELECT DISTINCT date(ts, 'unixepoch') AS d
+        "SELECT cleaned_text FROM dictations ORDER BY ts DESC LIMIT ?",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map([limit], |r| r.get::<_, String>(0))
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
+fn pull_text_pairs(conn: &Connection, limit: i64) -> Vec<(String, String)> {
+    let mut stmt = match conn.prepare(
+        "SELECT raw_text, cleaned_text FROM dictations ORDER BY ts DESC LIMIT ?",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map([limit], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
+fn tokenize_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect()
+}
+
+fn is_meaningful(word: &str) -> bool {
+    word.len() > 2 && !STOP_WORDS.contains(&word)
+}
+
+fn top_meaningful_word(texts: &[String]) -> Option<String> {
+    let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for text in texts {
+        for tok in tokenize_words(text) {
+            if is_meaningful(&tok) {
+                *counts.entry(tok).or_insert(0) += 1;
+            }
+        }
+    }
+    counts.into_iter().max_by_key(|(_, n)| *n).map(|(w, _)| w)
+}
+
+fn top_corrected_word(pairs: &[(String, String)]) -> Option<String> {
+    let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for (raw, cleaned) in pairs {
+        let raw_set: HashSet<String> = tokenize_words(raw).into_iter().collect();
+        let cleaned_set: HashSet<String> = tokenize_words(cleaned).into_iter().collect();
+        for token in raw_set.difference(&cleaned_set) {
+            if is_meaningful(token) {
+                *counts.entry(token.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    counts.into_iter().max_by_key(|(_, n)| *n).map(|(w, _)| w)
+}
+
+fn top_catchphrase(texts: &[String]) -> Option<String> {
+    let mut ngrams: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for text in texts {
+        let words: Vec<String> = text
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'').to_lowercase())
+            .filter(|w| !w.is_empty())
+            .collect();
+        for n in 3..=5 {
+            if words.len() < n {
+                continue;
+            }
+            for window in words.windows(n) {
+                let all_stop = window.iter().all(|w| STOP_WORDS.contains(&w.as_str()));
+                if all_stop {
+                    continue;
+                }
+                let phrase = window.join(" ");
+                if phrase.len() < 12 {
+                    continue;
+                }
+                *ngrams.entry(phrase).or_insert(0) += 1;
+            }
+        }
+    }
+    ngrams
+        .into_iter()
+        .filter(|(_, n)| *n >= 2)
+        .max_by_key(|(p, n)| (*n, p.len() as i64))
+        .map(|(p, _)| p)
+}
+
+fn day_name(dow: &str) -> &'static str {
+    match dow {
+        "0" => "Sunday",
+        "1" => "Monday",
+        "2" => "Tuesday",
+        "3" => "Wednesday",
+        "4" => "Thursday",
+        "5" => "Friday",
+        "6" => "Saturday",
+        _ => "—",
+    }
+}
+
+fn format_hour(hour: &str) -> String {
+    let h: u32 = hour.parse().unwrap_or(0);
+    let (display, suffix) = match h {
+        0 => (12, "a.m."),
+        1..=11 => (h, "a.m."),
+        12 => (12, "p.m."),
+        _ => (h - 12, "p.m."),
+    };
+    format!("{} {}", display, suffix)
+}
+
+/// Best-guess percentile mapping (we don't have a real population). Keeps the
+/// gauge value monotonic with WPM so users see it move with practice.
+fn wpm_percentile_estimate(wpm: f32) -> f32 {
+    if wpm >= 200.0 { 0.1 }
+    else if wpm >= 150.0 { 1.0 }
+    else if wpm >= 120.0 { 5.0 }
+    else if wpm >= 100.0 { 20.0 }
+    else if wpm >= 80.0 { 50.0 }
+    else if wpm >= 60.0 { 75.0 }
+    else { 90.0 }
+}
+
+fn compute_longest_streak(conn: &Connection) -> i64 {
+    let mut stmt = match conn.prepare(
+        "SELECT DISTINCT date(ts, 'unixepoch', 'localtime') AS d FROM dictations ORDER BY d ASC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let days: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+    if days.is_empty() {
+        return 0;
+    }
+    let mut longest = 1i64;
+    let mut current = 1i64;
+    for pair in days.windows(2) {
+        let next: String = match conn.query_row(
+            "SELECT date(?, '+1 day')",
+            [&pair[0]],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(d) => d,
+            Err(_) => break,
+        };
+        if pair[1] == next {
+            current += 1;
+            if current > longest { longest = current; }
+        } else {
+            current = 1;
+        }
+    }
+    longest
+}
+
+fn compute_app_usage(conn: &Connection) -> Vec<AppCategoryUsage> {
+    let mut stmt = match conn.prepare(
+        "SELECT foreground_app, COUNT(*) FROM dictations
+         WHERE foreground_app IS NOT NULL
+         GROUP BY foreground_app",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+
+    let mut buckets: std::collections::HashMap<&'static str, i64> = std::collections::HashMap::new();
+    for (app, count) in &rows {
+        *buckets.entry(categorize_app(app)).or_insert(0) += *count;
+    }
+    let total: i64 = buckets.values().sum();
+    let mut out: Vec<AppCategoryUsage> = buckets
+        .into_iter()
+        .map(|(category, count)| AppCategoryUsage {
+            category: category.to_string(),
+            count,
+            percentage: if total > 0 { count as f32 / total as f32 * 100.0 } else { 0.0 },
+        })
+        .collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count));
+    out
+}
+
+fn categorize_app(exe: &str) -> &'static str {
+    let lower = exe.to_lowercase();
+    let stem = lower.trim_end_matches(".exe");
+    match stem {
+        // AI assistants
+        "chatgpt" | "claude" | "perplexity" | "gemini" | "copilot" => "AI Prompts",
+        // Code editors
+        "code" | "code - insiders" | "cursor" | "windsurf"
+        | "rider" | "idea64" | "pycharm64" | "goland64" | "webstorm64" | "rustrover64"
+        | "sublime_text" | "atom" | "nvim-qt" => "Code",
+        // Office / writing
+        "winword" | "powerpnt" | "excel" | "onenote" | "notion" | "obsidian" | "typora"
+        | "scrivener" => "Documents",
+        // Mail
+        "outlook" | "thunderbird" | "hostedgmaildesktopapp" => "Emails",
+        // Work messaging
+        "slack" | "teams" | "discord" => "Work messages",
+        // Personal messaging
+        "whatsapp" | "telegram" | "signal" | "messenger" => "Personal messages",
+        // Browsers
+        "chrome" | "msedge" | "firefox" | "brave" | "opera" | "arc" | "vivaldi" => "Browsing",
+        // Shells / system
+        "windowsterminal" | "wt" | "powershell" | "pwsh" | "cmd" | "explorer" => "System",
+        _ => "Other",
+    }
+}
+
+fn compute_heatmap(conn: &Connection, days: i64) -> Vec<HeatmapDay> {
+    let mut stmt = match conn.prepare(
+        "SELECT date(ts, 'unixepoch', 'localtime') AS d, COUNT(*) AS n
+         FROM dictations
+         WHERE date(ts, 'unixepoch', 'localtime') >= date('now', 'localtime', ?)
+         GROUP BY d ORDER BY d ASC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let offset = format!("-{} days", days);
+    stmt.query_map([offset], |r| {
+        Ok(HeatmapDay {
+            date: r.get(0)?,
+            count: r.get(1)?,
+        })
+    })
+    .ok()
+    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default()
+}
+
+fn compute_streak(conn: &Connection) -> i64 {
+    // All date computations use 'localtime' so the user's "today" matches
+    // what the dashboard renders client-side.
+    let mut stmt = match conn.prepare(
+        "SELECT DISTINCT date(ts, 'unixepoch', 'localtime') AS d
          FROM dictations
          ORDER BY d DESC",
     ) {
@@ -440,9 +981,8 @@ fn compute_streak(conn: &Connection) -> i64 {
         return 0;
     }
 
-    // Today in UTC YYYY-MM-DD format.
     let today: String = match conn.query_row(
-        "SELECT date('now')",
+        "SELECT date('now', 'localtime')",
         [],
         |r| r.get::<_, String>(0),
     ) {
@@ -450,9 +990,8 @@ fn compute_streak(conn: &Connection) -> i64 {
         Err(_) => return 0,
     };
 
-    // If the most recent dictation isn't today or yesterday, streak is 0.
     let yesterday: String = match conn.query_row(
-        "SELECT date('now', '-1 day')",
+        "SELECT date('now', 'localtime', '-1 day')",
         [],
         |r| r.get::<_, String>(0),
     ) {
@@ -473,8 +1012,6 @@ fn compute_streak(conn: &Connection) -> i64 {
     for d in iter.by_ref() {
         if *d == expected {
             streak += 1;
-            // Move expected one day earlier. We use a SQLite roundtrip per step;
-            // streaks are short so it's negligible.
             let next: String = match conn.query_row(
                 "SELECT date(?, '-1 day')",
                 [&expected],
