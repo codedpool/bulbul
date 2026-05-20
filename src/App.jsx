@@ -11,6 +11,33 @@ const MODES = [
   { value: "polished", label: "Polished", hint: "Rewrite for clarity. Preserves intent." },
 ];
 
+const LANGUAGES = [
+  { code: "auto", label: "Auto-detect" },
+  { code: "en", label: "English" },
+  { code: "hi", label: "Hindi" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "it", label: "Italian" },
+  { code: "pt", label: "Portuguese" },
+  { code: "nl", label: "Dutch" },
+  { code: "ru", label: "Russian" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "zh", label: "Chinese" },
+  { code: "ar", label: "Arabic" },
+  { code: "tr", label: "Turkish" },
+  { code: "pl", label: "Polish" },
+  { code: "uk", label: "Ukrainian" },
+  { code: "sv", label: "Swedish" },
+  { code: "fi", label: "Finnish" },
+  { code: "id", label: "Indonesian" },
+  { code: "vi", label: "Vietnamese" },
+  { code: "th", label: "Thai" },
+  { code: "he", label: "Hebrew" },
+  { code: "el", label: "Greek" },
+];
+
 function App() {
   const [config, setConfig] = useState(null);
   const [draftKey, setDraftKey] = useState("");
@@ -194,6 +221,23 @@ function App() {
             </label>
           ))}
         </div>
+      </section>
+
+      <section>
+        <h3>Language</h3>
+        <p className="muted small">
+          Tell Whisper which language you'll speak. Auto-detect works for most
+          languages but a specific choice is slightly faster and more accurate.
+        </p>
+        <select
+          className="select-input"
+          value={config.language || "auto"}
+          onChange={(e) => saveConfig({ ...config, language: e.target.value })}
+        >
+          {LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
       </section>
 
       <section>

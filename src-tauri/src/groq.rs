@@ -49,10 +49,16 @@ pub async fn transcribe(cfg: &Config, wav_bytes: Vec<u8>) -> Result<String> {
     let part = multipart::Part::bytes(wav_bytes)
         .file_name("recording.wav")
         .mime_str("audio/wav")?;
-    let form = multipart::Form::new()
+    let mut form = multipart::Form::new()
         .part("file", part)
         .text("model", cfg.stt_model.clone())
         .text("response_format", "json");
+    // Whisper auto-detects when the field is omitted. Pass it only when the
+    // user has chosen a specific ISO-639-1 code.
+    let lang = cfg.language.trim();
+    if !lang.is_empty() && lang != "auto" {
+        form = form.text("language", lang.to_string());
+    }
 
     let resp = client
         .post(format!("{BASE_URL}/audio/transcriptions"))

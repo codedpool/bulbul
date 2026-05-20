@@ -60,6 +60,9 @@ pub struct Config {
 
     #[serde(default = "default_open_dashboard")]
     pub open_dashboard_on_launch: bool,
+
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 fn default_hotkey() -> String {
@@ -80,6 +83,9 @@ fn default_privacy_ack() -> bool {
 fn default_open_dashboard() -> bool {
     true
 }
+fn default_language() -> String {
+    "auto".to_string()
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -92,6 +98,7 @@ impl Default for Config {
             min_recording_seconds: default_min_seconds(),
             privacy_acknowledged: default_privacy_ack(),
             open_dashboard_on_launch: default_open_dashboard(),
+            language: default_language(),
         }
     }
 }

@@ -104,6 +104,33 @@ input[type="password"]:focus, input[type="text"]:focus {
   border-color: #5ec8c0;
 }
 
+select.select-input {
+  background: #161616;
+  color: #e6e6e6;
+  border: 1px solid #262626;
+  border-radius: 6px;
+  padding: 10px 32px 10px 12px;
+  font: inherit;
+  outline: none;
+  width: 100%;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%238a8a8a' d='M6 8 0 0h12z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  transition: border-color 120ms ease;
+}
+
+select.select-input:focus {
+  border-color: #5ec8c0;
+}
+
+select.select-input option {
+  background: #161616;
+  color: #e6e6e6;
+}
+
 button {
   background: #1a1a1a;
   color: #e6e6e6;
