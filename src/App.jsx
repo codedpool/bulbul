@@ -20,6 +20,7 @@ function App() {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(false);
   const [updateState, setUpdateState] = useState({ state: "idle", message: "" });
+  const [autostart, setAutostartState] = useState(false);
 
   useEffect(() => {
     invoke("get_config").then((cfg) => {
@@ -27,6 +28,7 @@ function App() {
       setDraftKey(cfg.groq_api_key || "");
       if (!cfg.privacy_acknowledged) setShowPrivacy(true);
     });
+    invoke("get_autostart").then(setAutostartState).catch(() => {});
     const un = listen("bulbul-status", (e) => setStatus(e.payload));
     const onKey = (e) => {
       if (e.key === "Escape" && !recordingHotkey) getCurrentWindow().hide();
@@ -86,6 +88,15 @@ function App() {
   async function ackPrivacy() {
     await saveConfig({ ...config, privacy_acknowledged: true });
     setShowPrivacy(false);
+  }
+
+  async function toggleAutostart(next) {
+    try {
+      await invoke("set_autostart", { enabled: next });
+      setAutostartState(next);
+    } catch (e) {
+      console.error("autostart toggle failed", e);
+    }
   }
 
   async function checkUpdates() {
@@ -208,6 +219,22 @@ function App() {
       </section>
 
       <section>
+        <h3>Startup</h3>
+        <Toggle
+          label="Start Bulbul when Windows starts"
+          hint="Boots silently in the tray on login."
+          checked={autostart}
+          onChange={toggleAutostart}
+        />
+        <Toggle
+          label="Open this window when Bulbul starts"
+          hint="Turn off to launch straight into the tray."
+          checked={!!config.open_dashboard_on_launch}
+          onChange={(v) => saveConfig({ ...config, open_dashboard_on_launch: v })}
+        />
+      </section>
+
+      <section>
         <h3>Updates</h3>
         <div className="row">
           <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
@@ -229,6 +256,25 @@ function App() {
         <span className="muted small">v0.1.0 · MIT · Press Esc to hide window</span>
       </footer>
     </main>
+  );
+}
+
+function Toggle({ label, hint, checked, onChange }) {
+  return (
+    <label className="toggle-row">
+      <div className="toggle-text">
+        <div className="toggle-label">{label}</div>
+        {hint && <div className="toggle-hint">{hint}</div>}
+      </div>
+      <span className={`toggle ${checked ? "on" : ""}`}>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span className="toggle-thumb" />
+      </span>
+    </label>
   );
 }
 
