@@ -2,63 +2,97 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import HomeView from "./views/HomeView.jsx";
+import SettingsView from "./views/SettingsView.jsx";
 import "./App.css";
 
-const MODES = [
-  { value: "raw", label: "Raw", hint: "Fix obvious errors only. Keeps every word." },
-  { value: "clean", label: "Clean", hint: "Remove fillers, fix punctuation. Default." },
-  { value: "polished", label: "Polished", hint: "Rewrite for clarity. Preserves intent." },
-];
+const ICONS = {
+  home: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <path d="M9 22V12h6v10" />
+    </svg>
+  ),
+  insights: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="6" x2="6" y1="20" y2="10" />
+      <line x1="12" x2="12" y1="20" y2="4" />
+      <line x1="18" x2="18" y1="20" y2="14" />
+    </svg>
+  ),
+  dictionary: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+    </svg>
+  ),
+  snippets: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="6" cy="6" r="3" />
+      <path d="M8.12 8.12 12 12" />
+      <path d="M20 4 8.12 15.88" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M14.8 14.8 20 20" />
+    </svg>
+  ),
+  transforms: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M15 4V2" />
+      <path d="M15 16v-2" />
+      <path d="M8 9h2" />
+      <path d="M20 9h2" />
+      <path d="M17.8 11.8 19 13" />
+      <path d="M17.8 6.2 19 5" />
+      <path d="m3 21 9-9" />
+      <path d="M12.2 6.2 11 5" />
+    </svg>
+  ),
+  style: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 7V4h16v3" />
+      <path d="M9 20h6" />
+      <path d="M12 4v16" />
+    </svg>
+  ),
+  scratchpad: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M14 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+      <path d="m18 2 4 4-10 10H8v-4z" />
+    </svg>
+  ),
+  settings: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+};
 
-const LANGUAGES = [
-  { code: "auto", label: "Auto-detect" },
-  { code: "en", label: "English" },
-  { code: "hi", label: "Hindi" },
-  { code: "es", label: "Spanish" },
-  { code: "fr", label: "French" },
-  { code: "de", label: "German" },
-  { code: "it", label: "Italian" },
-  { code: "pt", label: "Portuguese" },
-  { code: "nl", label: "Dutch" },
-  { code: "ru", label: "Russian" },
-  { code: "ja", label: "Japanese" },
-  { code: "ko", label: "Korean" },
-  { code: "zh", label: "Chinese" },
-  { code: "ar", label: "Arabic" },
-  { code: "tr", label: "Turkish" },
-  { code: "pl", label: "Polish" },
-  { code: "uk", label: "Ukrainian" },
-  { code: "sv", label: "Swedish" },
-  { code: "fi", label: "Finnish" },
-  { code: "id", label: "Indonesian" },
-  { code: "vi", label: "Vietnamese" },
-  { code: "th", label: "Thai" },
-  { code: "he", label: "Hebrew" },
-  { code: "el", label: "Greek" },
+const SECTIONS = [
+  { id: "home", label: "Home", working: true },
+  { id: "insights", label: "Insights", working: false },
+  { id: "dictionary", label: "Dictionary", working: false },
+  { id: "snippets", label: "Snippets", working: false },
+  { id: "transforms", label: "Transforms", working: false },
+  { id: "style", label: "Style", working: false },
+  { id: "scratchpad", label: "Scratchpad", working: false },
+  { id: "settings", label: "Settings", working: true },
 ];
 
 function App() {
+  const [section, setSection] = useState("home");
   const [config, setConfig] = useState(null);
-  const [draftKey, setDraftKey] = useState("");
-  const [keyState, setKeyState] = useState("idle");
-  const [keyError, setKeyError] = useState("");
-  const [status, setStatus] = useState({ state: "idle", message: null });
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [recordingHotkeyFor, setRecordingHotkeyFor] = useState(null); // "dictation" | "polish" | null
-  const [updateState, setUpdateState] = useState({ state: "idle", message: "" });
-  const [autostart, setAutostartState] = useState(false);
+  const [status, setStatus] = useState({ state: "idle" });
 
   useEffect(() => {
     invoke("get_config").then((cfg) => {
       setConfig(cfg);
-      setDraftKey(cfg.groq_api_key || "");
       if (!cfg.privacy_acknowledged) setShowPrivacy(true);
+      if (!cfg.has_api_key && !cfg.groq_api_key) setSection("settings");
     });
-    invoke("get_autostart").then(setAutostartState).catch(() => {});
     const un = listen("bulbul-status", (e) => setStatus(e.payload));
     const onKey = (e) => {
-      if (e.key === "Escape" && !recordingHotkeyFor) getCurrentWindow().hide();
+      if (e.key === "Escape") getCurrentWindow().hide();
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -67,283 +101,107 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!recordingHotkeyFor || !config) return;
-    const handler = (e) => {
-      if (e.key === "Escape") { setRecordingHotkeyFor(null); return; }
-      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const parts = [];
-      if (e.ctrlKey) parts.push("Ctrl");
-      if (e.shiftKey) parts.push("Shift");
-      if (e.altKey) parts.push("Alt");
-      if (e.metaKey) parts.push("Win");
-      const k = domKeyToName(e.code);
-      if (!k) { setRecordingHotkeyFor(null); return; }
-      parts.push(k);
-      const combo = parts.join("+");
-      const field = recordingHotkeyFor === "polish" ? "polish_hotkey" : "hotkey";
-      saveConfig({ ...config, [field]: combo });
-      setRecordingHotkeyFor(null);
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [recordingHotkeyFor, config]);
-
-  if (!config) return <main className="empty">Loading…</main>;
-
-  const hasKey = config.groq_api_key && config.groq_api_key.trim().length > 0;
-
-  async function saveConfig(next) {
+  async function updateConfig(next) {
     await invoke("save_config", { newCfg: next });
     setConfig(next);
   }
 
-  async function saveKey() {
-    setKeyState("checking");
-    setKeyError("");
-    try {
-      await invoke("validate_api_key", { apiKey: draftKey });
-      await saveConfig({ ...config, groq_api_key: draftKey.trim() });
-      setKeyState("valid");
-    } catch (e) {
-      setKeyState("invalid");
-      setKeyError(String(e));
-    }
-  }
-
   async function ackPrivacy() {
-    await saveConfig({ ...config, privacy_acknowledged: true });
+    await updateConfig({ ...config, privacy_acknowledged: true });
     setShowPrivacy(false);
   }
 
-  async function toggleAutostart(next) {
-    try {
-      await invoke("set_autostart", { enabled: next });
-      setAutostartState(next);
-    } catch (e) {
-      console.error("autostart toggle failed", e);
-    }
-  }
-
-  async function checkUpdates() {
-    setUpdateState({ state: "checking", message: "" });
-    try {
-      const result = await invoke("check_for_updates");
-      if (result) setUpdateState({ state: "available", message: `v${result}` });
-      else setUpdateState({ state: "uptodate", message: "You're on the latest version." });
-    } catch (e) {
-      setUpdateState({ state: "error", message: String(e) });
-    }
-  }
+  if (!config) return <div className="loading">Loading…</div>;
 
   return (
-    <main className="app">
-      {showPrivacy && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <h2>Before you start</h2>
-            <p>
-              Bulbul sends your spoken audio to <strong>Groq's servers</strong> for
-              transcription and cleanup, using <em>your</em> API key. No data is sent
-              anywhere else — no Bulbul server, no telemetry.
-            </p>
-            <p className="muted">
-              Make sure you trust Groq's privacy policy before dictating sensitive
-              content.
-            </p>
-            <button className="primary" onClick={ackPrivacy}>Got it</button>
+    <div className="app-shell">
+      {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
+
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark" aria-hidden />
+          <div className="brand-text">Bulbul</div>
+        </div>
+        <nav className="nav">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              className={`nav-item ${section === s.id ? "active" : ""} ${s.working ? "" : "pending"}`}
+              onClick={() => setSection(s.id)}
+              title={s.working ? s.label : `${s.label} (coming soon)`}
+            >
+              <span className="nav-icon">{ICONS[s.id]}</span>
+              <span className="nav-label">{s.label}</span>
+              {!s.working && <span className="nav-tag">soon</span>}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <div className={`status status-${status.state}`}>
+            <span className="dot" />
+            <span>{statusLabel(status.state)}</span>
           </div>
+          <div className="version muted small">v0.1.0 · MIT</div>
         </div>
-      )}
+      </aside>
 
-      <header>
-        <div className="title">Bulbul</div>
-        <div className={`status status-${status.state}`}>
-          <span className="dot" />
-          <span>{statusLabel(status.state)}</span>
-        </div>
-      </header>
-
-      <section>
-        <h3>Groq API key</h3>
-        {!hasKey && (
-          <p className="muted">
-            Paste your Groq API key to get started.{" "}
-            <a
-              href="https://console.groq.com/keys"
-              onClick={(e) => { e.preventDefault(); openUrl("https://console.groq.com/keys"); }}
-            >
-              Get one here →
-            </a>
-          </p>
+      <main className="content">
+        {section === "home" && <HomeView />}
+        {section === "settings" && (
+          <SettingsView config={config} updateConfig={updateConfig} />
         )}
-        <div className="row">
-          <input
-            type="password"
-            value={draftKey}
-            placeholder="gsk_…"
-            onChange={(e) => { setDraftKey(e.target.value); setKeyState("idle"); }}
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <button
-            className="primary"
-            disabled={!draftKey.trim() || keyState === "checking"}
-            onClick={saveKey}
-          >
-            {keyState === "checking" ? "Checking…" : hasKey ? "Update" : "Save"}
-          </button>
-        </div>
-        {keyState === "valid" && <p className="ok">Key validated and saved.</p>}
-        {keyState === "invalid" && <p className="err">{keyError}</p>}
-      </section>
-
-      <section>
-        <h3>Cleanup mode</h3>
-        <div className="modes">
-          {MODES.map((m) => (
-            <label
-              key={m.value}
-              className={`mode ${config.mode === m.value ? "selected" : ""}`}
-            >
-              <input
-                type="radio"
-                name="mode"
-                value={m.value}
-                checked={config.mode === m.value}
-                onChange={() => saveConfig({ ...config, mode: m.value })}
-              />
-              <div>
-                <div className="mode-label">{m.label}</div>
-                <div className="mode-hint">{m.hint}</div>
-              </div>
-            </label>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <h3>Language</h3>
-        <p className="muted small">
-          Tell Whisper which language you'll speak. Auto-detect works for most
-          languages but a specific choice is slightly faster and more accurate.
-        </p>
-        <select
-          className="select-input"
-          value={config.language || "auto"}
-          onChange={(e) => saveConfig({ ...config, language: e.target.value })}
-        >
-          {LANGUAGES.map((l) => (
-            <option key={l.code} value={l.code}>{l.label}</option>
-          ))}
-        </select>
-      </section>
-
-      <section>
-        <h3>Hotkeys</h3>
-        <HotkeyRow
-          label="Dictation"
-          hint="Hold this combo to record. Release to transcribe and insert."
-          combo={config.hotkey}
-          isRecording={recordingHotkeyFor === "dictation"}
-          onStart={() => setRecordingHotkeyFor("dictation")}
-          onCancel={() => setRecordingHotkeyFor(null)}
-        />
-        <HotkeyRow
-          label="Polish selection with AI"
-          hint="Select text anywhere, tap this combo — Bulbul rewrites it in place."
-          combo={config.polish_hotkey || "Ctrl+Shift+P"}
-          isRecording={recordingHotkeyFor === "polish"}
-          onStart={() => setRecordingHotkeyFor("polish")}
-          onCancel={() => setRecordingHotkeyFor(null)}
-        />
-      </section>
-
-      <section>
-        <h3>Startup</h3>
-        <Toggle
-          label="Start Bulbul when Windows starts"
-          hint="Boots silently in the tray on login."
-          checked={autostart}
-          onChange={toggleAutostart}
-        />
-        <Toggle
-          label="Open this window when Bulbul starts"
-          hint="Turn off to launch straight into the tray."
-          checked={!!config.open_dashboard_on_launch}
-          onChange={(v) => saveConfig({ ...config, open_dashboard_on_launch: v })}
-        />
-      </section>
-
-      <section>
-        <h3>Updates</h3>
-        <div className="row">
-          <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
-            {updateState.state === "checking" ? "Checking…" : "Check for updates"}
-          </button>
-        </div>
-        {updateState.state === "available" && (
-          <p className="ok">Update available: {updateState.message}</p>
-        )}
-        {updateState.state === "uptodate" && (
-          <p className="muted small">{updateState.message}</p>
-        )}
-        {updateState.state === "error" && (
-          <p className="err">{updateState.message}</p>
-        )}
-      </section>
-
-      <footer>
-        <span className="muted small">v0.1.0 · MIT · Press Esc to hide window</span>
-      </footer>
-    </main>
+        {!["home", "settings"].includes(section) && <ComingSoon id={section} />}
+      </main>
+    </div>
   );
 }
 
-function HotkeyRow({ label, hint, combo, isRecording, onStart, onCancel }) {
+function PrivacyModal({ onAck }) {
   return (
-    <div className="hotkey-block">
-      <div className="hotkey-meta">
-        <div className="hotkey-label">{label}</div>
-        {hint && <div className="hotkey-hint">{hint}</div>}
-      </div>
-      <div className="row hotkey-row">
-        <div className="hotkey-display">
-          {isRecording
-            ? <span className="muted">Press a key combo… (Esc to cancel)</span>
-            : formatHotkey(combo).map((part, i) => (
-                <span key={i}>
-                  {i > 0 && <span className="plus">+</span>}
-                  <kbd>{part}</kbd>
-                </span>
-              ))}
-        </div>
-        <button onClick={isRecording ? onCancel : onStart}>
-          {isRecording ? "Cancel" : "Change"}
-        </button>
+    <div className="modal-overlay">
+      <div className="modal">
+        <h2>Before you start</h2>
+        <p>
+          Bulbul sends your spoken audio to <strong>Groq's servers</strong> for
+          transcription and cleanup, using <em>your</em> API key. No data is sent
+          anywhere else — no Bulbul server, no telemetry.
+        </p>
+        <p className="muted">
+          Make sure you trust Groq's privacy policy before dictating sensitive content.
+        </p>
+        <button className="primary" onClick={onAck}>Got it</button>
       </div>
     </div>
   );
 }
 
-function Toggle({ label, hint, checked, onChange }) {
+function ComingSoon({ id }) {
+  const titles = {
+    insights: "Insights",
+    dictionary: "Dictionary",
+    snippets: "Snippets",
+    transforms: "Transforms",
+    style: "Style",
+    scratchpad: "Scratchpad",
+  };
+  const blurbs = {
+    insights: "Usage stats, your voice profile, top corrections — coming as part of the V2 build.",
+    dictionary: "Manage word substitutions Bulbul applies before injection.",
+    snippets: "Saved phrases that expand on trigger (e.g. \"my email\" → real email).",
+    transforms: "Multiple polish prompts — Polish, Make Formal, Bulletize, and your own.",
+    style: "Your voice profile: most-used words, peak hours, catchphrases.",
+    scratchpad: "Standalone notes window with Transforms applied to selections.",
+  };
   return (
-    <label className="toggle-row">
-      <div className="toggle-text">
-        <div className="toggle-label">{label}</div>
-        {hint && <div className="toggle-hint">{hint}</div>}
+    <div className="page coming-soon">
+      <header className="page-header">
+        <h1>{titles[id] || id}</h1>
+        <p className="muted small">{blurbs[id]}</p>
+      </header>
+      <div className="empty-state">
+        <p className="muted">Coming soon.</p>
       </div>
-      <span className={`toggle ${checked ? "on" : ""}`}>
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        <span className="toggle-thumb" />
-      </span>
-    </label>
+    </div>
   );
 }
 
@@ -356,22 +214,6 @@ function statusLabel(state) {
     case "error": return "Error";
     default: return "Idle";
   }
-}
-
-function formatHotkey(s) {
-  return (s || "").split("+").map((p) => p.trim()).filter(Boolean);
-}
-
-function domKeyToName(code) {
-  if (!code) return null;
-  if (code.startsWith("Key")) return code.slice(3);
-  if (code.startsWith("Digit")) return code.slice(5);
-  if (code === "Space") return "Space";
-  if (/^F\d+$/.test(code)) return code;
-  if (code === "Enter") return "Enter";
-  if (code === "Backspace") return "Backspace";
-  if (code === "Tab") return "Tab";
-  return null;
 }
 
 export default App;
