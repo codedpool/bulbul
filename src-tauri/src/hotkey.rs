@@ -1,16 +1,23 @@
 use parking_lot::Mutex;
 use rdev::{listen, Event, EventType, Key};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
+
+/// Minimum gap between two fires of the same hotkey. Guards against
+/// auto-repeat and spurious event bursts that would otherwise spawn
+/// many polish pipelines in parallel.
+const FIRE_COOLDOWN_MS: u128 = 700;
 
 #[derive(Clone, Debug)]
 pub enum HotkeyEvent {
     DictationPressed,
     DictationReleased,
     PolishTriggered,
+    TransformTriggered(i64),
 }
 
 /// Parsed hotkey: required modifier state + optional non-modifier key.
@@ -51,11 +58,14 @@ impl ParsedHotkey {
     }
 }
 
-/// Pair of hotkeys the listener watches simultaneously.
+/// Hotkeys the listener watches simultaneously.
 #[derive(Clone, Debug, Default)]
 pub struct HotkeySet {
     pub dictation: ParsedHotkey,
     pub polish: ParsedHotkey,
+    /// Per-transform slot bindings (transform_id, parsed hotkey).
+    /// Typically Alt+1 .. Alt+9 auto-assigned to the first 9 transforms.
+    pub transform_bindings: Vec<(i64, ParsedHotkey)>,
 }
 
 fn normalize_key_name(s: &str) -> String {
@@ -106,15 +116,18 @@ fn key_name_to_rdev(name: &str) -> Option<Key> {
     }
 }
 
-pub fn spawn_listener(initial: HotkeySet) -> (Arc<Mutex<HotkeySet>>, Receiver<HotkeyEvent>) {
+pub fn spawn_listener(set: Arc<Mutex<HotkeySet>>) -> Receiver<HotkeyEvent> {
     let (tx, rx) = mpsc::channel();
-    let set = Arc::new(Mutex::new(initial));
     let set_inner = set.clone();
 
     thread::spawn(move || {
         let pressed: Arc<Mutex<HashSet<Key>>> = Arc::new(Mutex::new(HashSet::new()));
         let dict_active = Arc::new(Mutex::new(false));
         let polish_active = Arc::new(Mutex::new(false));
+        let transform_active: Arc<Mutex<HashSet<i64>>> = Arc::new(Mutex::new(HashSet::new()));
+        let last_polish_fire: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        let last_transform_fire: Arc<Mutex<HashMap<i64, Instant>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let tx: Sender<HotkeyEvent> = tx;
 
         if let Err(e) = listen(move |event: Event| {
@@ -123,6 +136,9 @@ pub fn spawn_listener(initial: HotkeySet) -> (Arc<Mutex<HotkeySet>>, Receiver<Ho
                 &pressed,
                 &dict_active,
                 &polish_active,
+                &transform_active,
+                &last_polish_fire,
+                &last_transform_fire,
                 &set_inner,
                 &tx,
             );
@@ -131,7 +147,7 @@ pub fn spawn_listener(initial: HotkeySet) -> (Arc<Mutex<HotkeySet>>, Receiver<Ho
         }
     });
 
-    (set, rx)
+    rx
 }
 
 fn handle_event(
@@ -139,6 +155,9 @@ fn handle_event(
     pressed: &Arc<Mutex<HashSet<Key>>>,
     dict_active: &Arc<Mutex<bool>>,
     polish_active: &Arc<Mutex<bool>>,
+    transform_active: &Arc<Mutex<HashSet<i64>>>,
+    last_polish_fire: &Arc<Mutex<Option<Instant>>>,
+    last_transform_fire: &Arc<Mutex<HashMap<i64, Instant>>>,
     set: &Arc<Mutex<HotkeySet>>,
     tx: &Sender<HotkeyEvent>,
 ) {
@@ -173,16 +192,52 @@ fn handle_event(
         }
     }
 
-    // Polish: single event on the press edge, suppress duplicate fires while held.
+    // Polish: single event on the press edge, plus a hard time-based gate
+    // so auto-repeat or spurious modifier blips can't fire it again before
+    // the previous pipeline has had a chance to start.
     if current.polish.is_meaningful() {
         let polish_matches = matches(&snapshot, &current.polish);
         let mut a = polish_active.lock();
         if !*a && polish_matches {
             *a = true;
-            let _ = tx.send(HotkeyEvent::PolishTriggered);
+            if cooldown_elapsed(&last_polish_fire.lock(), FIRE_COOLDOWN_MS) {
+                *last_polish_fire.lock() = Some(Instant::now());
+                let _ = tx.send(HotkeyEvent::PolishTriggered);
+            }
         } else if *a && !polish_matches {
             *a = false;
         }
+    }
+
+    // Per-transform slot hotkeys (Alt+1, Alt+2, ...). Each id has its own
+    // press-edge tracker and time gate.
+    let mut active = transform_active.lock();
+    let mut last_fire = last_transform_fire.lock();
+    for (transform_id, hk) in &current.transform_bindings {
+        if !hk.is_meaningful() {
+            continue;
+        }
+        let is_match = matches(&snapshot, hk);
+        let was_active = active.contains(transform_id);
+        if !was_active && is_match {
+            active.insert(*transform_id);
+            let cooled = last_fire
+                .get(transform_id)
+                .map_or(true, |t| t.elapsed().as_millis() >= FIRE_COOLDOWN_MS);
+            if cooled {
+                last_fire.insert(*transform_id, Instant::now());
+                let _ = tx.send(HotkeyEvent::TransformTriggered(*transform_id));
+            }
+        } else if was_active && !is_match {
+            active.remove(transform_id);
+        }
+    }
+}
+
+fn cooldown_elapsed(last: &Option<Instant>, gate_ms: u128) -> bool {
+    match last {
+        Some(t) => t.elapsed().as_millis() >= gate_ms,
+        None => true,
     }
 }
 

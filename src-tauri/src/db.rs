@@ -54,7 +54,75 @@ CREATE TABLE IF NOT EXISTS snippets (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_snippets_trigger
     ON snippets(trigger COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS transforms (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    system_prompt   TEXT NOT NULL,
+    is_default      INTEGER NOT NULL DEFAULT 0,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    hit_count       INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL
+);
 "#;
+
+const DEFAULT_TRANSFORMS: &[(&str, &str, &str)] = &[
+    (
+        "Polish",
+        "Improve clarity and conciseness",
+        "You are a writing editor. Polish the user's text:\n\
+- Fix grammar, spelling, and punctuation errors.\n\
+- Improve flow and clarity.\n\
+- Preserve the original meaning, tone, and rough length \u{2014} do not add new ideas.\n\
+- Match the original register (casual stays casual, formal stays formal).\n\
+\n\
+Return ONLY the polished text. No preamble, no quotes around the output, no commentary.",
+    ),
+    (
+        "Prompt Engineer",
+        "Constructs optimal LLM prompts",
+        "You are a prompt engineer. Rewrite the user's text into a clear, well-structured prompt for a large language model.\n\
+- Open with the role / task in one sentence.\n\
+- Add explicit instructions, constraints, and output format if implied.\n\
+- Preserve every concrete detail the user provided.\n\
+- Use sections (\"Task:\", \"Constraints:\", \"Output:\") only if it improves clarity.\n\
+\n\
+Return ONLY the rewritten prompt. No preamble, no commentary.",
+    ),
+    (
+        "Make Formal",
+        "Switches to a professional tone",
+        "Rewrite the user's text in a formal, professional tone.\n\
+- Use full sentences, proper grammar, conventional punctuation.\n\
+- Avoid contractions, slang, and filler.\n\
+- Preserve the meaning and approximate length.\n\
+\n\
+Return ONLY the rewritten text.",
+    ),
+    (
+        "Make Casual",
+        "Loosens the tone, keeps the meaning",
+        "Rewrite the user's text in a casual, friendly tone, as if talking to a colleague.\n\
+- Use contractions where natural.\n\
+- Keep it concise and human.\n\
+- Do not add jokes or new ideas.\n\
+- Preserve every fact and intent.\n\
+\n\
+Return ONLY the rewritten text.",
+    ),
+    (
+        "Bullet Points",
+        "Convert prose into a clean bulleted list",
+        "Convert the user's text into a clean bulleted list.\n\
+- Each bullet is one clear point.\n\
+- Preserve every fact and the original order.\n\
+- Use dash bullets (\"- \"), one per line.\n\
+- No nested bullets unless the source clearly has sub-points.\n\
+\n\
+Return ONLY the bulleted list. No preamble.",
+    ),
+];
 
 const STOP_WORDS: &[&str] = &[
     "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been",
@@ -107,7 +175,32 @@ pub fn open() -> Result<Db> {
     let conn = Connection::open(&path).with_context(|| format!("opening {path:?}"))?;
     conn.execute_batch(SCHEMA).context("applying schema")?;
     seed_default_dictionary(&conn).context("seeding dictionary defaults")?;
+    seed_default_transforms(&conn).context("seeding transform defaults")?;
     Ok(Arc::new(Mutex::new(conn)))
+}
+
+fn seed_default_transforms(conn: &Connection) -> Result<()> {
+    let existing: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transforms", [], |r| r.get(0))
+        .unwrap_or(0);
+    if existing > 0 {
+        return Ok(());
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    for (idx, (name, desc, prompt)) in DEFAULT_TRANSFORMS.iter().enumerate() {
+        let is_default = if idx == 0 { 1 } else { 0 };
+        conn.execute(
+            "INSERT INTO transforms
+                (name, description, system_prompt, is_default, sort_order, hit_count, created_at)
+             VALUES (?, ?, ?, ?, ?, 0, ?)",
+            params![name, desc, prompt, is_default, idx as i64, now],
+        )?;
+    }
+    tracing::info!("seeded {} default transforms", DEFAULT_TRANSFORMS.len());
+    Ok(())
 }
 
 fn seed_default_dictionary(conn: &Connection) -> Result<()> {
@@ -562,6 +655,204 @@ pub fn apply_snippets(db: &Db, text: &str) -> (String, Vec<(i64, i64)>) {
         }
     }
     (working, hits)
+}
+
+#[derive(Debug, Serialize, serde::Deserialize, Clone)]
+pub struct Transform {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub system_prompt: String,
+    pub is_default: bool,
+    pub sort_order: i64,
+    pub hit_count: i64,
+    pub created_at: i64,
+}
+
+pub fn list_transforms(db: &Db) -> Result<Vec<Transform>> {
+    let conn = db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at
+         FROM transforms
+         ORDER BY sort_order ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(Transform {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                description: r.get(2)?,
+                system_prompt: r.get(3)?,
+                is_default: r.get::<_, i64>(4)? != 0,
+                sort_order: r.get(5)?,
+                hit_count: r.get(6)?,
+                created_at: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+#[allow(dead_code)]
+pub fn get_transform(db: &Db, id: i64) -> Result<Transform> {
+    let conn = db.lock();
+    let row = conn.query_row(
+        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at
+         FROM transforms WHERE id = ?",
+        [id],
+        |r| {
+            Ok(Transform {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                description: r.get(2)?,
+                system_prompt: r.get(3)?,
+                is_default: r.get::<_, i64>(4)? != 0,
+                sort_order: r.get(5)?,
+                hit_count: r.get(6)?,
+                created_at: r.get(7)?,
+            })
+        },
+    )?;
+    Ok(row)
+}
+
+pub fn get_default_transform(db: &Db) -> Result<Transform> {
+    let conn = db.lock();
+    let row = conn.query_row(
+        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at
+         FROM transforms
+         ORDER BY is_default DESC, sort_order ASC
+         LIMIT 1",
+        [],
+        |r| {
+            Ok(Transform {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                description: r.get(2)?,
+                system_prompt: r.get(3)?,
+                is_default: r.get::<_, i64>(4)? != 0,
+                sort_order: r.get(5)?,
+                hit_count: r.get(6)?,
+                created_at: r.get(7)?,
+            })
+        },
+    )?;
+    Ok(row)
+}
+
+pub fn add_transform(
+    db: &Db,
+    name: &str,
+    description: &str,
+    system_prompt: &str,
+) -> Result<Transform> {
+    let n = name.trim();
+    let p = system_prompt.trim();
+    if n.is_empty() {
+        return Err(anyhow::anyhow!("name is required"));
+    }
+    if p.is_empty() {
+        return Err(anyhow::anyhow!("system prompt is required"));
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = db.lock();
+    let next_order: i64 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM transforms", [], |r| r.get(0))
+        .unwrap_or(0);
+    conn.execute(
+        "INSERT INTO transforms
+            (name, description, system_prompt, is_default, sort_order, hit_count, created_at)
+         VALUES (?, ?, ?, 0, ?, 0, ?)",
+        params![n, description.trim(), p, next_order, now],
+    )?;
+    let id = conn.last_insert_rowid();
+    Ok(Transform {
+        id,
+        name: n.to_string(),
+        description: description.trim().to_string(),
+        system_prompt: p.to_string(),
+        is_default: false,
+        sort_order: next_order,
+        hit_count: 0,
+        created_at: now,
+    })
+}
+
+pub fn update_transform(
+    db: &Db,
+    id: i64,
+    name: &str,
+    description: &str,
+    system_prompt: &str,
+) -> Result<()> {
+    let n = name.trim();
+    let p = system_prompt.trim();
+    if n.is_empty() || p.is_empty() {
+        return Err(anyhow::anyhow!("name and prompt are required"));
+    }
+    let conn = db.lock();
+    let affected = conn.execute(
+        "UPDATE transforms SET name = ?, description = ?, system_prompt = ? WHERE id = ?",
+        params![n, description.trim(), p, id],
+    )?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no transform with id {id}"));
+    }
+    Ok(())
+}
+
+pub fn delete_transform(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock();
+    let was_default: i64 = conn
+        .query_row("SELECT is_default FROM transforms WHERE id = ?", [id], |r| r.get(0))
+        .unwrap_or(0);
+    let affected = conn.execute("DELETE FROM transforms WHERE id = ?", params![id])?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no transform with id {id}"));
+    }
+    // If we deleted the default, promote the first remaining transform.
+    if was_default == 1 {
+        let _ = conn.execute(
+            "UPDATE transforms SET is_default = 1
+             WHERE id = (SELECT id FROM transforms ORDER BY sort_order ASC LIMIT 1)",
+            [],
+        );
+    }
+    Ok(())
+}
+
+pub fn set_default_transform(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock();
+    conn.execute("UPDATE transforms SET is_default = 0", [])?;
+    let affected = conn.execute(
+        "UPDATE transforms SET is_default = 1 WHERE id = ?",
+        params![id],
+    )?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no transform with id {id}"));
+    }
+    Ok(())
+}
+
+pub fn reset_transforms_to_defaults(db: &Db) -> Result<()> {
+    let conn = db.lock();
+    conn.execute("DELETE FROM transforms", [])?;
+    drop(conn);
+    let conn = db.lock();
+    seed_default_transforms(&conn)?;
+    Ok(())
+}
+
+pub fn bump_transform_hits(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock();
+    conn.execute(
+        "UPDATE transforms SET hit_count = hit_count + 1 WHERE id = ?",
+        params![id],
+    )?;
+    Ok(())
 }
 
 pub fn bump_snippet_hits(db: &Db, hits: &[(i64, i64)]) -> Result<()> {

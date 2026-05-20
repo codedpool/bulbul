@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_C, VK_CONTROL, VK_V,
+    VIRTUAL_KEY, VK_C, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
 };
 
 /// Inject text into the focused application via clipboard + Ctrl+V.
@@ -36,7 +36,7 @@ pub fn inject_text(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn send_ctrl_v() -> Result<()> {
+pub fn send_ctrl_v() -> Result<()> {
     send_ctrl_combo(VK_V)
 }
 
@@ -46,7 +46,14 @@ pub fn send_ctrl_c() -> Result<()> {
 }
 
 fn send_ctrl_combo(vk: VIRTUAL_KEY) -> Result<()> {
+    // Force-release any modifier keys the user is still holding from the
+    // hotkey that triggered us (e.g. Win+Alt+1). Without this, the OS sees
+    // Win+Alt+Ctrl+C and the foreground app doesn't interpret that as copy.
     let mut inputs = [
+        key_input(VK_LWIN, true),
+        key_input(VK_RWIN, true),
+        key_input(VK_MENU, true),
+        key_input(VK_SHIFT, true),
         key_input(VK_CONTROL, false),
         key_input(vk, false),
         key_input(vk, true),
