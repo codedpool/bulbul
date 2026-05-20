@@ -57,6 +57,9 @@ pub struct Config {
 
     #[serde(default = "default_privacy_ack")]
     pub privacy_acknowledged: bool,
+
+    #[serde(default = "default_open_dashboard")]
+    pub open_dashboard_on_launch: bool,
 }
 
 fn default_hotkey() -> String {
@@ -74,6 +77,9 @@ fn default_min_seconds() -> f32 {
 fn default_privacy_ack() -> bool {
     false
 }
+fn default_open_dashboard() -> bool {
+    true
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -85,6 +91,7 @@ impl Default for Config {
             chat_model: default_chat_model(),
             min_recording_seconds: default_min_seconds(),
             privacy_acknowledged: default_privacy_ack(),
+            open_dashboard_on_launch: default_open_dashboard(),
         }
     }
 }

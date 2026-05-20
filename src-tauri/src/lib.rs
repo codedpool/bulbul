@@ -18,6 +18,7 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
 const OVERLAY_WIDTH: f64 = 240.0;
@@ -208,6 +209,21 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+fn set_autostart(enabled: bool, app: AppHandle) -> Result<(), String> {
+    let mgr = app.autolaunch();
+    if enabled {
+        mgr.enable().map_err(|e| format!("{e}"))
+    } else {
+        mgr.disable().map_err(|e| format!("{e}"))
+    }
+}
+
+#[tauri::command]
 async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| format!("{e}"))?;
@@ -236,11 +252,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
             validate_api_key,
             check_for_updates,
+            get_autostart,
+            set_autostart,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -267,7 +289,12 @@ pub fn run() {
             setup_overlay_window(&handle)?;
 
             if let Some(window) = handle.get_webview_window("main") {
-                if !has_key_on_boot {
+                let cfg = handle.state::<AppState>().config.clone();
+                let want_show = {
+                    let c = cfg.lock();
+                    !c.has_api_key() || c.open_dashboard_on_launch
+                };
+                if want_show {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
