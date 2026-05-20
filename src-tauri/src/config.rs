@@ -66,13 +66,28 @@ pub struct Config {
 
     #[serde(default = "default_language")]
     pub language: String,
+
+    #[serde(default = "default_style_enabled")]
+    pub style_enabled: bool,
+    #[serde(default = "default_style_personal")]
+    pub style_personal: String,
+    #[serde(default = "default_style_work")]
+    pub style_work: String,
+    #[serde(default = "default_style_email")]
+    pub style_email: String,
+    #[serde(default = "default_style_other")]
+    pub style_other: String,
 }
 
 fn default_hotkey() -> String {
     "Ctrl+Shift+Space".to_string()
 }
 fn default_polish_hotkey() -> String {
-    "Ctrl+Shift+P".to_string()
+    // Win+Alt+P matches the commercial dictation apps convention. Bare Alt combos
+    // briefly activate the Windows menu bar and deselect text before
+    // our Ctrl+C runs, so we always include Win as the lead modifier
+    // for transform-style hotkeys. Existing users keep whatever they had.
+    "Win+Alt+P".to_string()
 }
 fn default_stt_model() -> String {
     "whisper-large-v3-turbo".to_string()
@@ -92,6 +107,43 @@ fn default_open_dashboard() -> bool {
 fn default_language() -> String {
     "auto".to_string()
 }
+fn default_style_enabled() -> bool { true }
+fn default_style_personal() -> String { "casual".to_string() }
+fn default_style_work() -> String { "casual".to_string() }
+fn default_style_email() -> String { "formal".to_string() }
+fn default_style_other() -> String { "casual".to_string() }
+
+/// Map a Style preset key to a short instruction appended to the cleanup
+/// system prompt. Returns None for "raw" or any unrecognized value.
+pub fn style_modifier(style: &str) -> Option<&'static str> {
+    match style {
+        "formal" => Some(
+            "Style: formal. Use proper capitalization and full punctuation. Use complete sentences, avoid contractions and slang.",
+        ),
+        "casual" => Some(
+            "Style: casual. Use natural capitalization and standard punctuation. Conversational tone, contractions allowed.",
+        ),
+        "very_casual" => Some(
+            "Style: very casual. Skip sentence-start capitalization where natural. Minimize punctuation (no full stops, fewer commas). Keep it brief and informal — like a quick text.",
+        ),
+        _ => None,
+    }
+}
+
+/// Map an executable name (e.g. "WhatsApp.exe") to a Style category.
+/// Mirrors the Insights categorization but coarser — we only care about
+/// personal / work / email / other for Style.
+pub fn style_category_for_app(exe: Option<&str>) -> &'static str {
+    let Some(exe) = exe else { return "other" };
+    let lower = exe.to_lowercase();
+    let stem = lower.trim_end_matches(".exe");
+    match stem {
+        "whatsapp" | "telegram" | "signal" | "messenger" => "personal",
+        "slack" | "teams" | "discord" => "work",
+        "outlook" | "thunderbird" | "hostedgmaildesktopapp" => "email",
+        _ => "other",
+    }
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -106,6 +158,22 @@ impl Default for Config {
             privacy_acknowledged: default_privacy_ack(),
             open_dashboard_on_launch: default_open_dashboard(),
             language: default_language(),
+            style_enabled: default_style_enabled(),
+            style_personal: default_style_personal(),
+            style_work: default_style_work(),
+            style_email: default_style_email(),
+            style_other: default_style_other(),
+        }
+    }
+}
+
+impl Config {
+    pub fn style_for_category(&self, category: &str) -> &str {
+        match category {
+            "personal" => &self.style_personal,
+            "work" => &self.style_work,
+            "email" => &self.style_email,
+            _ => &self.style_other,
         }
     }
 }
@@ -115,6 +183,8 @@ impl Config {
         !self.groq_api_key.trim().is_empty()
     }
 }
+
+
 
 pub fn config_dir() -> Result<PathBuf> {
     let base = dirs::config_dir().context("could not resolve %APPDATA%")?;

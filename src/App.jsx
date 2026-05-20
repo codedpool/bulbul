@@ -7,6 +7,8 @@ import SettingsView from "./views/SettingsView.jsx";
 import DictionaryView from "./views/DictionaryView.jsx";
 import InsightsView from "./views/InsightsView.jsx";
 import SnippetsView from "./views/SnippetsView.jsx";
+import TransformsView from "./views/TransformsView.jsx";
+import StyleView from "./views/StyleView.jsx";
 import "./App.css";
 
 const ICONS = {
@@ -76,7 +78,7 @@ const SECTIONS = [
   { id: "dictionary", label: "Dictionary", working: true },
   { id: "snippets", label: "Snippets", working: true },
   { id: "transforms", label: "Transforms", working: false },
-  { id: "style", label: "Style", working: false },
+  { id: "style", label: "Style", working: true },
   { id: "scratchpad", label: "Scratchpad", working: false },
   { id: "settings", label: "Settings", working: true },
 ];
@@ -156,7 +158,9 @@ function App() {
         {section === "dictionary" && <DictionaryView />}
         {section === "insights" && <InsightsView />}
         {section === "snippets" && <SnippetsView />}
-        {!["home", "settings", "dictionary", "insights", "snippets"].includes(section) && <ComingSoon id={section} />}
+        {section === "transforms" && <TransformsView />}
+        {section === "style" && <StyleView config={config} updateConfig={updateConfig} />}
+        {!["home", "settings", "dictionary", "insights", "snippets", "transforms", "style"].includes(section) && <ComingSoon id={section} />}
       </main>
     </div>
   );

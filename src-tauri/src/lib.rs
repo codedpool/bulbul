@@ -264,6 +264,29 @@ fn save_config(
     Ok(())
 }
 
+/// Recompute the per-transform slot hotkeys (Alt+1..Alt+9 by sort order) and
+/// push them into the live HotkeySet. Call after any transform CRUD.
+fn refresh_transform_bindings(state: &AppState) {
+    let transforms = match db::list_transforms(&state.db) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("could not list transforms for bindings: {e:#}");
+            return;
+        }
+    };
+    // Per-transform slot hotkeys are deferred — every passive combo we try
+    // either collides with a Windows reservation (Win+Alt+N → jump list),
+    // an app shortcut (Ctrl+Alt+N), or has menu-activation issues (bare
+    // Alt+N). Proper fix is to use tauri-plugin-global-shortcut which
+    // registers exclusively via RegisterHotKey. Until then, transforms are
+    // managed in the UI; the default one still runs via the polish hotkey
+    // and the wand button on the pill.
+    let bindings: Vec<(i64, ParsedHotkey)> = Vec::new();
+    let _ = transforms;
+    tracing::info!("transform slot bindings disabled (feature in progress)");
+    state.hotkeys.lock().transform_bindings = bindings;
+}
+
 #[tauri::command]
 async fn validate_api_key(api_key: String) -> Result<(), String> {
     groq::validate_key(api_key.trim())
@@ -408,6 +431,59 @@ fn delete_snippet(id: i64, state: tauri::State<'_, AppState>) -> Result<(), Stri
     db::delete_snippet(&state.db, id).map_err(|e| format!("{e:#}"))
 }
 
+#[tauri::command]
+fn list_transforms(state: tauri::State<'_, AppState>) -> Result<Vec<db::Transform>, String> {
+    db::list_transforms(&state.db).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn add_transform(
+    name: String,
+    description: String,
+    system_prompt: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<db::Transform, String> {
+    let out = db::add_transform(&state.db, &name, &description, &system_prompt)
+        .map_err(|e| format!("{e:#}"))?;
+    refresh_transform_bindings(&state);
+    Ok(out)
+}
+
+#[tauri::command]
+fn update_transform(
+    id: i64,
+    name: String,
+    description: String,
+    system_prompt: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    db::update_transform(&state.db, id, &name, &description, &system_prompt)
+        .map_err(|e| format!("{e:#}"))?;
+    refresh_transform_bindings(&state);
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_transform(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    db::delete_transform(&state.db, id).map_err(|e| format!("{e:#}"))?;
+    refresh_transform_bindings(&state);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_default_transform(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    db::set_default_transform(&state.db, id).map_err(|e| format!("{e:#}"))?;
+    refresh_transform_bindings(&state);
+    Ok(())
+}
+
+#[tauri::command]
+fn reset_transforms(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    db::reset_transforms_to_defaults(&state.db).map_err(|e| format!("{e:#}"))?;
+    refresh_transform_bindings(&state);
+    Ok(())
+}
+
 /// Resize the overlay window to a new logical height while keeping the
 /// width constant and re-anchoring the bottom edge above the taskbar.
 /// Called from the frontend when the language dropdown opens or closes.
@@ -431,14 +507,15 @@ fn set_overlay_height(height: f64, app: AppHandle) {
 
 #[tauri::command]
 fn polish_now(app: AppHandle) -> Result<(), String> {
-    let cfg_arc = app.state::<AppState>().config.clone();
-    let cfg = cfg_arc.lock().clone();
+    let state = app.state::<AppState>();
+    let cfg = state.config.lock().clone();
     if !cfg.has_api_key() {
         return Err("Set your Groq API key in Settings first.".into());
     }
+    let transform = db::get_default_transform(&state.db).ok();
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
-        polish_pipeline(app_clone, cfg).await;
+        transform_pipeline(app_clone, cfg, transform).await;
     });
     Ok(())
 }
@@ -483,6 +560,7 @@ pub fn run() {
     let initial_set = HotkeySet {
         dictation: ParsedHotkey::parse(&initial_config.hotkey),
         polish: ParsedHotkey::parse(&initial_config.polish_hotkey),
+        transform_bindings: Vec::new(),
     };
     let hotkey_mutex = Arc::new(Mutex::new(initial_set));
 
@@ -517,6 +595,12 @@ pub fn run() {
             add_snippet,
             update_snippet,
             delete_snippet,
+            list_transforms,
+            add_transform,
+            update_transform,
+            delete_transform,
+            set_default_transform,
+            reset_transforms,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -569,6 +653,9 @@ pub fn run() {
                     }
                 });
             }
+
+            // Initial transform slot hotkey bindings.
+            refresh_transform_bindings(&handle.state::<AppState>());
 
             spawn_orchestrator(handle.clone(), hotkey_mutex.clone());
             spawn_hover_watcher(handle.clone());
@@ -673,24 +760,9 @@ fn show_settings(app: &AppHandle) {
 }
 
 fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
-    let initial = hotkeys.lock().clone();
-    let (live_hotkeys, rx) = hotkey::spawn_listener(initial);
-
-    // Keep listener's hotkeys in sync with the AppState hotkeys mutex.
-    {
-        let live_hotkeys = live_hotkeys.clone();
-        let hotkeys = hotkeys.clone();
-        thread::spawn(move || loop {
-            thread::sleep(Duration::from_millis(500));
-            let current = hotkeys.lock().clone();
-            let mut listener = live_hotkeys.lock();
-            if listener.dictation != current.dictation
-                || listener.polish != current.polish
-            {
-                *listener = current;
-            }
-        });
-    }
+    // Single shared HotkeySet between listener and AppState — mutating
+    // AppState.hotkeys is now immediately visible to the listener thread.
+    let rx = hotkey::spawn_listener(hotkeys.clone());
 
     thread::spawn(move || {
         let mut active: Option<(Recorder, PendingDictation)> = None;
@@ -775,8 +847,8 @@ fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
                     });
                 }
                 HotkeyEvent::PolishTriggered => {
-                    let cfg_arc = handle.state::<AppState>().config.clone();
-                    let cfg = cfg_arc.lock().clone();
+                    let state = handle.state::<AppState>();
+                    let cfg = state.config.lock().clone();
                     if !cfg.has_api_key() {
                         emit_status(
                             &handle,
@@ -787,9 +859,42 @@ fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
                         show_settings(&handle);
                         continue;
                     }
+                    let transform = match db::get_default_transform(&state.db) {
+                        Ok(t) => Some(t),
+                        Err(e) => {
+                            tracing::warn!("no default transform: {e:#}");
+                            None
+                        }
+                    };
                     let handle_for_task = handle.clone();
                     tauri::async_runtime::spawn(async move {
-                        polish_pipeline(handle_for_task, cfg).await;
+                        transform_pipeline(handle_for_task, cfg, transform).await;
+                    });
+                }
+                HotkeyEvent::TransformTriggered(transform_id) => {
+                    tracing::info!("TransformTriggered received: id={}", transform_id);
+                    let state = handle.state::<AppState>();
+                    let cfg = state.config.lock().clone();
+                    if !cfg.has_api_key() {
+                        emit_status(
+                            &handle,
+                            "error",
+                            Some("Set your Groq API key in Settings first.".into()),
+                        );
+                        notify(&handle, "Bulbul", "Set your Groq API key in Settings first.");
+                        show_settings(&handle);
+                        continue;
+                    }
+                    let transform = match db::get_transform(&state.db, transform_id) {
+                        Ok(t) => Some(t),
+                        Err(e) => {
+                            tracing::warn!("transform id {transform_id} missing: {e:#}");
+                            None
+                        }
+                    };
+                    let handle_for_task = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        transform_pipeline(handle_for_task, cfg, transform).await;
                     });
                 }
             }
@@ -797,93 +902,116 @@ fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
     });
 }
 
-async fn polish_pipeline(app: AppHandle, cfg: Config) {
-    // Step 1: grab the current selection by simulating Ctrl+C and reading the
-    // clipboard. Save and restore the user's existing clipboard around it.
-    let original = {
-        match arboard::Clipboard::new() {
-            Ok(mut c) => c.get_text().ok(),
-            Err(_) => None,
+async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::Transform>) {
+    tracing::info!(
+        "transform_pipeline start: transform={}",
+        transform.as_ref().map(|t| t.name.as_str()).unwrap_or("<fallback>")
+    );
+    // Reuse a single Clipboard handle across save / clear / read / paste /
+    // restore. Repeatedly opening arboard on Windows triggers OLE init/teardown
+    // cycles that can corrupt the heap when paired with rdev's keyboard hook.
+    let mut clipboard = match arboard::Clipboard::new() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("clipboard open failed: {e:#}");
+            emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
+            return;
         }
     };
 
-    // Clear the clipboard so we can detect whether a real selection exists.
-    if let Ok(mut c) = arboard::Clipboard::new() {
-        let _ = c.set_text(String::new());
-    }
+    let original = clipboard.get_text().ok();
+    let _ = clipboard.set_text(String::new());
 
     if let Err(e) = inject::send_ctrl_c() {
         emit_status(&app, "error", Some(format!("Ctrl+C failed: {e:#}")));
         notify(&app, "Bulbul polish failed", &format!("{e:#}"));
-        restore_clipboard(original);
+        restore_clipboard_with(&mut clipboard, original);
         return;
     }
 
     // Give the foreground app a moment to populate the clipboard.
-    tokio::time::sleep(Duration::from_millis(180)).await;
+    tokio::time::sleep(Duration::from_millis(220)).await;
 
-    let selected = match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
-        Ok(s) => s,
-        Err(_) => String::new(),
-    };
+    let selected = clipboard.get_text().unwrap_or_default();
 
     if selected.trim().is_empty() {
+        tracing::warn!("transform_pipeline: clipboard empty after Ctrl+C (no selection captured)");
         emit_status(
             &app,
             "error",
             Some("No text selected — highlight something first.".into()),
         );
         notify(&app, "Bulbul polish", "No text selected — highlight some text and try again.");
-        restore_clipboard(original);
+        restore_clipboard_with(&mut clipboard, original);
         return;
     }
+    tracing::info!(
+        "transform[{}] input ({} chars): {:?}",
+        transform.as_ref().map(|t| t.name.as_str()).unwrap_or("default"),
+        selected.len(),
+        selected.chars().take(200).collect::<String>()
+    );
+
+    let db = app.state::<AppState>().db.clone();
+    const FALLBACK_PROMPT: &str = "Polish the user's text: fix grammar, improve flow, preserve meaning. Return only the rewritten text.";
+    let prompt = transform.as_ref().map(|t| t.system_prompt.as_str()).unwrap_or(FALLBACK_PROMPT);
 
     emit_status(&app, "processing", None);
-    let polished = match groq::polish(&cfg, &selected).await {
+    let polished = match groq::execute_transform(&cfg, prompt, &selected).await {
         Ok(p) => p,
         Err(e) => {
-            tracing::error!("polish failed: {e:#}");
+            tracing::error!("transform failed: {e:#}");
             emit_status(&app, "error", Some(format!("{e:#}")));
-            notify(&app, "Bulbul polish failed", &format!("{e:#}"));
-            restore_clipboard(original);
+            notify(&app, "Bulbul transform failed", &format!("{e:#}"));
+            restore_clipboard_with(&mut clipboard, original);
             return;
         }
     };
+    tracing::info!(
+        "transform output ({} chars): {:?}",
+        polished.len(),
+        polished.chars().take(200).collect::<String>()
+    );
+    if let Some(t) = &transform {
+        let _ = db::bump_transform_hits(&db, t.id);
+    }
 
     if polished.trim().is_empty() {
-        emit_status(&app, "error", Some("Polish returned empty text.".into()));
-        restore_clipboard(original);
+        emit_status(&app, "error", Some("Transform returned empty text.".into()));
+        restore_clipboard_with(&mut clipboard, original);
         return;
     }
 
-    let db = app.state::<AppState>().db.clone();
     let (final_text, dict_hits) = db::apply_substitutions(&db, &polished);
     if !dict_hits.is_empty() {
         let _ = db::bump_dictionary_hits(&db, &dict_hits);
     }
 
     emit_status(&app, "injecting", None);
-    if let Err(e) = inject::inject_text(&final_text) {
-        tracing::error!("polish inject failed: {e:#}");
-        emit_status(&app, "error", Some(format!("Inject: {e:#}")));
-        notify(&app, "Bulbul polish failed", &format!("{e:#}"));
-        restore_clipboard(original);
+    if let Err(e) = clipboard.set_text(final_text.clone()) {
+        tracing::error!("clipboard write failed: {e:#}");
+        emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
+        restore_clipboard_with(&mut clipboard, original);
+        return;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    if let Err(e) = inject::send_ctrl_v() {
+        tracing::error!("Ctrl+V failed: {e:#}");
+        emit_status(&app, "error", Some(format!("Paste: {e:#}")));
+        notify(&app, "Bulbul transform failed", &format!("{e:#}"));
+        restore_clipboard_with(&mut clipboard, original);
         return;
     }
 
     emit_status(&app, "done", Some(final_text));
-    // inject_text already attempts to restore the previous clipboard; we
-    // simulated our own Ctrl+C so additionally schedule a restore after the
-    // paste settles.
+    // Give the paste a moment to land, then restore the user's clipboard.
     tokio::time::sleep(Duration::from_millis(250)).await;
-    restore_clipboard(original);
+    restore_clipboard_with(&mut clipboard, original);
 }
 
-fn restore_clipboard(original: Option<String>) {
+fn restore_clipboard_with(clipboard: &mut arboard::Clipboard, original: Option<String>) {
     if let Some(orig) = original {
-        if let Ok(mut c) = arboard::Clipboard::new() {
-            let _ = c.set_text(orig);
-        }
+        let _ = clipboard.set_text(orig);
     }
 }
 
@@ -919,7 +1047,18 @@ async fn process_pipeline(
         return;
     }
 
-    let cleaned = match groq::cleanup(&cfg, &transcript).await {
+    // Resolve a Style preset based on the foreground app (e.g. casual for
+    // WhatsApp, formal for Outlook). When disabled or no match, no extra
+    // instruction is appended.
+    let style_extra: Option<String> = if cfg.style_enabled {
+        let category = config::style_category_for_app(meta.foreground_app.as_deref());
+        let key = cfg.style_for_category(category);
+        config::style_modifier(key).map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    let cleaned = match groq::cleanup(&cfg, &transcript, style_extra.as_deref()).await {
         Ok(t) => t,
         Err(e) => {
             tracing::warn!("cleanup failed, falling back to raw: {e:#}");

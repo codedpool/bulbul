@@ -120,7 +120,11 @@ struct ChatResponse {
     choices: Vec<ChatChoice>,
 }
 
-pub async fn cleanup(cfg: &Config, transcript: &str) -> Result<String> {
+pub async fn cleanup(
+    cfg: &Config,
+    transcript: &str,
+    style_extra: Option<&str>,
+) -> Result<String> {
     if matches!(cfg.mode, CleanupMode::Raw) {
         return Ok(transcript.to_string());
     }
@@ -128,11 +132,15 @@ pub async fn cleanup(cfg: &Config, transcript: &str) -> Result<String> {
         return Ok(String::new());
     }
 
+    let style_block = style_extra
+        .map(|s| format!("\n\n{}", s))
+        .unwrap_or_default();
     let system = format!(
         "You are a voice dictation editor. The user just spoke the following text. \
-         {mode}\n\n\
+         {mode}{style}\n\n\
          Return ONLY the cleaned text. No preamble, no quotes, no commentary.",
-        mode = cfg.mode.system_instruction()
+        mode = cfg.mode.system_instruction(),
+        style = style_block,
     );
 
     let request = ChatRequest {
@@ -175,15 +183,14 @@ pub async fn cleanup(cfg: &Config, transcript: &str) -> Result<String> {
     Ok(text.trim().to_string())
 }
 
-const POLISH_SYSTEM_PROMPT: &str = "You are a writing editor. Polish the user's text:\n\
-- Fix grammar, spelling, and punctuation errors.\n\
-- Improve flow and clarity.\n\
-- Preserve the original meaning, tone, and rough length — do not add new ideas.\n\
-- Match the original register (casual stays casual, formal stays formal).\n\
-\n\
-Return ONLY the polished text. No preamble, no quotes around the output, no commentary.";
-
-pub async fn polish(cfg: &Config, text: &str) -> Result<String> {
+/// Run an arbitrary user-defined transform: send the provided system prompt
+/// plus the user-selected text to Groq's chat completion and return the
+/// rewritten body.
+pub async fn execute_transform(
+    cfg: &Config,
+    system_prompt: &str,
+    text: &str,
+) -> Result<String> {
     if !cfg.has_api_key() {
         return Err(anyhow!("Groq API key not set"));
     }
@@ -196,7 +203,7 @@ pub async fn polish(cfg: &Config, text: &str) -> Result<String> {
         messages: vec![
             ChatMessage {
                 role: "system",
-                content: POLISH_SYSTEM_PROMPT.to_string(),
+                content: system_prompt.to_string(),
             },
             ChatMessage {
                 role: "user",
@@ -213,15 +220,15 @@ pub async fn polish(cfg: &Config, text: &str) -> Result<String> {
         .json(&request)
         .send()
         .await
-        .context("POST /chat/completions (polish)")?;
+        .context("POST /chat/completions (transform)")?;
 
     let status = resp.status();
-    let body = resp.text().await.context("reading polish response body")?;
+    let body = resp.text().await.context("reading transform response body")?;
     if !status.is_success() {
-        return Err(anyhow!("Groq polish {status}: {body}"));
+        return Err(anyhow!("Groq transform {status}: {body}"));
     }
     let parsed: ChatResponse =
-        serde_json::from_str(&body).with_context(|| format!("parsing polish body: {body}"))?;
+        serde_json::from_str(&body).with_context(|| format!("parsing transform body: {body}"))?;
     let out = parsed
         .choices
         .into_iter()
