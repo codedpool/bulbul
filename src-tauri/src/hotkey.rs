@@ -1,16 +1,18 @@
 use parking_lot::Mutex;
-use rdev::{listen, Event, EventType, Key};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+use tauri::AppHandle;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 /// Minimum gap between two fires of the same hotkey. Guards against
-/// auto-repeat and spurious event bursts that would otherwise spawn
-/// many polish pipelines in parallel.
+/// auto-repeat and spurious event bursts.
 const FIRE_COOLDOWN_MS: u128 = 700;
+/// How often the release poller checks the dictation hotkey's key state.
+const RELEASE_POLL_MS: u64 = 25;
 
 #[derive(Clone, Debug)]
 pub enum HotkeyEvent {
@@ -20,7 +22,7 @@ pub enum HotkeyEvent {
     TransformTriggered(i64),
 }
 
-/// Parsed hotkey: required modifier state + optional non-modifier key.
+/// Parsed hotkey: required modifier state + non-modifier key.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ParsedHotkey {
     pub ctrl: bool,
@@ -49,10 +51,6 @@ impl ParsedHotkey {
         h
     }
 
-    pub fn rdev_key(&self) -> Option<Key> {
-        self.key.as_deref().and_then(key_name_to_rdev)
-    }
-
     pub fn is_meaningful(&self) -> bool {
         self.key.is_some() || self.ctrl || self.shift || self.alt || self.meta
     }
@@ -64,7 +62,6 @@ pub struct HotkeySet {
     pub dictation: ParsedHotkey,
     pub polish: ParsedHotkey,
     /// Per-transform slot bindings (transform_id, parsed hotkey).
-    /// Typically Alt+1 .. Alt+9 auto-assigned to the first 9 transforms.
     pub transform_bindings: Vec<(i64, ParsedHotkey)>,
 }
 
@@ -88,173 +85,230 @@ fn normalize_key_name(s: &str) -> String {
     }
 }
 
-fn key_name_to_rdev(name: &str) -> Option<Key> {
-    match name {
-        "Space" => Some(Key::Space),
-        "Tab" => Some(Key::Tab),
-        "Return" | "Enter" => Some(Key::Return),
-        "Backspace" => Some(Key::Backspace),
-        "Escape" => Some(Key::Escape),
-        "A" => Some(Key::KeyA), "B" => Some(Key::KeyB), "C" => Some(Key::KeyC),
-        "D" => Some(Key::KeyD), "E" => Some(Key::KeyE), "F" => Some(Key::KeyF),
-        "G" => Some(Key::KeyG), "H" => Some(Key::KeyH), "I" => Some(Key::KeyI),
-        "J" => Some(Key::KeyJ), "K" => Some(Key::KeyK), "L" => Some(Key::KeyL),
-        "M" => Some(Key::KeyM), "N" => Some(Key::KeyN), "O" => Some(Key::KeyO),
-        "P" => Some(Key::KeyP), "Q" => Some(Key::KeyQ), "R" => Some(Key::KeyR),
-        "S" => Some(Key::KeyS), "T" => Some(Key::KeyT), "U" => Some(Key::KeyU),
-        "V" => Some(Key::KeyV), "W" => Some(Key::KeyW), "X" => Some(Key::KeyX),
-        "Y" => Some(Key::KeyY), "Z" => Some(Key::KeyZ),
-        "0" => Some(Key::Num0), "1" => Some(Key::Num1), "2" => Some(Key::Num2),
-        "3" => Some(Key::Num3), "4" => Some(Key::Num4), "5" => Some(Key::Num5),
-        "6" => Some(Key::Num6), "7" => Some(Key::Num7), "8" => Some(Key::Num8),
-        "9" => Some(Key::Num9),
-        "F1" => Some(Key::F1), "F2" => Some(Key::F2), "F3" => Some(Key::F3),
-        "F4" => Some(Key::F4), "F5" => Some(Key::F5), "F6" => Some(Key::F6),
-        "F7" => Some(Key::F7), "F8" => Some(Key::F8), "F9" => Some(Key::F9),
-        "F10" => Some(Key::F10), "F11" => Some(Key::F11), "F12" => Some(Key::F12),
-        _ => None,
-    }
+/// Convert our internal key string ("Space", "A", "F9") to the plugin's
+/// `Code` (W3C UI Events `code` values).
+fn key_name_to_code(name: &str) -> Option<Code> {
+    Some(match name {
+        "Space" => Code::Space,
+        "Tab" => Code::Tab,
+        "Return" | "Enter" => Code::Enter,
+        "Backspace" => Code::Backspace,
+        "Escape" => Code::Escape,
+        "A" => Code::KeyA, "B" => Code::KeyB, "C" => Code::KeyC,
+        "D" => Code::KeyD, "E" => Code::KeyE, "F" => Code::KeyF,
+        "G" => Code::KeyG, "H" => Code::KeyH, "I" => Code::KeyI,
+        "J" => Code::KeyJ, "K" => Code::KeyK, "L" => Code::KeyL,
+        "M" => Code::KeyM, "N" => Code::KeyN, "O" => Code::KeyO,
+        "P" => Code::KeyP, "Q" => Code::KeyQ, "R" => Code::KeyR,
+        "S" => Code::KeyS, "T" => Code::KeyT, "U" => Code::KeyU,
+        "V" => Code::KeyV, "W" => Code::KeyW, "X" => Code::KeyX,
+        "Y" => Code::KeyY, "Z" => Code::KeyZ,
+        "0" => Code::Digit0, "1" => Code::Digit1, "2" => Code::Digit2,
+        "3" => Code::Digit3, "4" => Code::Digit4, "5" => Code::Digit5,
+        "6" => Code::Digit6, "7" => Code::Digit7, "8" => Code::Digit8,
+        "9" => Code::Digit9,
+        "F1" => Code::F1, "F2" => Code::F2, "F3" => Code::F3,
+        "F4" => Code::F4, "F5" => Code::F5, "F6" => Code::F6,
+        "F7" => Code::F7, "F8" => Code::F8, "F9" => Code::F9,
+        "F10" => Code::F10, "F11" => Code::F11, "F12" => Code::F12,
+        _ => return None,
+    })
 }
 
-pub fn spawn_listener(set: Arc<Mutex<HotkeySet>>) -> Receiver<HotkeyEvent> {
-    let (tx, rx) = mpsc::channel();
-    let set_inner = set.clone();
+/// Convert our key string to a Windows virtual-key code for `GetAsyncKeyState`.
+fn key_name_to_vk(name: &str) -> Option<i32> {
+    let code: i32 = match name {
+        "Space" => 0x20,
+        "Tab" => 0x09,
+        "Return" | "Enter" => 0x0D,
+        "Backspace" => 0x08,
+        "Escape" => 0x1B,
+        // Letters: VK_<A-Z> is just ASCII upper.
+        x if x.len() == 1 && x.chars().next().unwrap().is_ascii_uppercase() => {
+            x.chars().next().unwrap() as i32
+        }
+        // Digits: VK_0..VK_9 are ASCII '0'..'9'.
+        x if x.len() == 1 && x.chars().next().unwrap().is_ascii_digit() => {
+            x.chars().next().unwrap() as i32
+        }
+        // F1..F12 = 0x70..0x7B.
+        x if x.starts_with('F') && x[1..].chars().all(|c| c.is_ascii_digit()) => {
+            let n: u8 = x[1..].parse().ok()?;
+            if (1..=12).contains(&n) {
+                0x70 + (n as i32 - 1)
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+    Some(code)
+}
 
+pub fn parsed_to_shortcut(h: &ParsedHotkey) -> Option<Shortcut> {
+    let mut mods = Modifiers::empty();
+    if h.ctrl {
+        mods |= Modifiers::CONTROL;
+    }
+    if h.shift {
+        mods |= Modifiers::SHIFT;
+    }
+    if h.alt {
+        mods |= Modifiers::ALT;
+    }
+    if h.meta {
+        mods |= Modifiers::SUPER;
+    }
+    let code = key_name_to_code(h.key.as_deref()?)?;
+    Some(Shortcut::new(Some(mods), code))
+}
+
+fn is_key_down(vk: i32) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+    unsafe { GetAsyncKeyState(vk) < 0 }
+}
+
+/// Hold-to-talk release detector. RegisterHotKey only signals key-down;
+/// we poll the actual key state to detect when the user lets go.
+fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+    let Some(main_vk) = hotkey.key.as_deref().and_then(key_name_to_vk) else {
+        return;
+    };
     thread::spawn(move || {
-        let pressed: Arc<Mutex<HashSet<Key>>> = Arc::new(Mutex::new(HashSet::new()));
-        let dict_active = Arc::new(Mutex::new(false));
-        let polish_active = Arc::new(Mutex::new(false));
-        let transform_active: Arc<Mutex<HashSet<i64>>> = Arc::new(Mutex::new(HashSet::new()));
-        let last_polish_fire: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-        let last_transform_fire: Arc<Mutex<HashMap<i64, Instant>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        let tx: Sender<HotkeyEvent> = tx;
-
-        if let Err(e) = listen(move |event: Event| {
-            handle_event(
-                &event,
-                &pressed,
-                &dict_active,
-                &polish_active,
-                &transform_active,
-                &last_polish_fire,
-                &last_transform_fire,
-                &set_inner,
-                &tx,
-            );
-        }) {
-            tracing::error!("rdev listener died: {e:?}");
+        // Safety net: regardless of polling result, never let this thread
+        // outlive a reasonable upper bound on a press. 60 seconds covers
+        // even the most generous dictation; if we hit it we fire release
+        // anyway so the orchestrator doesn't get stuck.
+        let started = Instant::now();
+        loop {
+            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
+            if started.elapsed() > Duration::from_secs(60) {
+                tracing::warn!("release poller timed out — forcing release");
+                let _ = tx.send(HotkeyEvent::DictationReleased);
+                return;
+            }
+            let main_down = is_key_down(main_vk);
+            let ctrl_ok = !hotkey.ctrl || is_key_down(VK_CONTROL.0 as i32);
+            let shift_ok = !hotkey.shift || is_key_down(VK_SHIFT.0 as i32);
+            let alt_ok = !hotkey.alt || is_key_down(VK_MENU.0 as i32);
+            let meta_ok = !hotkey.meta
+                || is_key_down(VK_LWIN.0 as i32)
+                || is_key_down(VK_RWIN.0 as i32);
+            if !(main_down && ctrl_ok && shift_ok && alt_ok && meta_ok) {
+                let _ = tx.send(HotkeyEvent::DictationReleased);
+                return;
+            }
         }
     });
-
-    rx
 }
 
-fn handle_event(
-    event: &Event,
-    pressed: &Arc<Mutex<HashSet<Key>>>,
-    dict_active: &Arc<Mutex<bool>>,
-    polish_active: &Arc<Mutex<bool>>,
-    transform_active: &Arc<Mutex<HashSet<i64>>>,
-    last_polish_fire: &Arc<Mutex<Option<Instant>>>,
-    last_transform_fire: &Arc<Mutex<HashMap<i64, Instant>>>,
-    set: &Arc<Mutex<HotkeySet>>,
-    tx: &Sender<HotkeyEvent>,
+/// Create the hotkey channel. Returns (tx, rx). The tx is stored in
+/// AppState so re-registration after a settings change reuses the same
+/// channel; the rx feeds the orchestrator.
+pub fn make_channel() -> (Sender<HotkeyEvent>, Receiver<HotkeyEvent>) {
+    mpsc::channel::<HotkeyEvent>()
+}
+
+/// Register the current hotkeys with the global-shortcut plugin, wiring
+/// callbacks into the provided sender. Call again after a settings change
+/// to re-register; the orchestrator's receiver does not need to be rebuilt.
+pub fn install_global_shortcuts(
+    app: &AppHandle,
+    set: Arc<Mutex<HotkeySet>>,
+    tx: Sender<HotkeyEvent>,
 ) {
-    let (key, is_down) = match event.event_type {
-        EventType::KeyPress(k) => (k, true),
-        EventType::KeyRelease(k) => (k, false),
-        _ => return,
-    };
+    re_register(app, &set, tx);
+}
 
-    {
-        let mut p = pressed.lock();
-        if is_down {
-            p.insert(key);
+fn re_register(app: &AppHandle, set: &Arc<Mutex<HotkeySet>>, tx: Sender<HotkeyEvent>) {
+    let gs = app.global_shortcut();
+    if let Err(e) = gs.unregister_all() {
+        tracing::warn!("unregister_all failed: {e:#}");
+    }
+
+    let snapshot = set.lock().clone();
+
+    // Dictation: press + release semantics via plugin press + poller.
+    if let Some(dict_sc) = parsed_to_shortcut(&snapshot.dictation) {
+        let tx_dict = tx.clone();
+        let dict_parsed = snapshot.dictation.clone();
+        let dict_active = Arc::new(Mutex::new(false));
+        let last_fire = Arc::new(Mutex::new(None::<Instant>));
+        let handler = move |_app: &AppHandle, sc: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent| {
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            // Cooldown + already-active gate to ignore auto-repeat.
+            {
+                let mut active = dict_active.lock();
+                if *active {
+                    return;
+                }
+                let mut last = last_fire.lock();
+                let cooled = last.map_or(true, |t: Instant| {
+                    t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+                });
+                if !cooled {
+                    return;
+                }
+                *active = true;
+                *last = Some(Instant::now());
+            }
+            tracing::debug!("global-shortcut dictation pressed: {:?}", sc);
+            let _ = tx_dict.send(HotkeyEvent::DictationPressed);
+
+            // Spawn a one-shot poller that watches for release, sends the
+            // release event, then clears `dict_active` so the next press
+            // can fire again.
+            let tx_release = tx_dict.clone();
+            let parsed = dict_parsed.clone();
+            let dict_active_clone = dict_active.clone();
+            thread::spawn(move || {
+                let (poll_tx, poll_rx) = mpsc::channel();
+                spawn_release_poller(poll_tx, parsed);
+                if let Ok(evt) = poll_rx.recv() {
+                    let _ = tx_release.send(evt);
+                }
+                *dict_active_clone.lock() = false;
+            });
+        };
+        if let Err(e) = gs.on_shortcut(dict_sc, handler) {
+            tracing::warn!(
+                "register dictation hotkey failed (combo unsupported by RegisterHotKey?): {e:#}"
+            );
         } else {
-            p.remove(&key);
+            tracing::info!("registered dictation shortcut: {:?}", snapshot.dictation);
         }
     }
 
-    let snapshot = pressed.lock().clone();
-    let current = set.lock().clone();
-
-    // Dictation: press + release events for hold-to-talk semantics.
-    let dict_matches = matches(&snapshot, &current.dictation);
-    {
-        let mut a = dict_active.lock();
-        if !*a && dict_matches {
-            *a = true;
-            let _ = tx.send(HotkeyEvent::DictationPressed);
-        } else if *a && !dict_matches {
-            *a = false;
-            let _ = tx.send(HotkeyEvent::DictationReleased);
-        }
-    }
-
-    // Polish: single event on the press edge, plus a hard time-based gate
-    // so auto-repeat or spurious modifier blips can't fire it again before
-    // the previous pipeline has had a chance to start.
-    if current.polish.is_meaningful() {
-        let polish_matches = matches(&snapshot, &current.polish);
-        let mut a = polish_active.lock();
-        if !*a && polish_matches {
-            *a = true;
-            if cooldown_elapsed(&last_polish_fire.lock(), FIRE_COOLDOWN_MS) {
-                *last_polish_fire.lock() = Some(Instant::now());
-                let _ = tx.send(HotkeyEvent::PolishTriggered);
+    // Polish: single-shot press only.
+    if let Some(polish_sc) = parsed_to_shortcut(&snapshot.polish) {
+        let tx_pol = tx.clone();
+        let last_polish = Arc::new(Mutex::new(None::<Instant>));
+        let handler = move |_app: &AppHandle, _sc: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent| {
+            if event.state() != ShortcutState::Pressed {
+                return;
             }
-        } else if *a && !polish_matches {
-            *a = false;
-        }
-    }
-
-    // Per-transform slot hotkeys (Alt+1, Alt+2, ...). Each id has its own
-    // press-edge tracker and time gate.
-    let mut active = transform_active.lock();
-    let mut last_fire = last_transform_fire.lock();
-    for (transform_id, hk) in &current.transform_bindings {
-        if !hk.is_meaningful() {
-            continue;
-        }
-        let is_match = matches(&snapshot, hk);
-        let was_active = active.contains(transform_id);
-        if !was_active && is_match {
-            active.insert(*transform_id);
-            let cooled = last_fire
-                .get(transform_id)
-                .map_or(true, |t| t.elapsed().as_millis() >= FIRE_COOLDOWN_MS);
-            if cooled {
-                last_fire.insert(*transform_id, Instant::now());
-                let _ = tx.send(HotkeyEvent::TransformTriggered(*transform_id));
+            let mut last = last_polish.lock();
+            let cooled = last.map_or(true, |t: Instant| {
+                t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+            });
+            if !cooled {
+                return;
             }
-        } else if was_active && !is_match {
-            active.remove(transform_id);
+            *last = Some(Instant::now());
+            let _ = tx_pol.send(HotkeyEvent::PolishTriggered);
+        };
+        if let Err(e) = gs.on_shortcut(polish_sc, handler) {
+            tracing::warn!("register polish hotkey failed: {e:#}");
+        } else {
+            tracing::info!("registered polish shortcut: {:?}", snapshot.polish);
         }
     }
-}
 
-fn cooldown_elapsed(last: &Option<Instant>, gate_ms: u128) -> bool {
-    match last {
-        Some(t) => t.elapsed().as_millis() >= gate_ms,
-        None => true,
-    }
-}
-
-fn matches(pressed: &HashSet<Key>, h: &ParsedHotkey) -> bool {
-    if !h.is_meaningful() {
-        return false;
-    }
-    let ctrl_d = pressed.contains(&Key::ControlLeft) || pressed.contains(&Key::ControlRight);
-    let shift_d = pressed.contains(&Key::ShiftLeft) || pressed.contains(&Key::ShiftRight);
-    let alt_d = pressed.contains(&Key::Alt) || pressed.contains(&Key::AltGr);
-    let meta_d = pressed.contains(&Key::MetaLeft) || pressed.contains(&Key::MetaRight);
-
-    if h.ctrl != ctrl_d || h.shift != shift_d || h.alt != alt_d || h.meta != meta_d {
-        return false;
-    }
-    match h.rdev_key() {
-        Some(k) => pressed.contains(&k),
-        None => true,
-    }
+    // Transform slot bindings are deferred (see lib.rs) — none registered.
+    let _ = snapshot.transform_bindings;
 }

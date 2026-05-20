@@ -130,8 +130,27 @@ export default function Overlay() {
             <WandIcon />
           </button>
         )}
+
+        {showSatellites && (
+          <button
+            className="sat scratch-btn"
+            title="Open Scratchpad"
+            onClick={() => invoke("open_scratchpad").catch(() => {})}
+          >
+            <NoteIcon />
+          </button>
+        )}
       </div>
     </div>
+  );
+}
+
+function NoteIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M14 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+      <path d="m18 2 4 4-10 10H8v-4z" />
+    </svg>
   );
 }
 

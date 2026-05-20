@@ -1462,6 +1462,193 @@ kbd {
   margin-bottom: 8px;
 }
 
+/* ─────────── Scratchpad ─────────── */
+
+.scratchpad-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 76px);
+  max-width: none;
+}
+
+.scratchpad-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 14px;
+  min-height: 0;
+}
+
+.scratch-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.scratch-search {
+  flex-shrink: 0;
+}
+
+.scratch-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 4px;
+  min-height: 0;
+}
+
+.list-empty {
+  padding: 24px 8px;
+  text-align: center;
+}
+
+.note-item {
+  background: #111;
+  border: 1px solid #1a1a1a;
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+  position: relative;
+}
+
+.note-item:hover {
+  border-color: #262626;
+}
+
+.note-item.active {
+  border-color: rgba(94, 200, 192, 0.45);
+  background: linear-gradient(180deg, rgba(94, 200, 192, 0.05) 0%, #111 60%);
+}
+
+.note-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.note-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e6e6e6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.note-item-delete {
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  transition: opacity 120ms ease;
+}
+
+.note-item:hover .note-item-delete { opacity: 1; }
+
+.note-item-preview {
+  font-size: 11px;
+  color: #8a8a8a;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-item-time {
+  font-size: 10px;
+  color: #6e6e6e;
+  margin-top: 4px;
+}
+
+.scratch-editor {
+  background: #111;
+  border: 1px solid #1c1c1c;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scratch-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  text-align: center;
+}
+
+.scratch-empty h2 {
+  font-family: ui-serif, Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+  color: #c8c8c8;
+}
+
+.scratch-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #1a1a1a;
+  flex-shrink: 0;
+}
+
+.scratch-title {
+  flex: 1;
+  background: transparent !important;
+  border: none !important;
+  color: #e6e6e6;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  outline: none;
+  padding: 0 !important;
+}
+
+.scratch-title::placeholder { color: #555; }
+
+.scratch-body {
+  flex: 1;
+  background: transparent;
+  border: none;
+  resize: none;
+  outline: none;
+  padding: 18px;
+  font-family: -apple-system, "Segoe UI", "Inter", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #d6d6d6;
+  min-height: 0;
+}
+
+.scratch-body::placeholder { color: #555; }
+
+.save-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.save-badge.dirty { background: #1a1a1a; color: #8a8a8a; border: 1px solid #262626; }
+.save-badge.saving { background: rgba(212, 166, 87, 0.15); color: #d4a657; border: 1px solid rgba(212, 166, 87, 0.30); }
+.save-badge.saved { background: rgba(94, 200, 192, 0.15); color: #5ec8c0; border: 1px solid rgba(94, 200, 192, 0.30); }
+
 /* ─────────── Style ─────────── */
 
 .style-page .dictionary-header {

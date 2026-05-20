@@ -1,0 +1,332 @@
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #0e0e0e;
+  color: #e6e6e6;
+  font-family: -apple-system, "Segoe UI", "Inter", sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+* { box-sizing: border-box; }
+
+.sp-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #0e0e0e;
+}
+
+/* ─────────── Body / sidebar ─────────── */
+
+.sp-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.sp-sidebar {
+  width: 230px;
+  flex-shrink: 0;
+  background: #0a0a0a;
+  border-right: 1px solid #161616;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px;
+  gap: 4px;
+  min-height: 0;
+}
+
+.sp-side-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #c8c8c8;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.sp-side-btn:hover {
+  background: #161616;
+  color: #e6e6e6;
+}
+
+.sp-side-btn svg { color: #8a8a8a; }
+.sp-side-btn:hover svg { color: #e6e6e6; }
+
+.sp-side-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+}
+
+.sp-side-search svg { color: #8a8a8a; }
+
+.sp-side-search input {
+  background: transparent;
+  border: none;
+  outline: none;
+  flex: 1;
+  color: #e6e6e6;
+  font: inherit;
+  font-size: 13px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.sp-side-search input::placeholder { color: #6e6e6e; }
+
+.sp-side-sep {
+  margin: 6px 8px;
+  border-top: 1px solid #161616;
+}
+
+.sp-note-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 4px;
+  min-height: 0;
+}
+
+.sp-side-empty {
+  text-align: center;
+  color: #6e6e6e;
+  font-size: 12px;
+  padding: 24px 8px;
+}
+
+.sp-note-item {
+  position: relative;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 9px 12px 10px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: background 120ms ease, border-color 120ms ease;
+  font: inherit;
+  color: inherit;
+}
+
+.sp-note-item:hover {
+  background: #141414;
+}
+
+.sp-note-item.active {
+  background: rgba(94, 200, 192, 0.10);
+  border-color: rgba(94, 200, 192, 0.20);
+}
+
+.sp-note-item-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #e6e6e6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-note-item-preview {
+  font-size: 11px;
+  color: #8a8a8a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-note-item-trash {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: transparent;
+  border: none;
+  color: #6e6e6e;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.sp-note-item:hover .sp-note-item-trash { opacity: 1; }
+.sp-note-item-trash:hover { background: rgba(212, 107, 107, 0.15); color: #d46b6b; }
+
+/* Collapsed sidebar handle */
+.sp-sidebar-handle {
+  width: 36px;
+  background: #0a0a0a;
+  border: none;
+  border-right: 1px solid #161616;
+  color: #8a8a8a;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12px;
+  transition: color 120ms ease;
+}
+
+.sp-sidebar-handle:hover { color: #e6e6e6; }
+
+/* ─────────── Editor ─────────── */
+
+.sp-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  background: #0e0e0e;
+}
+
+.sp-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  text-align: center;
+  gap: 14px;
+}
+
+.sp-empty h2 {
+  font-family: ui-serif, Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: #d0d0d0;
+}
+
+.sp-empty p {
+  color: #8a8a8a;
+  margin: 0;
+}
+
+.sp-cta {
+  margin-top: 8px;
+  background: #f5f5f5;
+  color: #0e0e0e;
+  border: none;
+  border-radius: 999px;
+  padding: 9px 18px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.sp-cta:hover { background: #ffffff; }
+
+.sp-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px 8px;
+}
+
+.sp-title {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #e6e6e6;
+  font-family: ui-serif, Georgia, serif;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.sp-title::placeholder { color: #555; }
+
+.sp-body-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  resize: none;
+  outline: none;
+  padding: 8px 22px 22px;
+  font-family: -apple-system, "Segoe UI", "Inter", sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #d6d6d6;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.sp-body-input::placeholder { color: #555; }
+
+.sp-save {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.sp-save.dirty { background: #1a1a1a; color: #8a8a8a; border: 1px solid #262626; }
+.sp-save.saving { background: rgba(212, 166, 87, 0.15); color: #d4a657; border: 1px solid rgba(212, 166, 87, 0.30); }
+.sp-save.saved { background: rgba(94, 200, 192, 0.15); color: #5ec8c0; border: 1px solid rgba(94, 200, 192, 0.30); }
+
+/* Floating Copy button */
+.sp-copy {
+  position: absolute;
+  bottom: 20px;
+  right: 22px;
+  background: #1a1a1a;
+  color: #e6e6e6;
+  border: 1px solid #262626;
+  border-radius: 999px;
+  padding: 8px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.sp-copy:hover:not(:disabled) {
+  background: #222;
+  border-color: #5ec8c0;
+}
+
+.sp-copy:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sp-copy svg { color: #d4d4d4; }

@@ -31,6 +31,9 @@ const OVERLAY_BOTTOM_MARGIN: f64 = 4.0;
 pub struct AppState {
     config: Arc<Mutex<Config>>,
     hotkeys: Arc<Mutex<HotkeySet>>,
+    /// Sender feeding the orchestrator. Stored so that re-registering
+    /// shortcuts after a settings change reuses the same channel.
+    hotkey_tx: std::sync::mpsc::Sender<HotkeyEvent>,
     icons: Arc<IconVariants>,
     db: db::Db,
 }
@@ -91,6 +94,7 @@ struct StatusPayload {
 }
 
 fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
+    tracing::debug!("emit_status: state={state}");
     let _ = app.emit(
         "bulbul-status",
         StatusPayload {
@@ -98,6 +102,21 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
             message: message.clone(),
         },
     );
+    // Force the overlay above Bulbul's own main window when an active state
+    // begins. `always_on_top: true` was set at window creation but Windows
+    // doesn't reliably honour that between same-process windows — we have
+    // to call SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE) ourselves, and
+    // dispatch it to the UI thread (some Win32 calls are flaky cross-thread).
+    if matches!(state, "listening" | "processing" | "injecting") {
+        let app_for_top = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(overlay) = app_for_top.get_webview_window("overlay") {
+                bring_overlay_to_top(&overlay);
+            } else {
+                tracing::warn!("emit_status: no overlay window found for state={state}");
+            }
+        });
+    }
     // After a terminal state, fall back to idle so the overlay shrinks.
     if matches!(state, "done" | "error") {
         let app_clone = app.clone();
@@ -112,6 +131,67 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
             );
         });
     }
+}
+
+/// Pull the overlay to the very top of the system z-order without taking
+/// focus. We do this via raw FFI to avoid a HWND type mismatch between
+/// Tauri's bundled `windows` crate version and our own.
+fn bring_overlay_to_top(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::c_void;
+        type HwndPtr = *mut c_void;
+        const HWND_TOPMOST: HwndPtr = -1isize as HwndPtr;
+        const SWP_NOMOVE: u32 = 0x0002;
+        const SWP_NOSIZE: u32 = 0x0001;
+        const SWP_NOACTIVATE: u32 = 0x0010;
+        const SWP_SHOWWINDOW: u32 = 0x0040;
+
+        #[link(name = "user32")]
+        extern "system" {
+            fn SetWindowPos(
+                h_wnd: HwndPtr,
+                h_wnd_insert_after: HwndPtr,
+                x: i32,
+                y: i32,
+                cx: i32,
+                cy: i32,
+                u_flags: u32,
+            ) -> i32;
+        }
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetLastError() -> u32;
+        }
+
+        let hwnd = match window.hwnd() {
+            Ok(h) => h.0 as HwndPtr,
+            Err(e) => {
+                tracing::warn!("could not get overlay HWND: {e:#}");
+                return;
+            }
+        };
+        let result = unsafe {
+            SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )
+        };
+        if result == 0 {
+            let err = unsafe { GetLastError() };
+            tracing::warn!("SetWindowPos(TOPMOST) failed: GetLastError={err}, hwnd={hwnd:?}");
+        } else {
+            tracing::info!("SetWindowPos(TOPMOST) ok for overlay hwnd={hwnd:?}");
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
 }
 
 fn position_overlay_bottom_center(app: &AppHandle) {
@@ -257,9 +337,12 @@ fn save_config(
         update_tray_icon(&app, next_has_key);
     }
     if prev_hotkey != next_hotkey || prev_polish != next_polish {
-        let mut set = state.hotkeys.lock();
-        set.dictation = ParsedHotkey::parse(&next_hotkey);
-        set.polish = ParsedHotkey::parse(&next_polish);
+        {
+            let mut set = state.hotkeys.lock();
+            set.dictation = ParsedHotkey::parse(&next_hotkey);
+            set.polish = ParsedHotkey::parse(&next_polish);
+        }
+        hotkey::install_global_shortcuts(&app, state.hotkeys.clone(), state.hotkey_tx.clone());
     }
     Ok(())
 }
@@ -484,6 +567,96 @@ fn reset_transforms(state: tauri::State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn list_notes(state: tauri::State<'_, AppState>) -> Result<Vec<db::Note>, String> {
+    db::list_notes(&state.db).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn get_note(id: i64, state: tauri::State<'_, AppState>) -> Result<db::Note, String> {
+    db::get_note(&state.db, id).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn create_note(
+    title: String,
+    body: String,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<db::Note, String> {
+    let note = db::create_note(&state.db, &title, &body).map_err(|e| format!("{e:#}"))?;
+    let _ = app.emit("notes-changed", ());
+    Ok(note)
+}
+
+#[tauri::command]
+fn update_note(
+    id: i64,
+    title: String,
+    body: String,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    db::update_note(&state.db, id, &title, &body).map_err(|e| format!("{e:#}"))?;
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_note(
+    id: i64,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    db::delete_note(&state.db, id).map_err(|e| format!("{e:#}"))?;
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn open_scratchpad(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("scratchpad")
+        .ok_or_else(|| "scratchpad window not initialized".to_string())?;
+    // Hide-on-close means the window persists; just bring it back.
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
+    // Pre-create the scratchpad window at startup, hidden. Creating it lazily
+    // on first user click was hanging the WebView (white screen, unresponsive
+    // controls) — we suspect a Tauri 2 + WebView2 quirk around lazy window
+    // creation in dev mode. Building it during boot gives the WebView2 host
+    // time to fully initialize before the user ever interacts with it.
+    let window = WebviewWindowBuilder::new(
+        app,
+        "scratchpad",
+        WebviewUrl::App("index.html#scratchpad".into()),
+    )
+    .title("Bulbul Scratchpad")
+    .inner_size(760.0, 540.0)
+    .min_inner_size(520.0, 380.0)
+    .decorations(true)
+    .center()
+    .resizable(true)
+    .skip_taskbar(false)
+    .visible(false)
+    .build()?;
+
+    // Intercept the X button so the window persists across opens.
+    let win_handle = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = win_handle.hide();
+        }
+    });
+    Ok(())
+}
+
 /// Resize the overlay window to a new logical height while keeping the
 /// width constant and re-anchoring the bottom edge above the taskbar.
 /// Called from the frontend when the language dropdown opens or closes.
@@ -563,6 +736,8 @@ pub fn run() {
         transform_bindings: Vec::new(),
     };
     let hotkey_mutex = Arc::new(Mutex::new(initial_set));
+    let (hotkey_tx, hotkey_rx) = hotkey::make_channel();
+    let hotkey_rx_for_setup = Mutex::new(Some(hotkey_rx));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -572,6 +747,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
@@ -601,6 +777,12 @@ pub fn run() {
             delete_transform,
             set_default_transform,
             reset_transforms,
+            list_notes,
+            get_note,
+            create_note,
+            update_note,
+            delete_note,
+            open_scratchpad,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -628,12 +810,20 @@ pub fn run() {
             handle.manage(AppState {
                 config: Arc::new(Mutex::new(initial_config)),
                 hotkeys: hotkey_mutex.clone(),
+                hotkey_tx: hotkey_tx.clone(),
                 icons,
                 db: db_handle,
             });
 
+            hotkey::install_global_shortcuts(
+                &handle,
+                hotkey_mutex.clone(),
+                hotkey_tx.clone(),
+            );
+
             setup_tray(&handle, has_key_on_boot)?;
             setup_overlay_window(&handle)?;
+            setup_scratchpad_window(&handle)?;
 
             if let Some(window) = handle.get_webview_window("main") {
                 let cfg = handle.state::<AppState>().config.clone();
@@ -657,7 +847,11 @@ pub fn run() {
             // Initial transform slot hotkey bindings.
             refresh_transform_bindings(&handle.state::<AppState>());
 
-            spawn_orchestrator(handle.clone(), hotkey_mutex.clone());
+            let rx = hotkey_rx_for_setup
+                .lock()
+                .take()
+                .expect("hotkey rx already consumed");
+            spawn_orchestrator(handle.clone(), rx);
             spawn_hover_watcher(handle.clone());
             Ok(())
         })
@@ -759,10 +953,9 @@ fn show_settings(app: &AppHandle) {
     }
 }
 
-fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
-    // Single shared HotkeySet between listener and AppState — mutating
-    // AppState.hotkeys is now immediately visible to the listener thread.
-    let rx = hotkey::spawn_listener(hotkeys.clone());
+fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEvent>) {
+    // The receiver is wired up at boot in `setup`; the plugin's press
+    // handlers + release poller (see hotkey.rs) send events through it.
 
     thread::spawn(move || {
         let mut active: Option<(Recorder, PendingDictation)> = None;

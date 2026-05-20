@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for Bulbul windows",
-  "windows": ["main", "overlay"],
+  "windows": ["main", "overlay", "scratchpad"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
@@ -16,6 +16,7 @@
     "autostart:default",
     "autostart:allow-enable",
     "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "autostart:allow-is-enabled",
+    "global-shortcut:default"
   ]
 }

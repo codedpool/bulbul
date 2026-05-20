@@ -65,6 +65,16 @@ CREATE TABLE IF NOT EXISTS transforms (
     hit_count       INTEGER NOT NULL DEFAULT 0,
     created_at      INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL DEFAULT '',
+    body        TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC);
 "#;
 
 const DEFAULT_TRANSFORMS: &[(&str, &str, &str)] = &[
@@ -843,6 +853,98 @@ pub fn reset_transforms_to_defaults(db: &Db) -> Result<()> {
     drop(conn);
     let conn = db.lock();
     seed_default_transforms(&conn)?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize, serde::Deserialize, Clone)]
+pub struct Note {
+    pub id: i64,
+    pub title: String,
+    pub body: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+pub fn list_notes(db: &Db) -> Result<Vec<Note>> {
+    let conn = db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT id, title, body, created_at, updated_at
+         FROM notes ORDER BY updated_at DESC",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(Note {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                body: r.get(2)?,
+                created_at: r.get(3)?,
+                updated_at: r.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+pub fn get_note(db: &Db, id: i64) -> Result<Note> {
+    let conn = db.lock();
+    let row = conn.query_row(
+        "SELECT id, title, body, created_at, updated_at FROM notes WHERE id = ?",
+        [id],
+        |r| {
+            Ok(Note {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                body: r.get(2)?,
+                created_at: r.get(3)?,
+                updated_at: r.get(4)?,
+            })
+        },
+    )?;
+    Ok(row)
+}
+
+pub fn create_note(db: &Db, title: &str, body: &str) -> Result<Note> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = db.lock();
+    conn.execute(
+        "INSERT INTO notes (title, body, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        params![title, body, now, now],
+    )?;
+    let id = conn.last_insert_rowid();
+    Ok(Note {
+        id,
+        title: title.to_string(),
+        body: body.to_string(),
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+pub fn update_note(db: &Db, id: i64, title: &str, body: &str) -> Result<()> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = db.lock();
+    let affected = conn.execute(
+        "UPDATE notes SET title = ?, body = ?, updated_at = ? WHERE id = ?",
+        params![title, body, now, id],
+    )?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no note with id {id}"));
+    }
+    Ok(())
+}
+
+pub fn delete_note(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock();
+    let affected = conn.execute("DELETE FROM notes WHERE id = ?", params![id])?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no note with id {id}"));
+    }
     Ok(())
 }
 

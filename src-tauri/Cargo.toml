@@ -18,6 +18,9 @@ tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
+# OS-level RegisterHotKey, used because rdev's low-level hook is suppressed
+# when Bulbul's own webview has focus.
+tauri-plugin-global-shortcut = "2"
 
 # Local persistence (activity log + V2 data)
 rusqlite = { version = "0.31", features = ["bundled"] }
@@ -34,9 +37,6 @@ hound = "3.5"
 # HTTP / Groq
 reqwest = { version = "0.12", default-features = false, features = ["multipart", "json", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
-
-# Global hotkey with press+release semantics
-rdev = "0.5"
 
 # Clipboard
 arboard = "3"
