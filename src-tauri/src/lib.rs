@@ -861,7 +861,16 @@ async fn process_pipeline(
     meta: PendingDictation,
     duration_ms: u64,
 ) {
-    let transcript = match groq::transcribe(&cfg, wav).await {
+    // Hand the dictionary's canonical spellings to Whisper as a prompt hint —
+    // biases the STT toward the user's preferred forms (e.g. "Groq", "iOS").
+    let db = app.state::<AppState>().db.clone();
+    let vocabulary: Vec<String> = db::list_dictionary(&db)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| e.to_word)
+        .collect();
+
+    let transcript = match groq::transcribe(&cfg, wav, &vocabulary).await {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("STT failed: {e:#}");
@@ -886,7 +895,6 @@ async fn process_pipeline(
     };
     tracing::debug!("cleaned: {cleaned}");
 
-    let db = app.state::<AppState>().db.clone();
     let (final_text, dict_hits) = db::apply_substitutions(&db, &cleaned);
     if !dict_hits.is_empty() {
         tracing::debug!("dictionary applied {} fix(es)", dict_hits.iter().map(|(_, c)| c).sum::<i64>());

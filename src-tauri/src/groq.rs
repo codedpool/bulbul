@@ -41,7 +41,11 @@ pub fn is_likely_hallucination(text: &str) -> bool {
     HALLUCINATION_DENYLIST.iter().any(|d| *d == stripped)
 }
 
-pub async fn transcribe(cfg: &Config, wav_bytes: Vec<u8>) -> Result<String> {
+pub async fn transcribe(
+    cfg: &Config,
+    wav_bytes: Vec<u8>,
+    vocabulary: &[String],
+) -> Result<String> {
     if !cfg.has_api_key() {
         return Err(anyhow!("Groq API key not set"));
     }
@@ -58,6 +62,16 @@ pub async fn transcribe(cfg: &Config, wav_bytes: Vec<u8>) -> Result<String> {
     let lang = cfg.language.trim();
     if !lang.is_empty() && lang != "auto" {
         form = form.text("language", lang.to_string());
+    }
+    // Dictionary entries become a `prompt` hint so Whisper biases toward the
+    // user's preferred spellings (e.g. "Groq", "GitHub", "iOS") at
+    // transcription time. Capped well under Whisper's 224-token limit.
+    if !vocabulary.is_empty() {
+        let mut joined = vocabulary.join(", ");
+        if joined.chars().count() > 600 {
+            joined = joined.chars().take(600).collect();
+        }
+        form = form.text("prompt", joined);
     }
 
     let resp = client
