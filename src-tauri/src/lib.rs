@@ -289,6 +289,42 @@ fn get_recent_dictations(
     db::recent_dictations(&state.db, limit).map_err(|e| format!("{e:#}"))
 }
 
+#[tauri::command]
+fn list_dictionary(state: tauri::State<'_, AppState>) -> Result<Vec<db::DictionaryEntry>, String> {
+    db::list_dictionary(&state.db).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn add_dictionary_entry(
+    from_word: String,
+    to_word: String,
+    case_sensitive: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<db::DictionaryEntry, String> {
+    db::add_dictionary_entry(&state.db, &from_word, &to_word, case_sensitive)
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn update_dictionary_entry(
+    id: i64,
+    from_word: String,
+    to_word: String,
+    case_sensitive: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    db::update_dictionary_entry(&state.db, id, &from_word, &to_word, case_sensitive)
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn delete_dictionary_entry(
+    id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    db::delete_dictionary_entry(&state.db, id).map_err(|e| format!("{e:#}"))
+}
+
 /// Resize the overlay window to a new logical height while keeping the
 /// width constant and re-anchoring the bottom edge above the taskbar.
 /// Called from the frontend when the language dropdown opens or closes.
@@ -387,6 +423,10 @@ pub fn run() {
             set_overlay_height,
             get_home_stats,
             get_recent_dictations,
+            list_dictionary,
+            add_dictionary_entry,
+            update_dictionary_entry,
+            delete_dictionary_entry,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -726,8 +766,14 @@ async fn polish_pipeline(app: AppHandle, cfg: Config) {
         return;
     }
 
+    let db = app.state::<AppState>().db.clone();
+    let (final_text, dict_hits) = db::apply_substitutions(&db, &polished);
+    if !dict_hits.is_empty() {
+        let _ = db::bump_dictionary_hits(&db, &dict_hits);
+    }
+
     emit_status(&app, "injecting", None);
-    if let Err(e) = inject::inject_text(&polished) {
+    if let Err(e) = inject::inject_text(&final_text) {
         tracing::error!("polish inject failed: {e:#}");
         emit_status(&app, "error", Some(format!("Inject: {e:#}")));
         notify(&app, "Bulbul polish failed", &format!("{e:#}"));
@@ -735,7 +781,7 @@ async fn polish_pipeline(app: AppHandle, cfg: Config) {
         return;
     }
 
-    emit_status(&app, "done", Some(polished));
+    emit_status(&app, "done", Some(final_text));
     // inject_text already attempts to restore the previous clipboard; we
     // simulated our own Ctrl+C so additionally schedule a restore after the
     // paste settles.
@@ -783,8 +829,15 @@ async fn process_pipeline(
     };
     tracing::debug!("cleaned: {cleaned}");
 
+    let db = app.state::<AppState>().db.clone();
+    let (final_text, dict_hits) = db::apply_substitutions(&db, &cleaned);
+    if !dict_hits.is_empty() {
+        tracing::debug!("dictionary applied {} fix(es)", dict_hits.iter().map(|(_, c)| c).sum::<i64>());
+        let _ = db::bump_dictionary_hits(&db, &dict_hits);
+    }
+
     emit_status(&app, "injecting", None);
-    if let Err(e) = inject::inject_text(&cleaned) {
+    if let Err(e) = inject::inject_text(&final_text) {
         tracing::error!("inject failed: {e:#}");
         emit_status(&app, "error", Some(format!("Inject: {e:#}")));
         notify(&app, "Bulbul inject failed", &format!("{e:#}"));
@@ -793,12 +846,11 @@ async fn process_pipeline(
 
     // Log this dictation to the activity store. Best-effort — failures here
     // never block injection or surface to the user.
-    let db = app.state::<AppState>().db.clone();
     if let Err(e) = db::log_dictation(
         &db,
         db::LogEntry {
             raw_text: transcript,
-            cleaned_text: cleaned.clone(),
+            cleaned_text: final_text.clone(),
             mode: meta.mode,
             language: meta.language,
             foreground_app: meta.foreground_app,
@@ -808,5 +860,5 @@ async fn process_pipeline(
         tracing::warn!("failed to log dictation: {e:#}");
     }
 
-    emit_status(&app, "done", Some(cleaned));
+    emit_status(&app, "done", Some(final_text));
 }

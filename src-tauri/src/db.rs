@@ -23,7 +23,46 @@ CREATE TABLE IF NOT EXISTS dictations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dictations_ts ON dictations(ts DESC);
+
+CREATE TABLE IF NOT EXISTS dictionary (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_word       TEXT NOT NULL,
+    to_word         TEXT NOT NULL,
+    case_sensitive  INTEGER NOT NULL DEFAULT 0,
+    hit_count       INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dictionary_from
+    ON dictionary(from_word COLLATE NOCASE);
 "#;
+
+const DEFAULT_DICTIONARY: &[(&str, &str)] = &[
+    ("groq", "Groq"),
+    ("example", "app"),
+    ("github", "GitHub"),
+    ("gitlab", "GitLab"),
+    ("vscode", "VS Code"),
+    ("javascript", "JavaScript"),
+    ("typescript", "TypeScript"),
+    ("nodejs", "Node.js"),
+    ("npm", "npm"),
+    ("pnpm", "pnpm"),
+    ("postgres", "Postgres"),
+    ("sqlite", "SQLite"),
+    ("ios", "iOS"),
+    ("macos", "macOS"),
+    ("api", "API"),
+    ("ui", "UI"),
+    ("ux", "UX"),
+    ("css", "CSS"),
+    ("html", "HTML"),
+    ("json", "JSON"),
+    ("ai", "AI"),
+    ("llm", "LLM"),
+    ("openai", "OpenAI"),
+    ("anthropic", "Anthropic"),
+];
 
 pub type Db = Arc<Mutex<Connection>>;
 
@@ -32,7 +71,31 @@ pub fn open() -> Result<Db> {
     tracing::info!("opening sqlite db at {path:?}");
     let conn = Connection::open(&path).with_context(|| format!("opening {path:?}"))?;
     conn.execute_batch(SCHEMA).context("applying schema")?;
+    seed_default_dictionary(&conn).context("seeding dictionary defaults")?;
     Ok(Arc::new(Mutex::new(conn)))
+}
+
+fn seed_default_dictionary(conn: &Connection) -> Result<()> {
+    let existing: i64 = conn
+        .query_row("SELECT COUNT(*) FROM dictionary", [], |r| r.get(0))
+        .unwrap_or(0);
+    if existing > 0 {
+        return Ok(());
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    for (from, to) in DEFAULT_DICTIONARY {
+        conn.execute(
+            "INSERT OR IGNORE INTO dictionary
+                (from_word, to_word, case_sensitive, hit_count, created_at)
+             VALUES (?, ?, 0, 0, ?)",
+            params![from, to, now],
+        )?;
+    }
+    tracing::info!("seeded {} default dictionary entries", DEFAULT_DICTIONARY.len());
+    Ok(())
 }
 
 fn db_path() -> Result<PathBuf> {
@@ -195,6 +258,165 @@ pub fn home_stats(db: &Db) -> Result<HomeStats> {
         wpm_7d,
         day_streak,
     })
+}
+
+#[derive(Debug, Serialize, serde::Deserialize, Clone)]
+pub struct DictionaryEntry {
+    pub id: i64,
+    pub from_word: String,
+    pub to_word: String,
+    pub case_sensitive: bool,
+    pub hit_count: i64,
+    pub created_at: i64,
+}
+
+pub fn list_dictionary(db: &Db) -> Result<Vec<DictionaryEntry>> {
+    let conn = db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT id, from_word, to_word, case_sensitive, hit_count, created_at
+         FROM dictionary
+         ORDER BY hit_count DESC, from_word COLLATE NOCASE ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(DictionaryEntry {
+                id: r.get(0)?,
+                from_word: r.get(1)?,
+                to_word: r.get(2)?,
+                case_sensitive: r.get::<_, i64>(3)? != 0,
+                hit_count: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+pub fn add_dictionary_entry(
+    db: &Db,
+    from_word: &str,
+    to_word: &str,
+    case_sensitive: bool,
+) -> Result<DictionaryEntry> {
+    let from = from_word.trim();
+    let to = to_word.trim();
+    if from.is_empty() {
+        return Err(anyhow::anyhow!("from-word cannot be empty"));
+    }
+    if to.is_empty() {
+        return Err(anyhow::anyhow!("to-word cannot be empty"));
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = db.lock();
+    conn.execute(
+        "INSERT INTO dictionary
+            (from_word, to_word, case_sensitive, hit_count, created_at)
+         VALUES (?, ?, ?, 0, ?)",
+        params![from, to, case_sensitive as i64, now],
+    )
+    .context("inserting dictionary entry")?;
+    let id = conn.last_insert_rowid();
+    Ok(DictionaryEntry {
+        id,
+        from_word: from.to_string(),
+        to_word: to.to_string(),
+        case_sensitive,
+        hit_count: 0,
+        created_at: now,
+    })
+}
+
+pub fn update_dictionary_entry(
+    db: &Db,
+    id: i64,
+    from_word: &str,
+    to_word: &str,
+    case_sensitive: bool,
+) -> Result<()> {
+    let from = from_word.trim();
+    let to = to_word.trim();
+    if from.is_empty() || to.is_empty() {
+        return Err(anyhow::anyhow!("from-word and to-word are required"));
+    }
+    let conn = db.lock();
+    let affected = conn.execute(
+        "UPDATE dictionary SET from_word = ?, to_word = ?, case_sensitive = ? WHERE id = ?",
+        params![from, to, case_sensitive as i64, id],
+    )?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no dictionary entry with id {id}"));
+    }
+    Ok(())
+}
+
+pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock();
+    let affected = conn.execute("DELETE FROM dictionary WHERE id = ?", params![id])?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no dictionary entry with id {id}"));
+    }
+    Ok(())
+}
+
+/// Apply dictionary substitutions to `text` using all entries. Returns the
+/// transformed text plus a list of `(entry_id, hit_count_delta)` for callers
+/// to persist via `bump_dictionary_hits`. Hits are only counted when the
+/// match's casing actually differs from the canonical `to_word`, so e.g. a
+/// transcript already spelling "Groq" correctly doesn't inflate the counter.
+pub fn apply_substitutions(db: &Db, text: &str) -> (String, Vec<(i64, i64)>) {
+    let entries = match list_dictionary(db) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("could not list dictionary for substitution: {e:#}");
+            return (text.to_string(), Vec::new());
+        }
+    };
+    let mut working = text.to_string();
+    let mut hits: Vec<(i64, i64)> = Vec::new();
+    for entry in entries {
+        let pattern = format!(r"\b{}\b", regex::escape(&entry.from_word));
+        let re = match regex::RegexBuilder::new(&pattern)
+            .case_insensitive(!entry.case_sensitive)
+            .build()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("invalid dictionary regex for {:?}: {e:#}", entry.from_word);
+                continue;
+            }
+        };
+        let mut count = 0i64;
+        let to_word = entry.to_word.clone();
+        let replaced = re.replace_all(&working, |caps: &regex::Captures| {
+            let matched = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+            if matched != to_word {
+                count += 1;
+            }
+            to_word.clone()
+        });
+        if count > 0 {
+            hits.push((entry.id, count));
+            working = replaced.into_owned();
+        }
+    }
+    (working, hits)
+}
+
+pub fn bump_dictionary_hits(db: &Db, hits: &[(i64, i64)]) -> Result<()> {
+    if hits.is_empty() {
+        return Ok(());
+    }
+    let conn = db.lock();
+    for (id, delta) in hits {
+        conn.execute(
+            "UPDATE dictionary SET hit_count = hit_count + ? WHERE id = ?",
+            params![*delta, *id],
+        )?;
+    }
+    Ok(())
 }
 
 fn compute_streak(conn: &Connection) -> i64 {
