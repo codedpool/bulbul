@@ -1,17 +1,19 @@
 mod audio;
 mod config;
+mod db;
 mod groq;
 mod hotkey;
 mod inject;
+mod window_info;
 
 use crate::audio::Recorder;
-use crate::config::Config;
+use crate::config::{CleanupMode, Config};
 use crate::hotkey::{HotkeyEvent, HotkeySet, ParsedHotkey};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -30,6 +32,14 @@ pub struct AppState {
     config: Arc<Mutex<Config>>,
     hotkeys: Arc<Mutex<HotkeySet>>,
     icons: Arc<IconVariants>,
+    db: db::Db,
+}
+
+struct PendingDictation {
+    started_at: Instant,
+    foreground_app: Option<String>,
+    language: String,
+    mode: CleanupMode,
 }
 
 struct IconVariants {
@@ -266,6 +276,19 @@ fn show_settings_window(app: AppHandle) {
     show_settings(&app);
 }
 
+#[tauri::command]
+fn get_home_stats(state: tauri::State<'_, AppState>) -> Result<db::HomeStats, String> {
+    db::home_stats(&state.db).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn get_recent_dictations(
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<db::DictationRow>, String> {
+    db::recent_dictations(&state.db, limit).map_err(|e| format!("{e:#}"))
+}
+
 /// Resize the overlay window to a new logical height while keeping the
 /// width constant and re-anchoring the bottom edge above the taskbar.
 /// Called from the frontend when the language dropdown opens or closes.
@@ -362,6 +385,8 @@ pub fn run() {
             polish_now,
             show_settings_window,
             set_overlay_height,
+            get_home_stats,
+            get_recent_dictations,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -378,10 +403,19 @@ pub fn run() {
                 no_key: no_key_icon,
             });
 
+            let db_handle = match db::open() {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("could not open sqlite db: {e:#}");
+                    return Err(format!("db open: {e:#}").into());
+                }
+            };
+
             handle.manage(AppState {
                 config: Arc::new(Mutex::new(initial_config)),
                 hotkeys: hotkey_mutex.clone(),
                 icons,
+                db: db_handle,
             });
 
             setup_tray(&handle, has_key_on_boot)?;
@@ -529,7 +563,7 @@ fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
     }
 
     thread::spawn(move || {
-        let mut active_recorder: Option<Recorder> = None;
+        let mut active: Option<(Recorder, PendingDictation)> = None;
         for evt in rx {
             match evt {
                 HotkeyEvent::DictationPressed => {
@@ -549,7 +583,13 @@ fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
                         Ok(rec) => {
                             tracing::info!("recording started");
                             emit_status(&handle, "listening", None);
-                            active_recorder = Some(rec);
+                            let meta = PendingDictation {
+                                started_at: Instant::now(),
+                                foreground_app: window_info::foreground_app(),
+                                language: cfg.language.clone(),
+                                mode: cfg.mode.clone(),
+                            };
+                            active = Some((rec, meta));
                         }
                         Err(e) => {
                             tracing::error!("recorder start failed: {e:#}");
@@ -559,7 +599,7 @@ fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
                     }
                 }
                 HotkeyEvent::DictationReleased => {
-                    let Some(rec) = active_recorder.take() else {
+                    let Some((rec, meta)) = active.take() else {
                         continue;
                     };
                     let captured = rec.captured_seconds();
@@ -596,11 +636,12 @@ fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
                         emit_status(&handle, "idle", Some("Silence — nothing to transcribe.".into()));
                         continue;
                     }
+                    let duration_ms = meta.started_at.elapsed().as_millis() as u64;
                     emit_status(&handle, "processing", None);
                     let handle_for_task = handle.clone();
                     let wav = result.wav;
                     tauri::async_runtime::spawn(async move {
-                        process_pipeline(handle_for_task, cfg, wav).await;
+                        process_pipeline(handle_for_task, cfg, wav, meta, duration_ms).await;
                     });
                 }
                 HotkeyEvent::PolishTriggered => {
@@ -710,7 +751,13 @@ fn restore_clipboard(original: Option<String>) {
     }
 }
 
-async fn process_pipeline(app: AppHandle, cfg: Config, wav: Vec<u8>) {
+async fn process_pipeline(
+    app: AppHandle,
+    cfg: Config,
+    wav: Vec<u8>,
+    meta: PendingDictation,
+    duration_ms: u64,
+) {
     let transcript = match groq::transcribe(&cfg, wav).await {
         Ok(t) => t,
         Err(e) => {
@@ -731,7 +778,7 @@ async fn process_pipeline(app: AppHandle, cfg: Config, wav: Vec<u8>) {
         Ok(t) => t,
         Err(e) => {
             tracing::warn!("cleanup failed, falling back to raw: {e:#}");
-            transcript
+            transcript.clone()
         }
     };
     tracing::debug!("cleaned: {cleaned}");
@@ -743,5 +790,23 @@ async fn process_pipeline(app: AppHandle, cfg: Config, wav: Vec<u8>) {
         notify(&app, "Bulbul inject failed", &format!("{e:#}"));
         return;
     }
+
+    // Log this dictation to the activity store. Best-effort — failures here
+    // never block injection or surface to the user.
+    let db = app.state::<AppState>().db.clone();
+    if let Err(e) = db::log_dictation(
+        &db,
+        db::LogEntry {
+            raw_text: transcript,
+            cleaned_text: cleaned.clone(),
+            mode: meta.mode,
+            language: meta.language,
+            foreground_app: meta.foreground_app,
+            duration_ms,
+        },
+    ) {
+        tracing::warn!("failed to log dictation: {e:#}");
+    }
+
     emit_status(&app, "done", Some(cleaned));
 }
