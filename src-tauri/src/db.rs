@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS voice_profile (
     last_word_count     INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO voice_profile (id, last_word_count) VALUES (1, 0);
+
+CREATE TABLE IF NOT EXISTS snippets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger     TEXT NOT NULL,
+    expansion   TEXT NOT NULL,
+    hit_count   INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_snippets_trigger
+    ON snippets(trigger COLLATE NOCASE);
 "#;
 
 const STOP_WORDS: &[&str] = &[
@@ -428,6 +438,144 @@ pub fn apply_substitutions(db: &Db, text: &str) -> (String, Vec<(i64, i64)>) {
         }
     }
     (working, hits)
+}
+
+#[derive(Debug, Serialize, serde::Deserialize, Clone)]
+pub struct Snippet {
+    pub id: i64,
+    pub trigger: String,
+    pub expansion: String,
+    pub hit_count: i64,
+    pub created_at: i64,
+}
+
+pub fn list_snippets(db: &Db) -> Result<Vec<Snippet>> {
+    let conn = db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT id, trigger, expansion, hit_count, created_at
+         FROM snippets
+         ORDER BY hit_count DESC, trigger COLLATE NOCASE ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(Snippet {
+                id: r.get(0)?,
+                trigger: r.get(1)?,
+                expansion: r.get(2)?,
+                hit_count: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+pub fn add_snippet(db: &Db, trigger: &str, expansion: &str) -> Result<Snippet> {
+    let trig = trigger.trim();
+    let exp = expansion.trim();
+    if trig.is_empty() {
+        return Err(anyhow::anyhow!("trigger cannot be empty"));
+    }
+    if exp.is_empty() {
+        return Err(anyhow::anyhow!("expansion cannot be empty"));
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = db.lock();
+    conn.execute(
+        "INSERT INTO snippets (trigger, expansion, hit_count, created_at)
+         VALUES (?, ?, 0, ?)",
+        params![trig, exp, now],
+    )?;
+    let id = conn.last_insert_rowid();
+    Ok(Snippet {
+        id,
+        trigger: trig.to_string(),
+        expansion: exp.to_string(),
+        hit_count: 0,
+        created_at: now,
+    })
+}
+
+pub fn update_snippet(db: &Db, id: i64, trigger: &str, expansion: &str) -> Result<()> {
+    let trig = trigger.trim();
+    let exp = expansion.trim();
+    if trig.is_empty() || exp.is_empty() {
+        return Err(anyhow::anyhow!("trigger and expansion are required"));
+    }
+    let conn = db.lock();
+    let affected = conn.execute(
+        "UPDATE snippets SET trigger = ?, expansion = ? WHERE id = ?",
+        params![trig, exp, id],
+    )?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no snippet with id {id}"));
+    }
+    Ok(())
+}
+
+pub fn delete_snippet(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock();
+    let affected = conn.execute("DELETE FROM snippets WHERE id = ?", params![id])?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no snippet with id {id}"));
+    }
+    Ok(())
+}
+
+/// Apply snippet expansions to `text`. Triggers match case-insensitively
+/// against whole word/phrase boundaries; the trigger is replaced with the
+/// stored expansion verbatim.
+pub fn apply_snippets(db: &Db, text: &str) -> (String, Vec<(i64, i64)>) {
+    let snippets = match list_snippets(db) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("could not list snippets: {e:#}");
+            return (text.to_string(), Vec::new());
+        }
+    };
+    let mut working = text.to_string();
+    let mut hits: Vec<(i64, i64)> = Vec::new();
+    for snip in snippets {
+        let pattern = format!(r"\b{}\b", regex::escape(&snip.trigger));
+        let re = match regex::RegexBuilder::new(&pattern)
+            .case_insensitive(true)
+            .build()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("invalid snippet regex for {:?}: {e:#}", snip.trigger);
+                continue;
+            }
+        };
+        let mut count = 0i64;
+        let expansion = snip.expansion.clone();
+        let replaced = re.replace_all(&working, |_caps: &regex::Captures| {
+            count += 1;
+            expansion.clone()
+        });
+        if count > 0 {
+            hits.push((snip.id, count));
+            working = replaced.into_owned();
+        }
+    }
+    (working, hits)
+}
+
+pub fn bump_snippet_hits(db: &Db, hits: &[(i64, i64)]) -> Result<()> {
+    if hits.is_empty() {
+        return Ok(());
+    }
+    let conn = db.lock();
+    for (id, delta) in hits {
+        conn.execute(
+            "UPDATE snippets SET hit_count = hit_count + ? WHERE id = ?",
+            params![*delta, *id],
+        )?;
+    }
+    Ok(())
 }
 
 pub fn bump_dictionary_hits(db: &Db, hits: &[(i64, i64)]) -> Result<()> {

@@ -379,6 +379,35 @@ fn delete_dictionary_entry(
     db::delete_dictionary_entry(&state.db, id).map_err(|e| format!("{e:#}"))
 }
 
+#[tauri::command]
+fn list_snippets(state: tauri::State<'_, AppState>) -> Result<Vec<db::Snippet>, String> {
+    db::list_snippets(&state.db).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn add_snippet(
+    trigger: String,
+    expansion: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<db::Snippet, String> {
+    db::add_snippet(&state.db, &trigger, &expansion).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn update_snippet(
+    id: i64,
+    trigger: String,
+    expansion: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    db::update_snippet(&state.db, id, &trigger, &expansion).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn delete_snippet(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    db::delete_snippet(&state.db, id).map_err(|e| format!("{e:#}"))
+}
+
 /// Resize the overlay window to a new logical height while keeping the
 /// width constant and re-anchoring the bottom edge above the taskbar.
 /// Called from the frontend when the language dropdown opens or closes.
@@ -484,6 +513,10 @@ pub fn run() {
             add_dictionary_entry,
             update_dictionary_entry,
             delete_dictionary_entry,
+            list_snippets,
+            add_snippet,
+            update_snippet,
+            delete_snippet,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -895,10 +928,15 @@ async fn process_pipeline(
     };
     tracing::debug!("cleaned: {cleaned}");
 
-    let (final_text, dict_hits) = db::apply_substitutions(&db, &cleaned);
+    let (with_dict, dict_hits) = db::apply_substitutions(&db, &cleaned);
     if !dict_hits.is_empty() {
         tracing::debug!("dictionary applied {} fix(es)", dict_hits.iter().map(|(_, c)| c).sum::<i64>());
         let _ = db::bump_dictionary_hits(&db, &dict_hits);
+    }
+    let (final_text, snip_hits) = db::apply_snippets(&db, &with_dict);
+    if !snip_hits.is_empty() {
+        tracing::debug!("snippets expanded {} time(s)", snip_hits.iter().map(|(_, c)| c).sum::<i64>());
+        let _ = db::bump_snippet_hits(&db, &snip_hits);
     }
 
     emit_status(&app, "injecting", None);
