@@ -472,8 +472,8 @@ fn spawn_orchestrator(handle: AppHandle, hotkey: Arc<Mutex<ParsedHotkey>>) {
                         emit_status(&handle, "idle", Some("Too short, ignored.".into()));
                         continue;
                     }
-                    let wav = match rec.finish() {
-                        Ok(b) => b,
+                    let result = match rec.finish() {
+                        Ok(r) => r,
                         Err(e) => {
                             tracing::error!("encoding WAV failed: {e:#}");
                             emit_status(&handle, "error", Some(format!("{e:#}")));
@@ -481,8 +481,22 @@ fn spawn_orchestrator(handle: AppHandle, hotkey: Arc<Mutex<ParsedHotkey>>) {
                             continue;
                         }
                     };
+                    // Energy gate: if the recording is essentially silence,
+                    // skip the API call entirely. Whisper hallucinates
+                    // "thank you" / "you" on silent input.
+                    const SILENCE_PEAK_DBFS: f32 = -40.0;
+                    if result.peak_dbfs < SILENCE_PEAK_DBFS {
+                        tracing::info!(
+                            "discarding silent clip ({:.1} dBFS peak, {:.2}s)",
+                            result.peak_dbfs,
+                            result.seconds
+                        );
+                        emit_status(&handle, "idle", Some("Silence — nothing to transcribe.".into()));
+                        continue;
+                    }
                     emit_status(&handle, "processing", None);
                     let handle_for_task = handle.clone();
+                    let wav = result.wav;
                     tauri::async_runtime::spawn(async move {
                         process_pipeline(handle_for_task, cfg, wav).await;
                     });
@@ -503,7 +517,8 @@ async fn process_pipeline(app: AppHandle, cfg: Config, wav: Vec<u8>) {
         }
     };
     tracing::debug!("raw transcript: {transcript}");
-    if transcript.trim().is_empty() {
+    if transcript.trim().is_empty() || groq::is_likely_hallucination(&transcript) {
+        tracing::info!("dropping likely-hallucinated transcript: {transcript:?}");
         emit_status(&app, "idle", Some("No speech detected.".into()));
         return;
     }

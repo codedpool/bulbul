@@ -10,6 +10,37 @@ struct TranscriptionResponse {
     text: String,
 }
 
+/// Whole-transcript matches that Whisper commonly hallucinates from silence
+/// or microphone noise. Compared after lowercasing and stripping punctuation.
+const HALLUCINATION_DENYLIST: &[&str] = &[
+    "",
+    "you",
+    "thanks",
+    "thank you",
+    "thank you so much",
+    "thanks for watching",
+    "thanks for watching!",
+    "thank you for watching",
+    "please subscribe",
+    "bye",
+    "music",
+    "okay",
+    "ok",
+    "uh",
+    "um",
+    "hmm",
+];
+
+pub fn is_likely_hallucination(text: &str) -> bool {
+    let lower = text.trim().to_lowercase();
+    let stripped: String = lower
+        .chars()
+        .filter(|c| !".,!?\"'".contains(*c))
+        .collect();
+    let stripped = stripped.trim();
+    HALLUCINATION_DENYLIST.iter().any(|d| *d == stripped)
+}
+
 pub async fn transcribe(cfg: &Config, wav_bytes: Vec<u8>) -> Result<String> {
     if !cfg.has_api_key() {
         return Err(anyhow!("Groq API key not set"));

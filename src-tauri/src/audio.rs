@@ -102,8 +102,8 @@ impl Recorder {
         })
     }
 
-    /// Stop recording and return a WAV-encoded buffer (mono, 16-bit PCM).
-    pub fn finish(self) -> Result<Vec<u8>> {
+    /// Stop recording and return WAV bytes plus signal metrics.
+    pub fn finish(self) -> Result<RecordingResult> {
         // Dropping _stream stops capture. Pull samples out.
         drop(self._stream);
         let samples = std::mem::take(&mut self.inner.lock().samples);
@@ -122,6 +122,13 @@ impl Recorder {
                 .collect()
         };
 
+        let peak_dbfs = compute_peak_dbfs(&mono);
+        let seconds = if self.sample_rate == 0 {
+            0.0
+        } else {
+            mono.len() as f32 / self.sample_rate as f32
+        };
+
         let spec = hound::WavSpec {
             channels: 1,
             sample_rate: self.sample_rate,
@@ -137,7 +144,11 @@ impl Recorder {
             }
             writer.finalize()?;
         }
-        Ok(buf.into_inner())
+        Ok(RecordingResult {
+            wav: buf.into_inner(),
+            peak_dbfs,
+            seconds,
+        })
     }
 
     pub fn captured_seconds(&self) -> f32 {
@@ -148,4 +159,22 @@ impl Recorder {
             len / (self.sample_rate as f32 * self.channels.max(1) as f32)
         }
     }
+}
+
+pub struct RecordingResult {
+    pub wav: Vec<u8>,
+    pub peak_dbfs: f32,
+    pub seconds: f32,
+}
+
+fn compute_peak_dbfs(samples: &[i16]) -> f32 {
+    let peak = samples
+        .iter()
+        .map(|&s| s.unsigned_abs() as u32)
+        .max()
+        .unwrap_or(0);
+    if peak == 0 {
+        return -120.0;
+    }
+    20.0 * (peak as f32 / i16::MAX as f32).log10()
 }
