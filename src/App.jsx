@@ -45,7 +45,7 @@ function App() {
   const [keyError, setKeyError] = useState("");
   const [status, setStatus] = useState({ state: "idle", message: null });
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [recordingHotkey, setRecordingHotkey] = useState(false);
+  const [recordingHotkeyFor, setRecordingHotkeyFor] = useState(null); // "dictation" | "polish" | null
   const [updateState, setUpdateState] = useState({ state: "idle", message: "" });
   const [autostart, setAutostartState] = useState(false);
 
@@ -58,7 +58,7 @@ function App() {
     invoke("get_autostart").then(setAutostartState).catch(() => {});
     const un = listen("bulbul-status", (e) => setStatus(e.payload));
     const onKey = (e) => {
-      if (e.key === "Escape" && !recordingHotkey) getCurrentWindow().hide();
+      if (e.key === "Escape" && !recordingHotkeyFor) getCurrentWindow().hide();
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -68,9 +68,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!recordingHotkey || !config) return;
+    if (!recordingHotkeyFor || !config) return;
     const handler = (e) => {
-      if (e.key === "Escape") { setRecordingHotkey(false); return; }
+      if (e.key === "Escape") { setRecordingHotkeyFor(null); return; }
       if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
       e.preventDefault();
       e.stopPropagation();
@@ -80,15 +80,16 @@ function App() {
       if (e.altKey) parts.push("Alt");
       if (e.metaKey) parts.push("Win");
       const k = domKeyToName(e.code);
-      if (!k) { setRecordingHotkey(false); return; }
+      if (!k) { setRecordingHotkeyFor(null); return; }
       parts.push(k);
       const combo = parts.join("+");
-      saveConfig({ ...config, hotkey: combo });
-      setRecordingHotkey(false);
+      const field = recordingHotkeyFor === "polish" ? "polish_hotkey" : "hotkey";
+      saveConfig({ ...config, [field]: combo });
+      setRecordingHotkeyFor(null);
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [recordingHotkey, config]);
+  }, [recordingHotkeyFor, config]);
 
   if (!config) return <main className="empty">Loading…</main>;
 
@@ -241,25 +242,23 @@ function App() {
       </section>
 
       <section>
-        <h3>Hotkey</h3>
-        <div className="row hotkey-row">
-          <div className="hotkey-display">
-            {recordingHotkey
-              ? <span className="muted">Press a key combo… (Esc to cancel)</span>
-              : formatHotkey(config.hotkey).map((part, i) => (
-                  <span key={i}>
-                    {i > 0 && <span className="plus">+</span>}
-                    <kbd>{part}</kbd>
-                  </span>
-                ))}
-          </div>
-          <button onClick={() => setRecordingHotkey((v) => !v)}>
-            {recordingHotkey ? "Cancel" : "Change"}
-          </button>
-        </div>
-        <p className="muted small">
-          Hold the combo anywhere in Windows to dictate. Modifiers + letter / number / function-key are supported.
-        </p>
+        <h3>Hotkeys</h3>
+        <HotkeyRow
+          label="Dictation"
+          hint="Hold this combo to record. Release to transcribe and insert."
+          combo={config.hotkey}
+          isRecording={recordingHotkeyFor === "dictation"}
+          onStart={() => setRecordingHotkeyFor("dictation")}
+          onCancel={() => setRecordingHotkeyFor(null)}
+        />
+        <HotkeyRow
+          label="Polish selection with AI"
+          hint="Select text anywhere, tap this combo — Bulbul rewrites it in place."
+          combo={config.polish_hotkey || "Ctrl+Shift+P"}
+          isRecording={recordingHotkeyFor === "polish"}
+          onStart={() => setRecordingHotkeyFor("polish")}
+          onCancel={() => setRecordingHotkeyFor(null)}
+        />
       </section>
 
       <section>
@@ -300,6 +299,32 @@ function App() {
         <span className="muted small">v0.1.0 · MIT · Press Esc to hide window</span>
       </footer>
     </main>
+  );
+}
+
+function HotkeyRow({ label, hint, combo, isRecording, onStart, onCancel }) {
+  return (
+    <div className="hotkey-block">
+      <div className="hotkey-meta">
+        <div className="hotkey-label">{label}</div>
+        {hint && <div className="hotkey-hint">{hint}</div>}
+      </div>
+      <div className="row hotkey-row">
+        <div className="hotkey-display">
+          {isRecording
+            ? <span className="muted">Press a key combo… (Esc to cancel)</span>
+            : formatHotkey(combo).map((part, i) => (
+                <span key={i}>
+                  {i > 0 && <span className="plus">+</span>}
+                  <kbd>{part}</kbd>
+                </span>
+              ))}
+        </div>
+        <button onClick={isRecording ? onCancel : onStart}>
+          {isRecording ? "Cancel" : "Change"}
+        </button>
+      </div>
+    </div>
   );
 }
 

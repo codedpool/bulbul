@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_CONTROL, VK_V,
+    VIRTUAL_KEY, VK_C, VK_CONTROL, VK_V,
 };
 
 /// Inject text into the focused application via clipboard + Ctrl+V.
@@ -37,10 +37,19 @@ pub fn inject_text(text: &str) -> Result<()> {
 }
 
 fn send_ctrl_v() -> Result<()> {
+    send_ctrl_combo(VK_V)
+}
+
+/// Simulate Ctrl+C so the OS copies the current selection into the clipboard.
+pub fn send_ctrl_c() -> Result<()> {
+    send_ctrl_combo(VK_C)
+}
+
+fn send_ctrl_combo(vk: VIRTUAL_KEY) -> Result<()> {
     let mut inputs = [
         key_input(VK_CONTROL, false),
-        key_input(VK_V, false),
-        key_input(VK_V, true),
+        key_input(vk, false),
+        key_input(vk, true),
         key_input(VK_CONTROL, true),
     ];
     let sent = unsafe { SendInput(&mut inputs, std::mem::size_of::<INPUT>() as i32) };

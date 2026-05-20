@@ -6,7 +6,7 @@ mod inject;
 
 use crate::audio::Recorder;
 use crate::config::Config;
-use crate::hotkey::{HotkeyEvent, ParsedHotkey};
+use crate::hotkey::{HotkeyEvent, HotkeySet, ParsedHotkey};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::Arc;
@@ -22,13 +22,13 @@ use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
 const OVERLAY_WIDTH: f64 = 240.0;
-const OVERLAY_HEIGHT: f64 = 56.0;
+const OVERLAY_HEIGHT: f64 = 48.0;
 // Gap between the pill and the top of the taskbar / work area.
 const OVERLAY_BOTTOM_MARGIN: f64 = 4.0;
 
 pub struct AppState {
     config: Arc<Mutex<Config>>,
-    hotkey: Arc<Mutex<ParsedHotkey>>,
+    hotkeys: Arc<Mutex<HotkeySet>>,
     icons: Arc<IconVariants>,
 }
 
@@ -126,6 +126,56 @@ fn position_overlay_bottom_center(app: &AppHandle) {
     let _ = window.set_position(LogicalPosition::new(x, y));
 }
 
+/// Hover-aware click-through: a polling thread that watches the cursor.
+/// When the cursor enters a small zone near the pill, click-through is
+/// disabled (so satellite buttons can be clicked) and a "hovered" event is
+/// emitted to the frontend. Larger exit zone gives hysteresis so the
+/// expanded UI doesn't flicker as the cursor moves between buttons.
+fn spawn_hover_watcher(app: AppHandle) {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    thread::spawn(move || {
+        let mut last_hovered = false;
+        loop {
+            thread::sleep(Duration::from_millis(50));
+            let Some(overlay) = app.get_webview_window("overlay") else {
+                continue;
+            };
+            let Ok(pos) = overlay.outer_position() else { continue; };
+            let Ok(size) = overlay.outer_size() else { continue; };
+
+            let mut p = POINT::default();
+            if unsafe { GetCursorPos(&mut p) }.is_err() {
+                continue;
+            }
+
+            let x0 = pos.x;
+            let y0 = pos.y;
+            let w = size.width as i32;
+            let h = size.height as i32;
+            let cx = x0 + w / 2;
+            let cy = y0 + h - 24; // pill sits near the bottom of the window
+
+            // Entry zone (small, near the dot): triggers expansion.
+            let entry_w = 100;
+            let entry_h = 40;
+            let in_entry = (p.x - cx).abs() < entry_w / 2
+                && (p.y - cy).abs() < entry_h / 2;
+
+            // Exit zone (full window): keeps expansion active.
+            let in_exit = p.x >= x0 && p.x < x0 + w && p.y >= y0 && p.y < y0 + h;
+
+            let new_hovered = if last_hovered { in_exit } else { in_entry };
+            if new_hovered != last_hovered {
+                last_hovered = new_hovered;
+                let _ = overlay.set_ignore_cursor_events(!new_hovered);
+                let _ = app.emit("overlay-hover", new_hovered);
+            }
+        }
+    });
+}
+
 fn work_area_bottom_logical(scale: f64) -> Option<f64> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -183,20 +233,23 @@ fn save_config(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (prev_has_key, prev_hotkey) = {
+    let (prev_has_key, prev_hotkey, prev_polish) = {
         let cfg = state.config.lock();
-        (cfg.has_api_key(), cfg.hotkey.clone())
+        (cfg.has_api_key(), cfg.hotkey.clone(), cfg.polish_hotkey.clone())
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
     let next_has_key = new_cfg.has_api_key();
     let next_hotkey = new_cfg.hotkey.clone();
+    let next_polish = new_cfg.polish_hotkey.clone();
     *state.config.lock() = new_cfg;
 
     if prev_has_key != next_has_key {
         update_tray_icon(&app, next_has_key);
     }
-    if prev_hotkey != next_hotkey {
-        *state.hotkey.lock() = ParsedHotkey::parse(&next_hotkey);
+    if prev_hotkey != next_hotkey || prev_polish != next_polish {
+        let mut set = state.hotkeys.lock();
+        set.dictation = ParsedHotkey::parse(&next_hotkey);
+        set.polish = ParsedHotkey::parse(&next_polish);
     }
     Ok(())
 }
@@ -206,6 +259,46 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
     groq::validate_key(api_key.trim())
         .await
         .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn show_settings_window(app: AppHandle) {
+    show_settings(&app);
+}
+
+/// Resize the overlay window to a new logical height while keeping the
+/// width constant and re-anchoring the bottom edge above the taskbar.
+/// Called from the frontend when the language dropdown opens or closes.
+#[tauri::command]
+fn set_overlay_height(height: f64, app: AppHandle) {
+    let Some(window) = app.get_webview_window("overlay") else {
+        return;
+    };
+    let _ = window.set_size(tauri::LogicalSize::new(OVERLAY_WIDTH, height));
+    if let Ok(Some(monitor)) = window.primary_monitor() {
+        let scale = monitor.scale_factor();
+        let size = monitor.size();
+        let logical_w = size.width as f64 / scale;
+        let logical_h = size.height as f64 / scale;
+        let anchor_bottom = work_area_bottom_logical(scale).unwrap_or(logical_h);
+        let x = (logical_w - OVERLAY_WIDTH) / 2.0;
+        let y = anchor_bottom - height - OVERLAY_BOTTOM_MARGIN;
+        let _ = window.set_position(LogicalPosition::new(x, y));
+    }
+}
+
+#[tauri::command]
+fn polish_now(app: AppHandle) -> Result<(), String> {
+    let cfg_arc = app.state::<AppState>().config.clone();
+    let cfg = cfg_arc.lock().clone();
+    if !cfg.has_api_key() {
+        return Err("Set your Groq API key in Settings first.".into());
+    }
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        polish_pipeline(app_clone, cfg).await;
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -245,8 +338,11 @@ pub fn run() {
 
     let initial_config = config::load();
     let has_key_on_boot = initial_config.has_api_key();
-    let parsed_hotkey = ParsedHotkey::parse(&initial_config.hotkey);
-    let hotkey_mutex = Arc::new(Mutex::new(parsed_hotkey.clone()));
+    let initial_set = HotkeySet {
+        dictation: ParsedHotkey::parse(&initial_config.hotkey),
+        polish: ParsedHotkey::parse(&initial_config.polish_hotkey),
+    };
+    let hotkey_mutex = Arc::new(Mutex::new(initial_set));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -263,6 +359,9 @@ pub fn run() {
             check_for_updates,
             get_autostart,
             set_autostart,
+            polish_now,
+            show_settings_window,
+            set_overlay_height,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -281,7 +380,7 @@ pub fn run() {
 
             handle.manage(AppState {
                 config: Arc::new(Mutex::new(initial_config)),
-                hotkey: hotkey_mutex.clone(),
+                hotkeys: hotkey_mutex.clone(),
                 icons,
             });
 
@@ -308,6 +407,7 @@ pub fn run() {
             }
 
             spawn_orchestrator(handle.clone(), hotkey_mutex.clone());
+            spawn_hover_watcher(handle.clone());
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -408,19 +508,21 @@ fn show_settings(app: &AppHandle) {
     }
 }
 
-fn spawn_orchestrator(handle: AppHandle, hotkey: Arc<Mutex<ParsedHotkey>>) {
-    let initial = hotkey.lock().clone();
-    let (live_hotkey, rx) = hotkey::spawn_listener(initial);
+fn spawn_orchestrator(handle: AppHandle, hotkeys: Arc<Mutex<HotkeySet>>) {
+    let initial = hotkeys.lock().clone();
+    let (live_hotkeys, rx) = hotkey::spawn_listener(initial);
 
-    // Keep listener's hotkey in sync with the AppState hotkey mutex.
+    // Keep listener's hotkeys in sync with the AppState hotkeys mutex.
     {
-        let live_hotkey = live_hotkey.clone();
-        let hotkey = hotkey.clone();
+        let live_hotkeys = live_hotkeys.clone();
+        let hotkeys = hotkeys.clone();
         thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(500));
-            let current = hotkey.lock().clone();
-            let mut listener = live_hotkey.lock();
-            if *listener != current {
+            let current = hotkeys.lock().clone();
+            let mut listener = live_hotkeys.lock();
+            if listener.dictation != current.dictation
+                || listener.polish != current.polish
+            {
                 *listener = current;
             }
         });
@@ -430,7 +532,7 @@ fn spawn_orchestrator(handle: AppHandle, hotkey: Arc<Mutex<ParsedHotkey>>) {
         let mut active_recorder: Option<Recorder> = None;
         for evt in rx {
             match evt {
-                HotkeyEvent::Pressed => {
+                HotkeyEvent::DictationPressed => {
                     let cfg_arc = handle.state::<AppState>().config.clone();
                     let cfg = cfg_arc.lock().clone();
                     if !cfg.has_api_key() {
@@ -456,7 +558,7 @@ fn spawn_orchestrator(handle: AppHandle, hotkey: Arc<Mutex<ParsedHotkey>>) {
                         }
                     }
                 }
-                HotkeyEvent::Released => {
+                HotkeyEvent::DictationReleased => {
                     let Some(rec) = active_recorder.take() else {
                         continue;
                     };
@@ -501,9 +603,111 @@ fn spawn_orchestrator(handle: AppHandle, hotkey: Arc<Mutex<ParsedHotkey>>) {
                         process_pipeline(handle_for_task, cfg, wav).await;
                     });
                 }
+                HotkeyEvent::PolishTriggered => {
+                    let cfg_arc = handle.state::<AppState>().config.clone();
+                    let cfg = cfg_arc.lock().clone();
+                    if !cfg.has_api_key() {
+                        emit_status(
+                            &handle,
+                            "error",
+                            Some("Set your Groq API key in Settings first.".into()),
+                        );
+                        notify(&handle, "Bulbul", "Set your Groq API key in Settings first.");
+                        show_settings(&handle);
+                        continue;
+                    }
+                    let handle_for_task = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        polish_pipeline(handle_for_task, cfg).await;
+                    });
+                }
             }
         }
     });
+}
+
+async fn polish_pipeline(app: AppHandle, cfg: Config) {
+    // Step 1: grab the current selection by simulating Ctrl+C and reading the
+    // clipboard. Save and restore the user's existing clipboard around it.
+    let original = {
+        match arboard::Clipboard::new() {
+            Ok(mut c) => c.get_text().ok(),
+            Err(_) => None,
+        }
+    };
+
+    // Clear the clipboard so we can detect whether a real selection exists.
+    if let Ok(mut c) = arboard::Clipboard::new() {
+        let _ = c.set_text(String::new());
+    }
+
+    if let Err(e) = inject::send_ctrl_c() {
+        emit_status(&app, "error", Some(format!("Ctrl+C failed: {e:#}")));
+        notify(&app, "Bulbul polish failed", &format!("{e:#}"));
+        restore_clipboard(original);
+        return;
+    }
+
+    // Give the foreground app a moment to populate the clipboard.
+    tokio::time::sleep(Duration::from_millis(180)).await;
+
+    let selected = match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+        Ok(s) => s,
+        Err(_) => String::new(),
+    };
+
+    if selected.trim().is_empty() {
+        emit_status(
+            &app,
+            "error",
+            Some("No text selected — highlight something first.".into()),
+        );
+        notify(&app, "Bulbul polish", "No text selected — highlight some text and try again.");
+        restore_clipboard(original);
+        return;
+    }
+
+    emit_status(&app, "processing", None);
+    let polished = match groq::polish(&cfg, &selected).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("polish failed: {e:#}");
+            emit_status(&app, "error", Some(format!("{e:#}")));
+            notify(&app, "Bulbul polish failed", &format!("{e:#}"));
+            restore_clipboard(original);
+            return;
+        }
+    };
+
+    if polished.trim().is_empty() {
+        emit_status(&app, "error", Some("Polish returned empty text.".into()));
+        restore_clipboard(original);
+        return;
+    }
+
+    emit_status(&app, "injecting", None);
+    if let Err(e) = inject::inject_text(&polished) {
+        tracing::error!("polish inject failed: {e:#}");
+        emit_status(&app, "error", Some(format!("Inject: {e:#}")));
+        notify(&app, "Bulbul polish failed", &format!("{e:#}"));
+        restore_clipboard(original);
+        return;
+    }
+
+    emit_status(&app, "done", Some(polished));
+    // inject_text already attempts to restore the previous clipboard; we
+    // simulated our own Ctrl+C so additionally schedule a restore after the
+    // paste settles.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    restore_clipboard(original);
+}
+
+fn restore_clipboard(original: Option<String>) {
+    if let Some(orig) = original {
+        if let Ok(mut c) = arboard::Clipboard::new() {
+            let _ = c.set_text(orig);
+        }
+    }
 }
 
 async fn process_pipeline(app: AppHandle, cfg: Config, wav: Vec<u8>) {

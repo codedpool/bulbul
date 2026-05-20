@@ -161,6 +161,62 @@ pub async fn cleanup(cfg: &Config, transcript: &str) -> Result<String> {
     Ok(text.trim().to_string())
 }
 
+const POLISH_SYSTEM_PROMPT: &str = "You are a writing editor. Polish the user's text:\n\
+- Fix grammar, spelling, and punctuation errors.\n\
+- Improve flow and clarity.\n\
+- Preserve the original meaning, tone, and rough length — do not add new ideas.\n\
+- Match the original register (casual stays casual, formal stays formal).\n\
+\n\
+Return ONLY the polished text. No preamble, no quotes around the output, no commentary.";
+
+pub async fn polish(cfg: &Config, text: &str) -> Result<String> {
+    if !cfg.has_api_key() {
+        return Err(anyhow!("Groq API key not set"));
+    }
+    if text.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let request = ChatRequest {
+        model: cfg.chat_model.as_str(),
+        messages: vec![
+            ChatMessage {
+                role: "system",
+                content: POLISH_SYSTEM_PROMPT.to_string(),
+            },
+            ChatMessage {
+                role: "user",
+                content: text.to_string(),
+            },
+        ],
+        temperature: 0.3,
+    };
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{BASE_URL}/chat/completions"))
+        .bearer_auth(&cfg.groq_api_key)
+        .json(&request)
+        .send()
+        .await
+        .context("POST /chat/completions (polish)")?;
+
+    let status = resp.status();
+    let body = resp.text().await.context("reading polish response body")?;
+    if !status.is_success() {
+        return Err(anyhow!("Groq polish {status}: {body}"));
+    }
+    let parsed: ChatResponse =
+        serde_json::from_str(&body).with_context(|| format!("parsing polish body: {body}"))?;
+    let out = parsed
+        .choices
+        .into_iter()
+        .next()
+        .map(|c| c.message.content)
+        .unwrap_or_default();
+    Ok(out.trim().to_string())
+}
+
 /// Cheap call to confirm the API key works. Returns Ok(()) if Groq accepts it.
 pub async fn validate_key(api_key: &str) -> Result<()> {
     let client = reqwest::Client::new();

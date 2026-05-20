@@ -8,8 +8,9 @@ use std::thread;
 
 #[derive(Clone, Debug)]
 pub enum HotkeyEvent {
-    Pressed,
-    Released,
+    DictationPressed,
+    DictationReleased,
+    PolishTriggered,
 }
 
 /// Parsed hotkey: required modifier state + optional non-modifier key.
@@ -44,6 +45,17 @@ impl ParsedHotkey {
     pub fn rdev_key(&self) -> Option<Key> {
         self.key.as_deref().and_then(key_name_to_rdev)
     }
+
+    pub fn is_meaningful(&self) -> bool {
+        self.key.is_some() || self.ctrl || self.shift || self.alt || self.meta
+    }
+}
+
+/// Pair of hotkeys the listener watches simultaneously.
+#[derive(Clone, Debug, Default)]
+pub struct HotkeySet {
+    pub dictation: ParsedHotkey,
+    pub polish: ParsedHotkey,
 }
 
 fn normalize_key_name(s: &str) -> String {
@@ -59,7 +71,6 @@ fn normalize_key_name(s: &str) -> String {
         for c in chars {
             out.push(c.to_ascii_lowercase());
         }
-        // F-keys always uppercase.
         if out.starts_with('F') && out[1..].chars().all(|c| c.is_ascii_digit()) {
             out = out.to_ascii_uppercase();
         }
@@ -95,34 +106,40 @@ fn key_name_to_rdev(name: &str) -> Option<Key> {
     }
 }
 
-/// Spawns the rdev listener on a dedicated thread.
-/// Returns a Sender for hotkey updates (so the user can rebind at runtime)
-/// and a Receiver of Pressed/Released events.
-pub fn spawn_listener(initial: ParsedHotkey) -> (Arc<Mutex<ParsedHotkey>>, Receiver<HotkeyEvent>) {
+pub fn spawn_listener(initial: HotkeySet) -> (Arc<Mutex<HotkeySet>>, Receiver<HotkeyEvent>) {
     let (tx, rx) = mpsc::channel();
-    let hotkey = Arc::new(Mutex::new(initial));
-    let hotkey_inner = hotkey.clone();
+    let set = Arc::new(Mutex::new(initial));
+    let set_inner = set.clone();
 
     thread::spawn(move || {
         let pressed: Arc<Mutex<HashSet<Key>>> = Arc::new(Mutex::new(HashSet::new()));
-        let active = Arc::new(Mutex::new(false));
+        let dict_active = Arc::new(Mutex::new(false));
+        let polish_active = Arc::new(Mutex::new(false));
         let tx: Sender<HotkeyEvent> = tx;
 
         if let Err(e) = listen(move |event: Event| {
-            handle_event(&event, &pressed, &active, &hotkey_inner, &tx);
+            handle_event(
+                &event,
+                &pressed,
+                &dict_active,
+                &polish_active,
+                &set_inner,
+                &tx,
+            );
         }) {
             tracing::error!("rdev listener died: {e:?}");
         }
     });
 
-    (hotkey, rx)
+    (set, rx)
 }
 
 fn handle_event(
     event: &Event,
     pressed: &Arc<Mutex<HashSet<Key>>>,
-    active: &Arc<Mutex<bool>>,
-    hotkey: &Arc<Mutex<ParsedHotkey>>,
+    dict_active: &Arc<Mutex<bool>>,
+    polish_active: &Arc<Mutex<bool>>,
+    set: &Arc<Mutex<HotkeySet>>,
     tx: &Sender<HotkeyEvent>,
 ) {
     let (key, is_down) = match event.event_type {
@@ -140,23 +157,39 @@ fn handle_event(
         }
     }
 
-    let p = pressed.lock();
-    let h = hotkey.lock();
-    let now_matches = matches(&p, &h);
-    drop(h);
-    drop(p);
+    let snapshot = pressed.lock().clone();
+    let current = set.lock().clone();
 
-    let mut a = active.lock();
-    if !*a && now_matches {
-        *a = true;
-        let _ = tx.send(HotkeyEvent::Pressed);
-    } else if *a && !now_matches {
-        *a = false;
-        let _ = tx.send(HotkeyEvent::Released);
+    // Dictation: press + release events for hold-to-talk semantics.
+    let dict_matches = matches(&snapshot, &current.dictation);
+    {
+        let mut a = dict_active.lock();
+        if !*a && dict_matches {
+            *a = true;
+            let _ = tx.send(HotkeyEvent::DictationPressed);
+        } else if *a && !dict_matches {
+            *a = false;
+            let _ = tx.send(HotkeyEvent::DictationReleased);
+        }
+    }
+
+    // Polish: single event on the press edge, suppress duplicate fires while held.
+    if current.polish.is_meaningful() {
+        let polish_matches = matches(&snapshot, &current.polish);
+        let mut a = polish_active.lock();
+        if !*a && polish_matches {
+            *a = true;
+            let _ = tx.send(HotkeyEvent::PolishTriggered);
+        } else if *a && !polish_matches {
+            *a = false;
+        }
     }
 }
 
 fn matches(pressed: &HashSet<Key>, h: &ParsedHotkey) -> bool {
+    if !h.is_meaningful() {
+        return false;
+    }
     let ctrl_d = pressed.contains(&Key::ControlLeft) || pressed.contains(&Key::ControlRight);
     let shift_d = pressed.contains(&Key::ShiftLeft) || pressed.contains(&Key::ShiftRight);
     let alt_d = pressed.contains(&Key::Alt) || pressed.contains(&Key::AltGr);

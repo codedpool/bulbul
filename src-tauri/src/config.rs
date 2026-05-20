@@ -46,6 +46,9 @@ pub struct Config {
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
 
+    #[serde(default = "default_polish_hotkey")]
+    pub polish_hotkey: String,
+
     #[serde(default = "default_stt_model")]
     pub stt_model: String,
 
@@ -67,6 +70,9 @@ pub struct Config {
 
 fn default_hotkey() -> String {
     "Ctrl+Shift+Space".to_string()
+}
+fn default_polish_hotkey() -> String {
+    "Ctrl+Shift+P".to_string()
 }
 fn default_stt_model() -> String {
     "whisper-large-v3-turbo".to_string()
@@ -93,6 +99,7 @@ impl Default for Config {
             groq_api_key: String::new(),
             mode: CleanupMode::default(),
             hotkey: default_hotkey(),
+            polish_hotkey: default_polish_hotkey(),
             stt_model: default_stt_model(),
             chat_model: default_chat_model(),
             min_recording_seconds: default_min_seconds(),

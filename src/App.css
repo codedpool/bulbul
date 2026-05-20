@@ -207,6 +207,22 @@ kbd {
 .mode-label { font-weight: 500; font-size: 13px; }
 .mode-hint { font-size: 12px; color: #8a8a8a; margin-top: 2px; }
 
+.hotkey-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hotkey-block + .hotkey-block {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #1c1c1c;
+}
+
+.hotkey-meta { display: flex; flex-direction: column; gap: 2px; }
+.hotkey-label { font-size: 13px; font-weight: 500; }
+.hotkey-hint { font-size: 12px; color: #8a8a8a; }
+
 .hotkey-row {
   align-items: center;
 }
