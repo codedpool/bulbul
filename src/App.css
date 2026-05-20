@@ -1338,6 +1338,106 @@ kbd {
   color: #5ec8c0;
 }
 
+/* ─────────── Snippets ─────────── */
+
+.snippet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 4px;
+  border-top: 1px solid #161616;
+  transition: background 120ms ease;
+}
+
+.snippet-row:first-child {
+  border-top: none;
+}
+
+.snippet-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.snippet-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.snippet-trigger-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  min-width: 0;
+}
+
+.snippet-trigger {
+  color: #e6e6e6;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.snippet-expansion {
+  color: #8a8a8a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.snippet-form {
+  background: #111;
+  border: 1px solid rgba(94, 200, 192, 0.25);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.snippet-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.snippet-form-row label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+}
+
+.snippet-form textarea {
+  background: #161616;
+  color: #e6e6e6;
+  border: 1px solid #262626;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 120ms ease;
+}
+
+.snippet-form textarea:focus {
+  border-color: #5ec8c0;
+}
+
+.examples {
+  margin-top: 12px;
+}
+
+.examples kbd {
+  margin: 0 2px;
+}
+
 /* ─────────── Privacy modal ─────────── */
 
 .modal-overlay {
