@@ -62,7 +62,8 @@ html, body, #root {
 }
 
 .hovered.expanded .pill {
-  width: 70px;
+  width: 32px;
+  padding: 0;
 }
 
 .sat {
@@ -147,33 +148,8 @@ html, body, #root {
   50%      { opacity: 0.85; transform: scale(1.15); }
 }
 
-.dots-row {
-  display: flex;
-  gap: 3px;
-  align-items: center;
-}
-
-.dots-row span {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.55);
-  display: block;
-  animation: dots-pulse 1.6s ease-in-out infinite;
-}
-
-.dots-row span:nth-child(1) { animation-delay: 0s; }
-.dots-row span:nth-child(2) { animation-delay: 0.08s; }
-.dots-row span:nth-child(3) { animation-delay: 0.16s; }
-.dots-row span:nth-child(4) { animation-delay: 0.24s; }
-.dots-row span:nth-child(5) { animation-delay: 0.32s; }
-.dots-row span:nth-child(6) { animation-delay: 0.40s; }
-.dots-row span:nth-child(7) { animation-delay: 0.48s; }
-
-@keyframes dots-pulse {
-  0%, 100% { opacity: 0.3; transform: scale(0.85); }
-  50%      { opacity: 0.95; transform: scale(1.0); }
-}
+.pill-icon svg { display: block; color: #d6d6d6; }
+.hovered .pill-icon svg { color: #e6e6e6; }
 
 .bars {
   display: flex;
