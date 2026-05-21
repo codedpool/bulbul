@@ -212,18 +212,35 @@ pub fn make_channel() -> (Sender<HotkeyEvent>, Receiver<HotkeyEvent>) {
     mpsc::channel::<HotkeyEvent>()
 }
 
+/// Reported back to the frontend so the Transforms UI can show "Alt+3"
+/// next to a card and dim it if the slot couldn't be registered (e.g.
+/// another app already owns the combo).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TransformSlotStatus {
+    pub transform_id: i64,
+    pub slot: u8, // 1..=9
+    pub combo: String, // e.g. "Alt+3" — human-readable
+    pub registered: bool,
+    pub error: Option<String>,
+}
+
 /// Register the current hotkeys with the global-shortcut plugin, wiring
 /// callbacks into the provided sender. Call again after a settings change
-/// to re-register; the orchestrator's receiver does not need to be rebuilt.
+/// or a Transforms CRUD operation. The orchestrator's receiver does not
+/// need to be rebuilt.
 pub fn install_global_shortcuts(
     app: &AppHandle,
     set: Arc<Mutex<HotkeySet>>,
     tx: Sender<HotkeyEvent>,
-) {
-    re_register(app, &set, tx);
+) -> Vec<TransformSlotStatus> {
+    re_register(app, &set, tx)
 }
 
-fn re_register(app: &AppHandle, set: &Arc<Mutex<HotkeySet>>, tx: Sender<HotkeyEvent>) {
+fn re_register(
+    app: &AppHandle,
+    set: &Arc<Mutex<HotkeySet>>,
+    tx: Sender<HotkeyEvent>,
+) -> Vec<TransformSlotStatus> {
     let gs = app.global_shortcut();
     if let Err(e) = gs.unregister_all() {
         tracing::warn!("unregister_all failed: {e:#}");
@@ -309,6 +326,108 @@ fn re_register(app: &AppHandle, set: &Arc<Mutex<HotkeySet>>, tx: Sender<HotkeyEv
         }
     }
 
-    // Transform slot bindings are deferred (see lib.rs) — none registered.
-    let _ = snapshot.transform_bindings;
+    // Transform slot hotkeys (Alt+1..Alt+9 by default). Each one fires
+    // TransformTriggered(id) on press. If registration fails (e.g. the
+    // combo is owned by another app), we surface the error to the UI via
+    // the returned status vec instead of crashing.
+    let mut statuses: Vec<TransformSlotStatus> = Vec::new();
+    for (transform_id, hk) in &snapshot.transform_bindings {
+        let slot = derive_slot_number(hk).unwrap_or(0);
+        let combo = format_combo(hk);
+        let Some(shortcut) = parsed_to_shortcut(hk) else {
+            statuses.push(TransformSlotStatus {
+                transform_id: *transform_id,
+                slot,
+                combo,
+                registered: false,
+                error: Some("Combo not representable as a shortcut".into()),
+            });
+            continue;
+        };
+        let tx_t = tx.clone();
+        let id_for_cb = *transform_id;
+        let last_fire: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        let handler = move |_app: &AppHandle,
+                            _sc: &Shortcut,
+                            event: tauri_plugin_global_shortcut::ShortcutEvent| {
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            let mut last = last_fire.lock();
+            let cooled = last.map_or(true, |t: Instant| {
+                t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+            });
+            if !cooled {
+                return;
+            }
+            *last = Some(Instant::now());
+            let _ = tx_t.send(HotkeyEvent::TransformTriggered(id_for_cb));
+        };
+        match gs.on_shortcut(shortcut, handler) {
+            Ok(_) => {
+                tracing::info!(
+                    "registered transform slot: id={} combo={}",
+                    transform_id,
+                    combo
+                );
+                statuses.push(TransformSlotStatus {
+                    transform_id: *transform_id,
+                    slot,
+                    combo,
+                    registered: true,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "register transform slot id={} combo={} failed: {e:#}",
+                    transform_id,
+                    combo
+                );
+                statuses.push(TransformSlotStatus {
+                    transform_id: *transform_id,
+                    slot,
+                    combo,
+                    registered: false,
+                    error: Some(format!("{e:#}")),
+                });
+            }
+        }
+    }
+    statuses
+}
+
+/// Pull the slot number out of an Alt+N parsed hotkey. Returns 0 if the
+/// shape isn't recognisable (UI then treats it as a custom combo).
+fn derive_slot_number(h: &ParsedHotkey) -> Option<u8> {
+    let key = h.key.as_deref()?;
+    if key.len() != 1 {
+        return None;
+    }
+    let c = key.chars().next()?;
+    if c.is_ascii_digit() {
+        Some(c as u8 - b'0')
+    } else {
+        None
+    }
+}
+
+fn format_combo(h: &ParsedHotkey) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if h.ctrl {
+        parts.push("Ctrl".into());
+    }
+    if h.shift {
+        parts.push("Shift".into());
+    }
+    if h.alt {
+        parts.push("Alt".into());
+    }
+    if h.meta {
+        parts.push("Win".into());
+    }
+    if let Some(k) = &h.key {
+        parts.push(k.clone());
+    }
+    parts.join("+")
 }

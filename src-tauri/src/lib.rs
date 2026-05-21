@@ -34,6 +34,9 @@ pub struct AppState {
     /// Sender feeding the orchestrator. Stored so that re-registering
     /// shortcuts after a settings change reuses the same channel.
     hotkey_tx: std::sync::mpsc::Sender<HotkeyEvent>,
+    /// Status of each transform slot hotkey (filled after every
+    /// re-registration). The Transforms UI reads this to label cards.
+    transform_slot_statuses: Arc<Mutex<Vec<hotkey::TransformSlotStatus>>>,
     icons: Arc<IconVariants>,
     db: db::Db,
 }
@@ -347,9 +350,12 @@ fn save_config(
     Ok(())
 }
 
-/// Recompute the per-transform slot hotkeys (Alt+1..Alt+9 by sort order) and
-/// push them into the live HotkeySet. Call after any transform CRUD.
-fn refresh_transform_bindings(state: &AppState) {
+/// Recompute the per-transform slot hotkeys (Alt+1..Alt+9 by sort order)
+/// and re-register them with the global-shortcut plugin. Call after any
+/// transform CRUD operation. Failures (e.g. another app owns the combo)
+/// are reported per-slot via AppState.transform_slot_statuses, which the
+/// frontend reads to show "unavailable" chips.
+fn refresh_transform_bindings(app: &AppHandle, state: &AppState) {
     let transforms = match db::list_transforms(&state.db) {
         Ok(t) => t,
         Err(e) => {
@@ -357,17 +363,31 @@ fn refresh_transform_bindings(state: &AppState) {
             return;
         }
     };
-    // Per-transform slot hotkeys are deferred — every passive combo we try
-    // either collides with a Windows reservation (Win+Alt+N → jump list),
-    // an app shortcut (Ctrl+Alt+N), or has menu-activation issues (bare
-    // Alt+N). Proper fix is to use tauri-plugin-global-shortcut which
-    // registers exclusively via RegisterHotKey. Until then, transforms are
-    // managed in the UI; the default one still runs via the polish hotkey
-    // and the wand button on the pill.
-    let bindings: Vec<(i64, ParsedHotkey)> = Vec::new();
-    let _ = transforms;
-    tracing::info!("transform slot bindings disabled (feature in progress)");
+    let bindings: Vec<(i64, ParsedHotkey)> = transforms
+        .iter()
+        .take(9)
+        .enumerate()
+        .map(|(idx, t)| {
+            let slot = (idx + 1) as u8;
+            let key = ((b'0' + slot) as char).to_string();
+            let hk = ParsedHotkey {
+                ctrl: false,
+                shift: false,
+                alt: true,
+                meta: false,
+                key: Some(key),
+            };
+            (t.id, hk)
+        })
+        .collect();
     state.hotkeys.lock().transform_bindings = bindings;
+
+    let statuses = hotkey::install_global_shortcuts(
+        app,
+        state.hotkeys.clone(),
+        state.hotkey_tx.clone(),
+    );
+    *state.transform_slot_statuses.lock() = statuses;
 }
 
 #[tauri::command]
@@ -525,10 +545,11 @@ fn add_transform(
     description: String,
     system_prompt: String,
     state: tauri::State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<db::Transform, String> {
     let out = db::add_transform(&state.db, &name, &description, &system_prompt)
         .map_err(|e| format!("{e:#}"))?;
-    refresh_transform_bindings(&state);
+    refresh_transform_bindings(&app, &state);
     Ok(out)
 }
 
@@ -539,32 +560,48 @@ fn update_transform(
     description: String,
     system_prompt: String,
     state: tauri::State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<(), String> {
     db::update_transform(&state.db, id, &name, &description, &system_prompt)
         .map_err(|e| format!("{e:#}"))?;
-    refresh_transform_bindings(&state);
+    refresh_transform_bindings(&app, &state);
     Ok(())
 }
 
 #[tauri::command]
-fn delete_transform(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+fn delete_transform(
+    id: i64,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     db::delete_transform(&state.db, id).map_err(|e| format!("{e:#}"))?;
-    refresh_transform_bindings(&state);
+    refresh_transform_bindings(&app, &state);
     Ok(())
 }
 
 #[tauri::command]
-fn set_default_transform(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+fn set_default_transform(
+    id: i64,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     db::set_default_transform(&state.db, id).map_err(|e| format!("{e:#}"))?;
-    refresh_transform_bindings(&state);
+    refresh_transform_bindings(&app, &state);
     Ok(())
 }
 
 #[tauri::command]
-fn reset_transforms(state: tauri::State<'_, AppState>) -> Result<(), String> {
+fn reset_transforms(state: tauri::State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     db::reset_transforms_to_defaults(&state.db).map_err(|e| format!("{e:#}"))?;
-    refresh_transform_bindings(&state);
+    refresh_transform_bindings(&app, &state);
     Ok(())
+}
+
+#[tauri::command]
+fn list_transform_slot_statuses(
+    state: tauri::State<'_, AppState>,
+) -> Vec<hotkey::TransformSlotStatus> {
+    state.transform_slot_statuses.lock().clone()
 }
 
 #[tauri::command]
@@ -777,6 +814,7 @@ pub fn run() {
             delete_transform,
             set_default_transform,
             reset_transforms,
+            list_transform_slot_statuses,
             list_notes,
             get_note,
             create_note,
@@ -807,15 +845,24 @@ pub fn run() {
                 }
             };
 
+            let slot_statuses_arc =
+                Arc::new(Mutex::new(Vec::<hotkey::TransformSlotStatus>::new()));
+
             handle.manage(AppState {
                 config: Arc::new(Mutex::new(initial_config)),
                 hotkeys: hotkey_mutex.clone(),
                 hotkey_tx: hotkey_tx.clone(),
+                transform_slot_statuses: slot_statuses_arc.clone(),
                 icons,
                 db: db_handle,
             });
 
-            hotkey::install_global_shortcuts(
+            // Initial registration happens here; refresh_transform_bindings
+            // below also re-runs install_global_shortcuts so the slot
+            // hotkeys get wired up the first time. Both runs are idempotent
+            // because install_global_shortcuts unregisters everything
+            // first.
+            let _ = hotkey::install_global_shortcuts(
                 &handle,
                 hotkey_mutex.clone(),
                 hotkey_tx.clone(),
@@ -845,7 +892,7 @@ pub fn run() {
             }
 
             // Initial transform slot hotkey bindings.
-            refresh_transform_bindings(&handle.state::<AppState>());
+            refresh_transform_bindings(&handle, &handle.state::<AppState>());
 
             let rx = hotkey_rx_for_setup
                 .lock()

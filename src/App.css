@@ -1398,6 +1398,41 @@ kbd {
   padding: 2px 6px;
 }
 
+.slot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  letter-spacing: 0.02em;
+}
+
+.slot-chip.ok {
+  background: rgba(94, 200, 192, 0.10);
+  color: #8bd6cf;
+  border-color: rgba(94, 200, 192, 0.22);
+}
+
+.slot-chip.blocked {
+  background: rgba(255, 90, 90, 0.07);
+  color: rgba(220, 130, 130, 0.85);
+  border-color: rgba(220, 130, 130, 0.20);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.slot-chip-x {
+  font-size: 11px;
+  line-height: 1;
+  text-decoration: none;
+}
+
 .default-pill {
   font-size: 10px;
   font-weight: 600;

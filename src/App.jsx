@@ -78,7 +78,7 @@ const SECTIONS = [
   { id: "insights", label: "Insights", working: true },
   { id: "dictionary", label: "Dictionary", working: true },
   { id: "snippets", label: "Snippets", working: true },
-  { id: "transforms", label: "Transforms", working: false },
+  { id: "transforms", label: "Transforms", working: true },
   { id: "style", label: "Style", working: true },
   { id: "scratchpad", label: "Scratchpad", working: true },
   { id: "settings", label: "Settings", working: true },

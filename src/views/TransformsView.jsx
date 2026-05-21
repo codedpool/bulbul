@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export default function TransformsView() {
   const [transforms, setTransforms] = useState([]);
+  const [slotStatuses, setSlotStatuses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null); // null | { id?, name, description, system_prompt }
 
@@ -10,13 +11,21 @@ export default function TransformsView() {
 
   async function load() {
     try {
-      const rows = await invoke("list_transforms");
+      const [rows, statuses] = await Promise.all([
+        invoke("list_transforms"),
+        invoke("list_transform_slot_statuses"),
+      ]);
       setTransforms(rows);
+      setSlotStatuses(statuses || []);
     } catch (e) {
       console.error("transforms load failed", e);
     } finally {
       setLoading(false);
     }
+  }
+
+  function statusForTransform(id) {
+    return slotStatuses.find((s) => s.transform_id === id) || null;
   }
 
   async function saveTransform(payload) {
@@ -95,11 +104,11 @@ export default function TransformsView() {
         </div>
       ) : (
         <div className="transform-grid">
-          {transforms.map((t, idx) => (
+          {transforms.map((t) => (
             <TransformCard
               key={t.id}
               transform={t}
-              slot={idx < 9 ? idx + 1 : null}
+              slotStatus={statusForTransform(t.id)}
               onEdit={() => setEditing(t)}
               onDelete={() => remove(t.id)}
               onSetDefault={() => setDefault(t.id)}
@@ -111,11 +120,25 @@ export default function TransformsView() {
   );
 }
 
-function TransformCard({ transform, slot, onEdit, onDelete, onSetDefault }) {
+function TransformCard({ transform, slotStatus, onEdit, onDelete, onSetDefault }) {
   return (
     <div className={`transform-card ${transform.is_default ? "default" : ""}`}>
       <div className="transform-card-top">
-        <span />{/* per-transform hotkey badge deferred — only default runs via polish hotkey */}
+        {slotStatus ? (
+          <span
+            className={`slot-chip ${slotStatus.registered ? "ok" : "blocked"}`}
+            title={
+              slotStatus.registered
+                ? `Press ${slotStatus.combo} to run this transform on selected text`
+                : `${slotStatus.combo} is unavailable — another app already owns this combo${slotStatus.error ? ` (${slotStatus.error})` : ""}`
+            }
+          >
+            {slotStatus.combo}
+            {!slotStatus.registered && <span className="slot-chip-x" aria-hidden>×</span>}
+          </span>
+        ) : (
+          <span />
+        )}
         <div className="transform-card-actions">
           {transform.is_default ? (
             <span className="default-pill">Default</span>
