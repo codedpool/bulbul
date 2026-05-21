@@ -2,9 +2,13 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+const PAGE_SIZE = 50;
+
 export default function HomeView() {
   const [stats, setStats] = useState(null);
   const [recent, setRecent] = useState([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -12,11 +16,12 @@ export default function HomeView() {
       try {
         const [s, r] = await Promise.all([
           invoke("get_home_stats"),
-          invoke("get_recent_dictations", { limit: 50 }),
+          invoke("get_recent_dictations", { limit: PAGE_SIZE, offset: 0 }),
         ]);
         if (mounted) {
           setStats(s);
           setRecent(r);
+          setHasMore(r.length === PAGE_SIZE);
         }
       } catch (e) {
         console.error("home load failed", e);
@@ -32,6 +37,23 @@ export default function HomeView() {
       un.then((f) => f());
     };
   }, []);
+
+  async function loadOlder() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await invoke("get_recent_dictations", {
+        limit: PAGE_SIZE,
+        offset: recent.length,
+      });
+      setRecent((prev) => [...prev, ...next]);
+      setHasMore(next.length === PAGE_SIZE);
+    } catch (e) {
+      console.error("load older failed", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const grouped = groupByDay(recent);
 
@@ -76,21 +98,32 @@ export default function HomeView() {
             {grouped.map(({ day, items }) => (
               <div key={day} className="day-group">
                 <div className="day-label">{day}</div>
-                {items.map((d) => (
-                  <div key={d.id} className="dictation-row">
-                    <div className="dictation-time">{formatTime(d.ts)}</div>
-                    <div className="dictation-body">
-                      <div className="dictation-text">{d.cleaned_text}</div>
-                      <div className="dictation-meta">
-                        {d.foreground_app && <span className="badge">{stripExe(d.foreground_app)}</span>}
-                        <span className="badge muted-badge">{d.mode}</span>
-                        <span className="badge muted-badge">{d.word_count}w</span>
+                <div className="day-card">
+                  {items.map((d) => (
+                    <div key={d.id} className="dictation-row">
+                      <div className="dictation-time">{formatTime(d.ts)}</div>
+                      <div className="dictation-body">
+                        <div className="dictation-text">{d.cleaned_text}</div>
+                        <div className="dictation-meta">
+                          {d.foreground_app && <span className="badge">{stripExe(d.foreground_app)}</span>}
+                          <span className="badge muted-badge">{d.mode}</span>
+                          <span className="badge muted-badge">{d.word_count}w</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             ))}
+            {hasMore && (
+              <button
+                className="load-older"
+                onClick={loadOlder}
+                disabled={loadingMore}
+              >
+                {loadingMore ? "Loading…" : "Load older activity"}
+              </button>
+            )}
           </div>
         )}
       </section>

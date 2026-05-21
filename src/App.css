@@ -11,6 +11,16 @@
   box-sizing: border-box;
 }
 
+/* Scroll-but-don't-show. Content stays scrollable; the visible scrollbar
+   is hidden because users intuit scroll from the content shape. */
+*::-webkit-scrollbar {
+  display: none;
+}
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
 body, html, #root {
   margin: 0;
   background: #0e0e0e;
@@ -32,6 +42,64 @@ body, html, #root {
   background: #0e0e0e;
 }
 
+/* ─────────── Custom title bar (floats over the shell) ─────────── */
+
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: transparent;
+  display: flex;
+  align-items: stretch;
+  z-index: 1000;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.titlebar-spacer {
+  flex: 1;
+  height: 32px; /* still draggable, just invisible */
+}
+
+.titlebar-controls {
+  display: flex;
+  align-items: stretch;
+}
+
+.tb-btn {
+  width: 46px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: #9a9a9a;
+  cursor: pointer;
+  padding: 0;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.tb-btn:hover {
+  background: #1a1a1a;
+  color: #e6e6e6;
+}
+
+.tb-btn:active {
+  background: #222;
+}
+
+.tb-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.tb-close:active {
+  background: #a52415;
+}
+
 .sidebar {
   width: 200px;
   flex-shrink: 0;
@@ -46,7 +114,7 @@ body, html, #root {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 8px 18px;
+  padding: 38px 8px 18px;
   border-bottom: 1px solid #161616;
   margin-bottom: 12px;
 }
@@ -177,7 +245,7 @@ body, html, #root {
 .content {
   flex: 1;
   overflow-y: auto;
-  padding: 28px 36px 40px;
+  padding: 48px 36px 40px;
 }
 
 /* ─────────── Page wrappers ─────────── */
@@ -190,10 +258,14 @@ body, html, #root {
 }
 
 .page-header h1 {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0 0 6px;
+  font-family: "Playfair Display", Georgia, "Cambria", serif;
+  font-style: italic;
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: 0.002em;
+  color: #ece9e0;
+  margin: 0 0 8px;
+  line-height: 1.15;
 }
 
 .page-header p {
@@ -270,38 +342,77 @@ body, html, #root {
 .timeline {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 28px;
 }
 
 .day-group {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 12px;
 }
 
 .day-label {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.10em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #6e6e6e;
-  padding: 0 0 8px;
+  padding: 0 4px;
+}
+
+.day-card {
+  background: #111111;
+  border: 1px solid #1a1a1a;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.load-older {
+  align-self: center;
+  margin-top: 4px;
+  padding: 10px 22px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: #b8b3a8;
+  background: transparent;
+  border: 1px solid #1f1f1f;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.load-older:hover {
+  border-color: #2c2c2c;
+  color: #e8e6df;
+  background: #131313;
+}
+
+.load-older:disabled {
+  cursor: default;
+  color: #6e6e6e;
+  border-color: #1a1a1a;
 }
 
 .dictation-row {
   display: flex;
-  gap: 16px;
-  padding: 12px 0;
-  border-top: 1px solid #161616;
+  gap: 20px;
+  padding: 16px 20px;
+  border-top: 1px solid #1a1a1a;
+}
+
+.dictation-row:first-child {
+  border-top: none;
 }
 
 .dictation-time {
   flex-shrink: 0;
-  width: 70px;
+  width: 76px;
   font-size: 12px;
   color: #6e6e6e;
   padding-top: 1px;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
 }
 
 .dictation-body {

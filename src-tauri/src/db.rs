@@ -346,17 +346,17 @@ pub struct DictationRow {
     pub fix_count: i64,
 }
 
-pub fn recent_dictations(db: &Db, limit: u32) -> Result<Vec<DictationRow>> {
+pub fn recent_dictations(db: &Db, limit: u32, offset: u32) -> Result<Vec<DictationRow>> {
     let conn = db.lock();
     let mut stmt = conn.prepare(
         "SELECT id, ts, raw_text, cleaned_text, mode, language, foreground_app,
                 duration_ms, word_count, fix_count
          FROM dictations
          ORDER BY ts DESC
-         LIMIT ?",
+         LIMIT ? OFFSET ?",
     )?;
     let rows = stmt
-        .query_map([limit as i64], |r| {
+        .query_map([limit as i64, offset as i64], |r| {
             Ok(DictationRow {
                 id: r.get(0)?,
                 ts: r.get(1)?,

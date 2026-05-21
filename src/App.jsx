@@ -122,6 +122,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      <TitleBar />
       {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
 
       <aside className="sidebar">
@@ -165,6 +166,69 @@ function App() {
         {section === "scratchpad" && <ScratchpadView />}
         {!["home", "settings", "dictionary", "insights", "snippets", "transforms", "style", "scratchpad"].includes(section) && <ComingSoon id={section} />}
       </main>
+    </div>
+  );
+}
+
+function TitleBar() {
+  const [isMaximized, setIsMaximized] = useState(false);
+  const win = getCurrentWindow();
+
+  useEffect(() => {
+    let mounted = true;
+    win.isMaximized().then((m) => mounted && setIsMaximized(m)).catch(() => {});
+    const un = win.onResized(() => {
+      win.isMaximized().then((m) => mounted && setIsMaximized(m)).catch(() => {});
+    });
+    return () => {
+      mounted = false;
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  return (
+    <div className="titlebar" data-tauri-drag-region>
+      <div className="titlebar-spacer" data-tauri-drag-region />
+      <div className="titlebar-controls">
+        <button
+          className="tb-btn"
+          aria-label="Minimize"
+          title="Minimize"
+          onClick={() => win.minimize().catch(() => {})}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+            <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          className="tb-btn"
+          aria-label={isMaximized ? "Restore" : "Maximize"}
+          title={isMaximized ? "Restore" : "Maximize"}
+          onClick={() => win.toggleMaximize().catch(() => {})}
+        >
+          {isMaximized ? (
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+              <rect x="2" y="3.2" width="5.5" height="5.5" fill="none" stroke="currentColor" strokeWidth="1" />
+              <path d="M3.2 3.2 V1.5 H8.5 V6.8 H6.8" fill="none" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          ) : (
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+              <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          )}
+        </button>
+        <button
+          className="tb-btn tb-close"
+          aria-label="Close"
+          title="Close"
+          onClick={() => win.close().catch(() => {})}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+            <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+            <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

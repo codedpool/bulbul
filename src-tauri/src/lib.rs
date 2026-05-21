@@ -415,9 +415,10 @@ fn get_home_stats(state: tauri::State<'_, AppState>) -> Result<db::HomeStats, St
 #[tauri::command]
 fn get_recent_dictations(
     limit: u32,
+    offset: u32,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<db::DictationRow>, String> {
-    db::recent_dictations(&state.db, limit).map_err(|e| format!("{e:#}"))
+    db::recent_dictations(&state.db, limit, offset).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
