@@ -18,8 +18,9 @@ pub fn inject_text(text: &str) -> Result<()> {
     // Best-effort: preserve previous text clipboard content and restore after paste.
     let previous = clipboard.get_text().ok();
 
+    let payload = text.to_string();
     clipboard
-        .set_text(text.to_string())
+        .set_text(payload.clone())
         .context("writing to clipboard")?;
 
     // Give the OS a moment to settle the clipboard content before pasting.
@@ -27,10 +28,29 @@ pub fn inject_text(text: &str) -> Result<()> {
 
     send_ctrl_v().context("sending Ctrl+V")?;
 
-    // Restore previous clipboard contents after a short delay so the paste lands first.
+    // Restore previous clipboard contents in the background so the caller
+    // (and the perf log) don't block on the 150ms settle window. Safety
+    // guard: only restore if the clipboard still holds *our* paste — that
+    // way a user who copied something new in the meantime (or a second
+    // dictation that fired before we finished) wins. We never overwrite
+    // user-initiated clipboard content.
+    drop(clipboard);
     if let Some(prev) = previous {
-        thread::sleep(Duration::from_millis(150));
-        let _ = clipboard.set_text(prev);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            let Ok(mut cb) = arboard::Clipboard::new() else {
+                return;
+            };
+            match cb.get_text() {
+                Ok(current) if current == payload => {
+                    let _ = cb.set_text(prev);
+                }
+                _ => {
+                    // Clipboard was touched by user or another flow — leave
+                    // their content alone.
+                }
+            }
+        });
     }
 
     Ok(())

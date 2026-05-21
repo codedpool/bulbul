@@ -1,6 +1,7 @@
 use crate::config::{config_dir, CleanupMode};
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
+use regex::{Regex, RegexBuilder};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -250,7 +251,17 @@ pub struct LogEntry {
     pub duration_ms: u64,
 }
 
-pub fn log_dictation(db: &Db, entry: LogEntry) -> Result<()> {
+/// Atomic end-of-dictation write: one transaction commits the activity-log
+/// INSERT and all hit-counter UPDATEs together. SQLite does one `fsync`
+/// instead of three, saving ~30ms on Windows. Stronger consistency than the
+/// previous three-separate-calls path because partial failure is impossible:
+/// either the whole dictation is recorded or none of it is.
+pub fn log_dictation_with_hits(
+    db: &Db,
+    entry: LogEntry,
+    dict_hits: &[(i64, i64)],
+    snip_hits: &[(i64, i64)],
+) -> Result<()> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -263,7 +274,10 @@ pub fn log_dictation(db: &Db, entry: LogEntry) -> Result<()> {
         CleanupMode::Polished => "polished",
     };
     let conn = db.lock();
-    conn.execute(
+    let tx = conn
+        .unchecked_transaction()
+        .context("starting batched dictation transaction")?;
+    tx.execute(
         "INSERT INTO dictations
             (ts, raw_text, cleaned_text, mode, language, foreground_app, duration_ms, word_count, fix_count)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -279,7 +293,22 @@ pub fn log_dictation(db: &Db, entry: LogEntry) -> Result<()> {
             fix_count,
         ],
     )
-    .context("inserting dictation")?;
+    .context("inserting dictation in batch")?;
+    for (id, delta) in dict_hits {
+        tx.execute(
+            "UPDATE dictionary SET hit_count = hit_count + ? WHERE id = ?",
+            params![*delta, *id],
+        )
+        .context("bumping dictionary hit in batch")?;
+    }
+    for (id, delta) in snip_hits {
+        tx.execute(
+            "UPDATE snippets SET hit_count = hit_count + ? WHERE id = ?",
+            params![*delta, *id],
+        )
+        .context("bumping snippet hit in batch")?;
+    }
+    tx.commit().context("committing batched dictation")?;
     Ok(())
 }
 
@@ -504,43 +533,156 @@ pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
 /// to persist via `bump_dictionary_hits`. Hits are only counted when the
 /// match's casing actually differs from the canonical `to_word`, so e.g. a
 /// transcript already spelling "Groq" correctly doesn't inflate the counter.
-pub fn apply_substitutions(db: &Db, text: &str) -> (String, Vec<(i64, i64)>) {
-    let entries = match list_dictionary(db) {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!("could not list dictionary for substitution: {e:#}");
-            return (text.to_string(), Vec::new());
-        }
-    };
-    let mut working = text.to_string();
-    let mut hits: Vec<(i64, i64)> = Vec::new();
-    for entry in entries {
-        let pattern = format!(r"\b{}\b", regex::escape(&entry.from_word));
-        let re = match regex::RegexBuilder::new(&pattern)
-            .case_insensitive(!entry.case_sensitive)
-            .build()
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("invalid dictionary regex for {:?}: {e:#}", entry.from_word);
-                continue;
-            }
-        };
-        let mut count = 0i64;
-        let to_word = entry.to_word.clone();
-        let replaced = re.replace_all(&working, |caps: &regex::Captures| {
-            let matched = caps.get(0).map(|m| m.as_str()).unwrap_or("");
-            if matched != to_word {
-                count += 1;
-            }
-            to_word.clone()
-        });
-        if count > 0 {
-            hits.push((entry.id, count));
-            working = replaced.into_owned();
+/// Pre-compiled dictionary + snippet regex caches. Compiling 24+ regexes per
+/// dictation costs ~50–60ms; with these caches the second-and-later dictation
+/// runs the regex pass in single-digit ms. Caches lazily populate on first
+/// use and are invalidated whenever the underlying CRUD command runs.
+pub struct RegexCache {
+    dict: Mutex<Option<Vec<CompiledDictEntry>>>,
+    snip: Mutex<Option<Vec<CompiledSnippet>>>,
+}
+
+struct CompiledDictEntry {
+    id: i64,
+    to_word: String,
+    re: Regex,
+}
+
+struct CompiledSnippet {
+    id: i64,
+    expansion: String,
+    re: Regex,
+}
+
+impl Default for RegexCache {
+    fn default() -> Self {
+        Self {
+            dict: Mutex::new(None),
+            snip: Mutex::new(None),
         }
     }
-    (working, hits)
+}
+
+impl RegexCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn invalidate_dictionary(&self) {
+        *self.dict.lock() = None;
+    }
+
+    pub fn invalidate_snippets(&self) {
+        *self.snip.lock() = None;
+    }
+
+    /// Apply dictionary substitutions using the cached compiled regexes.
+    /// On first call (or after invalidation) the cache rebuilds from the
+    /// database; subsequent calls reuse the compiled regexes.
+    pub fn apply_dictionary(&self, db: &Db, text: &str) -> (String, Vec<(i64, i64)>) {
+        let mut guard = self.dict.lock();
+        if guard.is_none() {
+            let entries = match list_dictionary(db) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!("could not list dictionary for substitution: {e:#}");
+                    return (text.to_string(), Vec::new());
+                }
+            };
+            let compiled: Vec<CompiledDictEntry> = entries
+                .into_iter()
+                .filter_map(|entry| {
+                    let pattern = format!(r"\b{}\b", regex::escape(&entry.from_word));
+                    RegexBuilder::new(&pattern)
+                        .case_insensitive(!entry.case_sensitive)
+                        .build()
+                        .map_err(|e| {
+                            tracing::warn!(
+                                "invalid dictionary regex for {:?}: {e:#}",
+                                entry.from_word
+                            );
+                        })
+                        .ok()
+                        .map(|re| CompiledDictEntry {
+                            id: entry.id,
+                            to_word: entry.to_word,
+                            re,
+                        })
+                })
+                .collect();
+            *guard = Some(compiled);
+        }
+        let entries = guard.as_ref().unwrap();
+
+        let mut working = text.to_string();
+        let mut hits: Vec<(i64, i64)> = Vec::new();
+        for entry in entries {
+            let mut count = 0i64;
+            let to_word = &entry.to_word;
+            let replaced = entry.re.replace_all(&working, |caps: &regex::Captures| {
+                let matched = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+                if matched != to_word.as_str() {
+                    count += 1;
+                }
+                to_word.clone()
+            });
+            if count > 0 {
+                hits.push((entry.id, count));
+                working = replaced.into_owned();
+            }
+        }
+        (working, hits)
+    }
+
+    /// Apply snippet expansions using the cached compiled regexes.
+    pub fn apply_snippets(&self, db: &Db, text: &str) -> (String, Vec<(i64, i64)>) {
+        let mut guard = self.snip.lock();
+        if guard.is_none() {
+            let snippets = match list_snippets(db) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("could not list snippets: {e:#}");
+                    return (text.to_string(), Vec::new());
+                }
+            };
+            let compiled: Vec<CompiledSnippet> = snippets
+                .into_iter()
+                .filter_map(|snip| {
+                    let pattern = format!(r"\b{}\b", regex::escape(&snip.trigger));
+                    RegexBuilder::new(&pattern)
+                        .case_insensitive(true)
+                        .build()
+                        .map_err(|e| {
+                            tracing::warn!("invalid snippet regex for {:?}: {e:#}", snip.trigger);
+                        })
+                        .ok()
+                        .map(|re| CompiledSnippet {
+                            id: snip.id,
+                            expansion: snip.expansion,
+                            re,
+                        })
+                })
+                .collect();
+            *guard = Some(compiled);
+        }
+        let snippets = guard.as_ref().unwrap();
+
+        let mut working = text.to_string();
+        let mut hits: Vec<(i64, i64)> = Vec::new();
+        for snip in snippets {
+            let mut count = 0i64;
+            let expansion = &snip.expansion;
+            let replaced = snip.re.replace_all(&working, |_caps: &regex::Captures| {
+                count += 1;
+                expansion.clone()
+            });
+            if count > 0 {
+                hits.push((snip.id, count));
+                working = replaced.into_owned();
+            }
+        }
+        (working, hits)
+    }
 }
 
 #[derive(Debug, Serialize, serde::Deserialize, Clone)]
@@ -628,44 +770,6 @@ pub fn delete_snippet(db: &Db, id: i64) -> Result<()> {
     Ok(())
 }
 
-/// Apply snippet expansions to `text`. Triggers match case-insensitively
-/// against whole word/phrase boundaries; the trigger is replaced with the
-/// stored expansion verbatim.
-pub fn apply_snippets(db: &Db, text: &str) -> (String, Vec<(i64, i64)>) {
-    let snippets = match list_snippets(db) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!("could not list snippets: {e:#}");
-            return (text.to_string(), Vec::new());
-        }
-    };
-    let mut working = text.to_string();
-    let mut hits: Vec<(i64, i64)> = Vec::new();
-    for snip in snippets {
-        let pattern = format!(r"\b{}\b", regex::escape(&snip.trigger));
-        let re = match regex::RegexBuilder::new(&pattern)
-            .case_insensitive(true)
-            .build()
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("invalid snippet regex for {:?}: {e:#}", snip.trigger);
-                continue;
-            }
-        };
-        let mut count = 0i64;
-        let expansion = snip.expansion.clone();
-        let replaced = re.replace_all(&working, |_caps: &regex::Captures| {
-            count += 1;
-            expansion.clone()
-        });
-        if count > 0 {
-            hits.push((snip.id, count));
-            working = replaced.into_owned();
-        }
-    }
-    (working, hits)
-}
 
 #[derive(Debug, Serialize, serde::Deserialize, Clone)]
 pub struct Transform {
@@ -954,20 +1058,6 @@ pub fn bump_transform_hits(db: &Db, id: i64) -> Result<()> {
         "UPDATE transforms SET hit_count = hit_count + 1 WHERE id = ?",
         params![id],
     )?;
-    Ok(())
-}
-
-pub fn bump_snippet_hits(db: &Db, hits: &[(i64, i64)]) -> Result<()> {
-    if hits.is_empty() {
-        return Ok(());
-    }
-    let conn = db.lock();
-    for (id, delta) in hits {
-        conn.execute(
-            "UPDATE snippets SET hit_count = hit_count + ? WHERE id = ?",
-            params![*delta, *id],
-        )?;
-    }
     Ok(())
 }
 

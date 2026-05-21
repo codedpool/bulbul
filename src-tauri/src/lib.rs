@@ -39,6 +39,10 @@ pub struct AppState {
     transform_slot_statuses: Arc<Mutex<Vec<hotkey::TransformSlotStatus>>>,
     icons: Arc<IconVariants>,
     db: db::Db,
+    /// Cached compiled dictionary + snippet regexes. Saves ~50ms per
+    /// dictation vs. recompiling from the DB row each time. Invalidated
+    /// whenever a CRUD command on those tables runs.
+    regex_cache: Arc<db::RegexCache>,
 }
 
 struct PendingDictation {
@@ -481,8 +485,10 @@ fn add_dictionary_entry(
     case_sensitive: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<db::DictionaryEntry, String> {
-    db::add_dictionary_entry(&state.db, &from_word, &to_word, case_sensitive)
-        .map_err(|e| format!("{e:#}"))
+    let out = db::add_dictionary_entry(&state.db, &from_word, &to_word, case_sensitive)
+        .map_err(|e| format!("{e:#}"))?;
+    state.regex_cache.invalidate_dictionary();
+    Ok(out)
 }
 
 #[tauri::command]
@@ -494,7 +500,9 @@ fn update_dictionary_entry(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     db::update_dictionary_entry(&state.db, id, &from_word, &to_word, case_sensitive)
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}"))?;
+    state.regex_cache.invalidate_dictionary();
+    Ok(())
 }
 
 #[tauri::command]
@@ -502,7 +510,9 @@ fn delete_dictionary_entry(
     id: i64,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    db::delete_dictionary_entry(&state.db, id).map_err(|e| format!("{e:#}"))
+    db::delete_dictionary_entry(&state.db, id).map_err(|e| format!("{e:#}"))?;
+    state.regex_cache.invalidate_dictionary();
+    Ok(())
 }
 
 #[tauri::command]
@@ -516,7 +526,10 @@ fn add_snippet(
     expansion: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<db::Snippet, String> {
-    db::add_snippet(&state.db, &trigger, &expansion).map_err(|e| format!("{e:#}"))
+    let out =
+        db::add_snippet(&state.db, &trigger, &expansion).map_err(|e| format!("{e:#}"))?;
+    state.regex_cache.invalidate_snippets();
+    Ok(out)
 }
 
 #[tauri::command]
@@ -526,12 +539,16 @@ fn update_snippet(
     expansion: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    db::update_snippet(&state.db, id, &trigger, &expansion).map_err(|e| format!("{e:#}"))
+    db::update_snippet(&state.db, id, &trigger, &expansion).map_err(|e| format!("{e:#}"))?;
+    state.regex_cache.invalidate_snippets();
+    Ok(())
 }
 
 #[tauri::command]
 fn delete_snippet(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    db::delete_snippet(&state.db, id).map_err(|e| format!("{e:#}"))
+    db::delete_snippet(&state.db, id).map_err(|e| format!("{e:#}"))?;
+    state.regex_cache.invalidate_snippets();
+    Ok(())
 }
 
 #[tauri::command]
@@ -855,6 +872,7 @@ pub fn run() {
                 transform_slot_statuses: slot_statuses_arc.clone(),
                 icons,
                 db: db_handle,
+                regex_cache: Arc::new(db::RegexCache::new()),
             });
 
             // Initial registration happens here; refresh_transform_bindings
@@ -1143,10 +1161,12 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
 }
 
 async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::Transform>) {
-    tracing::info!(
-        "transform_pipeline start: transform={}",
-        transform.as_ref().map(|t| t.name.as_str()).unwrap_or("<fallback>")
-    );
+    let t_pipeline_start = Instant::now();
+    let transform_name = transform
+        .as_ref()
+        .map(|t| t.name.clone())
+        .unwrap_or_else(|| "<fallback>".into());
+    tracing::info!("transform_pipeline start: transform={transform_name}");
     // Reuse a single Clipboard handle across save / clear / read / paste /
     // restore. Repeatedly opening arboard on Windows triggers OLE init/teardown
     // cycles that can corrupt the heap when paired with rdev's keyboard hook.
@@ -1162,6 +1182,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     let original = clipboard.get_text().ok();
     let _ = clipboard.set_text(String::new());
 
+    let t_capture_start = Instant::now();
     if let Err(e) = inject::send_ctrl_c() {
         emit_status(&app, "error", Some(format!("Ctrl+C failed: {e:#}")));
         notify(&app, "Bulbul polish failed", &format!("{e:#}"));
@@ -1173,6 +1194,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     tokio::time::sleep(Duration::from_millis(220)).await;
 
     let selected = clipboard.get_text().unwrap_or_default();
+    let t_capture_ms = t_capture_start.elapsed().as_millis() as u64;
 
     if selected.trim().is_empty() {
         tracing::warn!("transform_pipeline: clipboard empty after Ctrl+C (no selection captured)");
@@ -1185,9 +1207,10 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
         restore_clipboard_with(&mut clipboard, original);
         return;
     }
+    let input_chars = selected.chars().count();
     tracing::info!(
         "transform[{}] input ({} chars): {:?}",
-        transform.as_ref().map(|t| t.name.as_str()).unwrap_or("default"),
+        transform_name,
         selected.len(),
         selected.chars().take(200).collect::<String>()
     );
@@ -1197,6 +1220,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     let prompt = transform.as_ref().map(|t| t.system_prompt.as_str()).unwrap_or(FALLBACK_PROMPT);
 
     emit_status(&app, "processing", None);
+    let t_llm_start = Instant::now();
     let polished = match groq::execute_transform(&cfg, prompt, &selected).await {
         Ok(p) => p,
         Err(e) => {
@@ -1207,6 +1231,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
             return;
         }
     };
+    let t_llm_ms = t_llm_start.elapsed().as_millis() as u64;
     tracing::info!(
         "transform output ({} chars): {:?}",
         polished.len(),
@@ -1222,12 +1247,14 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
         return;
     }
 
-    let (final_text, dict_hits) = db::apply_substitutions(&db, &polished);
+    let regex_cache = app.state::<AppState>().regex_cache.clone();
+    let (final_text, dict_hits) = regex_cache.apply_dictionary(&db, &polished);
     if !dict_hits.is_empty() {
         let _ = db::bump_dictionary_hits(&db, &dict_hits);
     }
 
     emit_status(&app, "injecting", None);
+    let t_inject_start = Instant::now();
     if let Err(e) = clipboard.set_text(final_text.clone()) {
         tracing::error!("clipboard write failed: {e:#}");
         emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
@@ -1242,11 +1269,43 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
         restore_clipboard_with(&mut clipboard, original);
         return;
     }
+    let t_inject_ms = t_inject_start.elapsed().as_millis() as u64;
 
-    emit_status(&app, "done", Some(final_text));
-    // Give the paste a moment to land, then restore the user's clipboard.
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    restore_clipboard_with(&mut clipboard, original);
+    emit_status(&app, "done", Some(final_text.clone()));
+
+    let t_total_ms = t_pipeline_start.elapsed().as_millis() as u64;
+    let out_chars = final_text.chars().count();
+    tracing::info!(
+        "perf-transform[{}]: total={}ms capture={}ms llm={}ms inject={}ms | in={}c out={}c",
+        transform_name,
+        t_total_ms,
+        t_capture_ms,
+        t_llm_ms,
+        t_inject_ms,
+        input_chars,
+        out_chars
+    );
+
+    // Drop the pipeline's clipboard handle so the background restore can
+    // open its own. Then async-defer the 250ms wait + restore. Safety
+    // guard: only restore if the clipboard still holds our paste — that
+    // way nothing the user copies in between gets overwritten.
+    drop(clipboard);
+    if let Some(orig) = original {
+        let our_paste = final_text;
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(250));
+            let Ok(mut cb) = arboard::Clipboard::new() else {
+                return;
+            };
+            match cb.get_text() {
+                Ok(current) if current == our_paste => {
+                    let _ = cb.set_text(orig);
+                }
+                _ => {}
+            }
+        });
+    }
 }
 
 fn restore_clipboard_with(clipboard: &mut arboard::Clipboard, original: Option<String>) {
@@ -1262,6 +1321,8 @@ async fn process_pipeline(
     meta: PendingDictation,
     duration_ms: u64,
 ) {
+    let t_pipeline_start = Instant::now();
+    let audio_bytes = wav.len();
     // Hand the dictionary's canonical spellings to Whisper as a prompt hint —
     // biases the STT toward the user's preferred forms (e.g. "Groq", "iOS").
     let db = app.state::<AppState>().db.clone();
@@ -1271,6 +1332,7 @@ async fn process_pipeline(
         .map(|e| e.to_word)
         .collect();
 
+    let t_stt_start = Instant::now();
     let transcript = match groq::transcribe(&cfg, wav, &vocabulary).await {
         Ok(t) => t,
         Err(e) => {
@@ -1280,6 +1342,7 @@ async fn process_pipeline(
             return;
         }
     };
+    let t_stt_ms = t_stt_start.elapsed().as_millis() as u64;
     tracing::debug!("raw transcript: {transcript}");
     if transcript.trim().is_empty() || groq::is_likely_hallucination(&transcript) {
         tracing::info!("dropping likely-hallucinated transcript: {transcript:?}");
@@ -1298,6 +1361,7 @@ async fn process_pipeline(
         None
     };
 
+    let t_cleanup_start = Instant::now();
     let cleaned = match groq::cleanup(&cfg, &transcript, style_extra.as_deref()).await {
         Ok(t) => t,
         Err(e) => {
@@ -1305,30 +1369,62 @@ async fn process_pipeline(
             transcript.clone()
         }
     };
+    let t_cleanup_ms = t_cleanup_start.elapsed().as_millis() as u64;
     tracing::debug!("cleaned: {cleaned}");
 
-    let (with_dict, dict_hits) = db::apply_substitutions(&db, &cleaned);
+    let t_local_start = Instant::now();
+    let regex_cache = app.state::<AppState>().regex_cache.clone();
+    let (with_dict, dict_hits) = regex_cache.apply_dictionary(&db, &cleaned);
     if !dict_hits.is_empty() {
-        tracing::debug!("dictionary applied {} fix(es)", dict_hits.iter().map(|(_, c)| c).sum::<i64>());
-        let _ = db::bump_dictionary_hits(&db, &dict_hits);
+        tracing::debug!(
+            "dictionary applied {} fix(es)",
+            dict_hits.iter().map(|(_, c)| c).sum::<i64>()
+        );
     }
-    let (final_text, snip_hits) = db::apply_snippets(&db, &with_dict);
+    let (final_text, snip_hits) = regex_cache.apply_snippets(&db, &with_dict);
     if !snip_hits.is_empty() {
-        tracing::debug!("snippets expanded {} time(s)", snip_hits.iter().map(|(_, c)| c).sum::<i64>());
-        let _ = db::bump_snippet_hits(&db, &snip_hits);
+        tracing::debug!(
+            "snippets expanded {} time(s)",
+            snip_hits.iter().map(|(_, c)| c).sum::<i64>()
+        );
     }
+    // DB writes deferred: the hit-counter UPDATEs + activity-log INSERT
+    // happen in one transaction below, after injection, so the user doesn't
+    // wait on three sequential fsyncs.
+    let t_local_ms = t_local_start.elapsed().as_millis() as u64;
 
     emit_status(&app, "injecting", None);
+    let t_inject_start = Instant::now();
     if let Err(e) = inject::inject_text(&final_text) {
         tracing::error!("inject failed: {e:#}");
         emit_status(&app, "error", Some(format!("Inject: {e:#}")));
         notify(&app, "Bulbul inject failed", &format!("{e:#}"));
         return;
     }
+    let t_inject_ms = t_inject_start.elapsed().as_millis() as u64;
 
-    // Log this dictation to the activity store. Best-effort — failures here
-    // never block injection or surface to the user.
-    if let Err(e) = db::log_dictation(
+    let t_total_ms = t_pipeline_start.elapsed().as_millis() as u64;
+    let word_count = final_text.split_whitespace().count();
+    // End-to-end latency the user actually perceives: from hotkey release
+    // (= recording stopped, process_pipeline entered) to text on screen.
+    // Logged in a single line so it's easy to grep / paste into a sheet
+    // when comparing against commercial dictation apps on the same hardware.
+    tracing::info!(
+        "perf: total={}ms stt={}ms cleanup={}ms local={}ms inject={}ms | audio_dur={}ms audio_bytes={} words={}",
+        t_total_ms,
+        t_stt_ms,
+        t_cleanup_ms,
+        t_local_ms,
+        t_inject_ms,
+        duration_ms,
+        audio_bytes,
+        word_count
+    );
+
+    // Atomic activity-log + hit-counter write. Single transaction so SQLite
+    // does one fsync instead of three. Best-effort — failures never block
+    // injection or surface to the user.
+    if let Err(e) = db::log_dictation_with_hits(
         &db,
         db::LogEntry {
             raw_text: transcript,
@@ -1338,6 +1434,8 @@ async fn process_pipeline(
             foreground_app: meta.foreground_app,
             duration_ms,
         },
+        &dict_hits,
+        &snip_hits,
     ) {
         tracing::warn!("failed to log dictation: {e:#}");
     }
