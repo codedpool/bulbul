@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import FeatureHero from "../components/FeatureHero.jsx";
+
+const SNIPPETS_HERO_SAMPLES = [
+  { trigger: "my LinkedIn", expansion: "https://linkedin.com/in/john-doe/" },
+  { trigger: "rewrite prompt", expansion: "Rewrite this to be more concise…" },
+  { trigger: "intro email", expansion: "Hey — would love to chat later this week…" },
+];
 
 export default function SnippetsView() {
   const [entries, setEntries] = useState([]);
@@ -64,6 +71,12 @@ export default function SnippetsView() {
           <PlusIcon /> Add new
         </button>
       </header>
+
+      <FeatureHero
+        dismissKey="bulbul.snippets.hero.dismissed"
+        title={<>The stuff <em>you</em> shouldn't have to re-type.</>}
+        samples={SNIPPETS_HERO_SAMPLES}
+      />
 
       <div className="dict-toolbar">
         <div className="search-input">

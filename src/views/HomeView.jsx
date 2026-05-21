@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import FeatureHero from "../components/FeatureHero.jsx";
 
 const PAGE_SIZE = 50;
 
@@ -63,6 +64,12 @@ export default function HomeView() {
         <h1>Welcome back</h1>
         <p className="muted small">Your dictation activity, all local. No data leaves your machine except to Groq.</p>
       </header>
+
+      <FeatureHero
+        dismissKey="bulbul.home.hero.dismissed"
+        title={<>Speak. Edit. <em>Move on.</em></>}
+        blurb="Hold your hotkey anywhere on Windows, talk, release. Bulbul transcribes, cleans up, and pastes the result right at your cursor."
+      />
 
       <section className="stat-cards">
         <StatCard

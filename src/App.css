@@ -1,10 +1,12 @@
 :root {
-  font-family: -apple-system, "Segoe UI", "Inter", sans-serif;
+  font-family: "DM Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  font-optical-sizing: auto;
   font-size: 14px;
   color: #e6e6e6;
   background: #0e0e0e;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 * {
@@ -296,7 +298,9 @@ body, html, #root {
 /* ─────────── Page wrappers ─────────── */
 
 .page {
-  max-width: 760px;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 28px;
@@ -355,10 +359,14 @@ body, html, #root {
 }
 
 .stat-value {
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-family: "Times New Roman", Times, "Liberation Serif", serif;
+  font-size: 34px;
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: #ece9e0;
   margin-bottom: 4px;
+  line-height: 1.05;
 }
 
 .stat-label {
@@ -812,11 +820,13 @@ kbd {
 }
 
 .card-value-big {
-  font-size: 36px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: #e6e6e6;
-  line-height: 1.1;
+  font-family: "Times New Roman", Times, "Liberation Serif", serif;
+  font-size: 44px;
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: #ece9e0;
+  line-height: 1.05;
 }
 
 .card-value-row {
@@ -1260,6 +1270,111 @@ kbd {
   display: block;
 }
 
+/* ─────────── Feature hero (compact, reused on Home / Dictionary / Snippets / Transforms / Scratchpad) ─────────── */
+
+.feature-hero {
+  position: relative;
+  background:
+    radial-gradient(circle at 92% -10%, rgba(232, 230, 223, 0.05) 0%, transparent 50%),
+    linear-gradient(180deg, #111111 0%, #0d0d0d 100%);
+  border: 1px solid #1c1c1c;
+  border-radius: 12px;
+  padding: 16px 22px 16px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.feature-hero-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid #1f1f1f;
+  border-radius: 999px;
+  color: #7a7a7a;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.feature-hero-close:hover {
+  color: #e6e6e6;
+  border-color: #2a2a2a;
+  background: #161616;
+}
+
+.feature-hero-title {
+  font-family: "Playfair Display", Georgia, "Cambria", serif;
+  font-weight: 500;
+  font-size: 19px;
+  letter-spacing: 0.002em;
+  color: #ece9e0;
+  margin: 0;
+  line-height: 1.25;
+  padding-right: 36px;
+}
+
+.feature-hero-title em {
+  font-style: italic;
+  color: #dccba0;
+}
+
+.feature-hero-blurb {
+  margin: 0;
+  color: #a8a8a8;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 72ch;
+  padding-right: 36px;
+}
+
+.feature-hero-samples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feature-hero-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.feature-hero-trigger {
+  font-family: "Playfair Display", Georgia, "Cambria", serif;
+  font-style: italic;
+  color: #ece9e0;
+  background: #181818;
+  border: 1px solid #232323;
+  padding: 3px 11px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.feature-hero-arrow {
+  color: #5e5e5e;
+}
+
+.feature-hero-expansion {
+  color: #b8b8b8;
+  background: #131313;
+  border: 1px solid #1d1d1d;
+  padding: 3px 11px;
+  border-radius: 999px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .dict-toolbar {
   display: flex;
   align-items: center;
@@ -1665,45 +1780,50 @@ kbd {
   display: flex;
   flex-direction: column;
   height: calc(100vh - 76px);
-  max-width: none;
+  max-width: 1280px;
+  margin: 0 auto;
 }
 
 .scratchpad-layout {
   flex: 1;
   display: grid;
   grid-template-columns: 280px 1fr;
-  gap: 14px;
+  gap: 18px;
   min-height: 0;
 }
 
 .scratch-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
 }
 
+/* Override .search-input's `flex: 1` (row-context default) — in this
+   column-flex sidebar we want the search bar to stay at its natural
+   height, not grow vertically. */
 .scratch-search {
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .scratch-list {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-right: 4px;
-  min-height: 0;
+  justify-content: flex-start;
+  gap: 6px;
+  padding-right: 2px;
 }
 
 .list-empty {
-  padding: 24px 8px;
-  text-align: center;
+  padding: 20px 6px;
+  text-align: left;
 }
 
 .note-item {
-  background: #111;
+  background: #0f0f0f;
   border: 1px solid #1a1a1a;
   border-radius: 10px;
   padding: 12px 14px;
@@ -1713,12 +1833,13 @@ kbd {
 }
 
 .note-item:hover {
-  border-color: #262626;
+  border-color: #2a2a2a;
+  background: #131313;
 }
 
 .note-item.active {
-  border-color: rgba(94, 200, 192, 0.45);
-  background: linear-gradient(180deg, rgba(94, 200, 192, 0.05) 0%, #111 60%);
+  border-color: rgba(232, 230, 223, 0.22);
+  background: linear-gradient(180deg, rgba(232, 230, 223, 0.04) 0%, #0f0f0f 60%);
 }
 
 .note-item-row {
@@ -1765,9 +1886,9 @@ kbd {
 }
 
 .scratch-editor {
-  background: #111;
+  background: #0f0f0f;
   border: 1px solid #1c1c1c;
-  border-radius: 12px;
+  border-radius: 14px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1780,25 +1901,34 @@ kbd {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px;
+  padding: 56px 40px;
   text-align: center;
+  gap: 4px;
 }
 
 .scratch-empty h2 {
-  font-family: ui-serif, Georgia, serif;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0 0 8px;
-  color: #c8c8c8;
+  font-family: "Playfair Display", Georgia, "Cambria", serif;
+  font-style: italic;
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: 0.002em;
+  margin: 0 0 6px;
+  color: #e8e6df;
+  max-width: 24ch;
+  line-height: 1.25;
+}
+
+.scratch-empty p {
+  font-size: 13px;
+  max-width: 36ch;
 }
 
 .scratch-editor-toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 18px;
-  border-bottom: 1px solid #1a1a1a;
+  padding: 18px 22px;
+  border-bottom: 1px solid #181818;
   flex-shrink: 0;
 }
 
@@ -1806,15 +1936,18 @@ kbd {
   flex: 1;
   background: transparent !important;
   border: none !important;
-  color: #e6e6e6;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  color: #ece9e0;
+  font-family: "Playfair Display", Georgia, "Cambria", serif;
+  font-style: italic;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.002em;
   outline: none;
   padding: 0 !important;
+  line-height: 1.2;
 }
 
-.scratch-title::placeholder { color: #555; }
+.scratch-title::placeholder { color: #5a5752; opacity: 1; }
 
 .scratch-body {
   flex: 1;
@@ -1822,15 +1955,15 @@ kbd {
   border: none;
   resize: none;
   outline: none;
-  padding: 18px;
+  padding: 22px 26px 28px;
   font-family: -apple-system, "Segoe UI", "Inter", sans-serif;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 14.5px;
+  line-height: 1.7;
   color: #d6d6d6;
   min-height: 0;
 }
 
-.scratch-body::placeholder { color: #555; }
+.scratch-body::placeholder { color: #4f4d48; }
 
 .save-badge {
   font-size: 10px;

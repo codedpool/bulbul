@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import FeatureHero from "../components/FeatureHero.jsx";
+
+const DICTIONARY_HERO_SAMPLES = [
+  { trigger: "groq", expansion: "Groq" },
+  { trigger: "github", expansion: "GitHub" },
+  { trigger: "javascript", expansion: "JavaScript" },
+];
 
 export default function DictionaryView() {
   const [entries, setEntries] = useState([]);
@@ -73,6 +80,12 @@ export default function DictionaryView() {
           <PlusIcon /> Add new
         </button>
       </header>
+
+      <FeatureHero
+        dismissKey="bulbul.dictionary.hero.dismissed"
+        title={<>Names, brands, jargon — <em>spelled right</em> every time.</>}
+        samples={DICTIONARY_HERO_SAMPLES}
+      />
 
       <div className="dict-toolbar">
         <div className="search-input">

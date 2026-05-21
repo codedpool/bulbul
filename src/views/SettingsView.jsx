@@ -151,6 +151,26 @@ export default function SettingsView({ config, updateConfig }) {
       </section>
 
       <section>
+        <h3>Hotkeys</h3>
+        <HotkeyRow
+          label="Dictation"
+          hint="Hold this combo to record. Release to transcribe and insert."
+          combo={config.hotkey}
+          isRecording={recordingHotkeyFor === "dictation"}
+          onStart={() => setRecordingHotkeyFor("dictation")}
+          onCancel={() => setRecordingHotkeyFor(null)}
+        />
+        <HotkeyRow
+          label="Polish selection with AI"
+          hint="Select text anywhere, tap this combo — Bulbul rewrites it in place."
+          combo={config.polish_hotkey || "Ctrl+Shift+P"}
+          isRecording={recordingHotkeyFor === "polish"}
+          onStart={() => setRecordingHotkeyFor("polish")}
+          onCancel={() => setRecordingHotkeyFor(null)}
+        />
+      </section>
+
+      <section>
         <h3>Cleanup mode</h3>
         <div className="modes">
           {MODES.map((m) => (
@@ -189,26 +209,6 @@ export default function SettingsView({ config, updateConfig }) {
             <option key={l.code} value={l.code}>{l.label}</option>
           ))}
         </select>
-      </section>
-
-      <section>
-        <h3>Hotkeys</h3>
-        <HotkeyRow
-          label="Dictation"
-          hint="Hold this combo to record. Release to transcribe and insert."
-          combo={config.hotkey}
-          isRecording={recordingHotkeyFor === "dictation"}
-          onStart={() => setRecordingHotkeyFor("dictation")}
-          onCancel={() => setRecordingHotkeyFor(null)}
-        />
-        <HotkeyRow
-          label="Polish selection with AI"
-          hint="Select text anywhere, tap this combo — Bulbul rewrites it in place."
-          combo={config.polish_hotkey || "Ctrl+Shift+P"}
-          isRecording={recordingHotkeyFor === "polish"}
-          onStart={() => setRecordingHotkeyFor("polish")}
-          onCancel={() => setRecordingHotkeyFor(null)}
-        />
       </section>
 
       <section>

@@ -9,6 +9,9 @@ export default function InsightsView() {
     <div className="page insights-page">
       <header className="page-header">
         <h1>Insights</h1>
+        <p className="muted small">
+          See how you actually use Bulbul — pace, fixes, where you spend your words, and what your dictation voice looks like over time.
+        </p>
         <div className="tabs">
           <button
             className={`tab ${tab === "usage" ? "active" : ""}`}

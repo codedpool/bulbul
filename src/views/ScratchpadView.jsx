@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import FeatureHero from "../components/FeatureHero.jsx";
 
 const AUTOSAVE_DELAY_MS = 600;
 
@@ -151,6 +152,12 @@ export default function ScratchpadView() {
           <PlusIcon /> New note
         </button>
       </header>
+
+      <FeatureHero
+        dismissKey="bulbul.scratchpad.hero.dismissed"
+        title={<>Quick thoughts you <em>don't want to lose.</em></>}
+        blurb="Dictate or type freely. Notes auto-save as you go — no save buttons, no folders, just a place for the things that would otherwise live in your head."
+      />
 
       <div className="scratchpad-layout">
         <aside className="scratch-sidebar">

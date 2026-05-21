@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import FeatureHero from "../components/FeatureHero.jsx";
+
+const TRANSFORMS_HERO_SAMPLES = [
+  { trigger: "Polish", expansion: "Fix grammar, tighten flow, keep meaning." },
+  { trigger: "Make formal", expansion: "Rewrite in a professional register." },
+  { trigger: "Bullet points", expansion: "Restructure prose as a clean list." },
+];
 
 export default function TransformsView() {
   const [transforms, setTransforms] = useState([]);
@@ -87,6 +94,12 @@ export default function TransformsView() {
           </button>
         </div>
       </header>
+
+      <FeatureHero
+        dismissKey="bulbul.transforms.hero.dismissed"
+        title={<>Rewrite anything you write — with <em>one hotkey.</em></>}
+        samples={TRANSFORMS_HERO_SAMPLES}
+      />
 
       {editing && (
         <TransformEditor
