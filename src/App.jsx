@@ -90,6 +90,7 @@ function App() {
   const [config, setConfig] = useState(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     invoke("get_config").then((cfg) => {
@@ -121,8 +122,11 @@ function App() {
   if (!config) return <div className="loading">Loading…</div>;
 
   return (
-    <div className="app-shell">
-      <TitleBar />
+    <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
+      <TitleBar
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
+      />
       {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
 
       <aside className="sidebar">
@@ -170,7 +174,7 @@ function App() {
   );
 }
 
-function TitleBar() {
+function TitleBar({ sidebarOpen, onToggleSidebar }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const win = getCurrentWindow();
 
@@ -188,6 +192,19 @@ function TitleBar() {
 
   return (
     <div className="titlebar" data-tauri-drag-region>
+      <div className="titlebar-left">
+        <button
+          className="tb-btn tb-sidebar"
+          aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          onClick={onToggleSidebar}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+            <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+        </button>
+      </div>
       <div className="titlebar-spacer" data-tauri-drag-region />
       <div className="titlebar-controls">
         <button
