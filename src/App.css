@@ -46,23 +46,29 @@ body, html, #root {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px 18px;
+  padding: 10px 8px 18px;
   border-bottom: 1px solid #161616;
   margin-bottom: 12px;
 }
 
 .brand-mark {
-  width: 22px;
-  height: 22px;
-  background: linear-gradient(135deg, #5ec8c0, #2d8b86);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(94, 200, 192, 0.25);
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  object-fit: contain;
+  flex-shrink: 0;
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.4));
 }
 
 .brand-text {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: "Playfair Display", Georgia, "Cambria", serif;
+  font-style: italic;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  color: #e8e6df;
+  text-transform: lowercase;
+  line-height: 1;
 }
 
 .nav {

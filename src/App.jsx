@@ -10,6 +10,7 @@ import SnippetsView from "./views/SnippetsView.jsx";
 import TransformsView from "./views/TransformsView.jsx";
 import StyleView from "./views/StyleView.jsx";
 import ScratchpadView from "./views/ScratchpadView.jsx";
+import bulbulMark from "./assets/bulbul-mark.png";
 import "./App.css";
 
 const ICONS = {
@@ -125,8 +126,8 @@ function App() {
 
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark" aria-hidden />
-          <div className="brand-text">Bulbul</div>
+          <img src={bulbulMark} alt="" className="brand-mark" aria-hidden />
+          <div className="brand-text">bulbul</div>
         </div>
         <nav className="nav">
           {SECTIONS.map((s) => (
