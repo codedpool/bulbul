@@ -273,6 +273,7 @@ fn spawn_hover_watcher(app: AppHandle) {
     });
 }
 
+
 fn work_area_bottom_logical(scale: f64) -> Option<f64> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -732,20 +733,6 @@ fn set_overlay_height(height: f64, app: AppHandle) {
     }
 }
 
-#[tauri::command]
-fn polish_now(app: AppHandle) -> Result<(), String> {
-    let state = app.state::<AppState>();
-    let cfg = state.config.lock().clone();
-    if !cfg.has_api_key() {
-        return Err("Set your Groq API key in Settings first.".into());
-    }
-    let transform = db::get_default_transform(&state.db).ok();
-    let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
-        transform_pipeline(app_clone, cfg, transform).await;
-    });
-    Ok(())
-}
 
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> Result<bool, String> {
@@ -809,7 +796,6 @@ pub fn run() {
             check_for_updates,
             get_autostart,
             set_autostart,
-            polish_now,
             show_settings_window,
             set_overlay_height,
             get_home_stats,
@@ -1313,6 +1299,7 @@ fn restore_clipboard_with(clipboard: &mut arboard::Clipboard, original: Option<S
         let _ = clipboard.set_text(orig);
     }
 }
+
 
 async fn process_pipeline(
     app: AppHandle,
