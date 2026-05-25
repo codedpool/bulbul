@@ -4,7 +4,8 @@ html, body, #root {
   height: 100%;
   background: #0e0e0e;
   color: #e6e6e6;
-  font-family: -apple-system, "Segoe UI", "Inter", sans-serif;
+  font-family: "DM Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  font-optical-sizing: auto;
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   -webkit-user-select: none;
@@ -14,11 +15,71 @@ html, body, #root {
 
 * { box-sizing: border-box; }
 
+/* Match the main app: scroll, but never show the bar. */
+*::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; -ms-overflow-style: none; }
+
 .sp-shell {
   display: flex;
   flex-direction: column;
   height: 100vh;
   background: #0e0e0e;
+}
+
+/* ─────────── Custom title bar (matches main app) ─────────── */
+
+.sp-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: transparent;
+  display: flex;
+  align-items: stretch;
+  z-index: 1000;
+}
+
+.sp-titlebar-spacer {
+  flex: 1;
+  height: 32px;
+}
+
+.sp-titlebar-controls {
+  display: flex;
+  align-items: stretch;
+}
+
+.sp-tb-btn {
+  width: 46px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: #9a9a9a;
+  cursor: pointer;
+  padding: 0;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.sp-tb-btn:hover {
+  background: #1a1a1a;
+  color: #e6e6e6;
+}
+
+.sp-tb-btn:active {
+  background: #222;
+}
+
+.sp-tb-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.sp-tb-close:active {
+  background: #a52415;
 }
 
 /* ─────────── Body / sidebar ─────────── */
@@ -36,7 +97,7 @@ html, body, #root {
   border-right: 1px solid #161616;
   display: flex;
   flex-direction: column;
-  padding: 12px 10px;
+  padding: 40px 10px 12px;
   gap: 4px;
   min-height: 0;
 }
@@ -178,7 +239,7 @@ html, body, #root {
 
 /* Collapsed sidebar handle */
 .sp-sidebar-handle {
-  width: 36px;
+  width: 40px;
   background: #0a0a0a;
   border: none;
   border-right: 1px solid #161616;
@@ -187,11 +248,11 @@ html, body, #root {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 12px;
-  transition: color 120ms ease;
+  padding-top: 44px; /* sit comfortably below the floating titlebar */
+  transition: color 120ms ease, background 120ms ease;
 }
 
-.sp-sidebar-handle:hover { color: #e6e6e6; }
+.sp-sidebar-handle:hover { color: #e6e6e6; background: #101010; }
 
 /* ─────────── Editor ─────────── */
 
@@ -202,6 +263,7 @@ html, body, #root {
   min-width: 0;
   position: relative;
   background: #0e0e0e;
+  padding-top: 32px; /* room for the floating titlebar */
 }
 
 .sp-empty {

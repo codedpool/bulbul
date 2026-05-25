@@ -695,9 +695,10 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     .title("Bulbul Scratchpad")
     .inner_size(760.0, 540.0)
     .min_inner_size(520.0, 380.0)
-    .decorations(true)
+    .decorations(false)
     .center()
     .resizable(true)
+    .maximizable(false)
     .skip_taskbar(false)
     .visible(false)
     .build()?;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./ScratchpadWindow.css";
 
 const AUTOSAVE_DELAY_MS = 600;
@@ -136,6 +137,7 @@ export default function ScratchpadWindow() {
 
   return (
     <div className={`sp-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
+      <SpTitleBar />
       <div className="sp-body">
         {sidebarOpen && (
           <aside className="sp-sidebar">
@@ -229,6 +231,38 @@ export default function ScratchpadWindow() {
             </>
           )}
         </main>
+      </div>
+    </div>
+  );
+}
+
+function SpTitleBar() {
+  const win = getCurrentWindow();
+  return (
+    <div className="sp-titlebar" data-tauri-drag-region>
+      <div className="sp-titlebar-spacer" data-tauri-drag-region />
+      <div className="sp-titlebar-controls">
+        <button
+          className="sp-tb-btn"
+          aria-label="Minimize"
+          title="Minimize"
+          onClick={() => win.minimize().catch(() => {})}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+            <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          className="sp-tb-btn sp-tb-close"
+          aria-label="Close"
+          title="Close"
+          onClick={() => win.close().catch(() => {})}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+            <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+            <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
     </div>
   );
