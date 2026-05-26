@@ -20,6 +20,14 @@ impl Default for CleanupMode {
 }
 
 impl CleanupMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CleanupMode::Raw => "raw",
+            CleanupMode::Clean => "clean",
+            CleanupMode::Polished => "polished",
+        }
+    }
+
     pub fn system_instruction(&self) -> &'static str {
         match self {
             CleanupMode::Raw => {
@@ -77,6 +85,9 @@ pub struct Config {
     pub style_email: String,
     #[serde(default = "default_style_other")]
     pub style_other: String,
+
+    #[serde(default = "default_personalize_cleanup")]
+    pub personalize_cleanup: bool,
 }
 
 fn default_hotkey() -> String {
@@ -108,6 +119,7 @@ fn default_language() -> String {
     "auto".to_string()
 }
 fn default_style_enabled() -> bool { true }
+fn default_personalize_cleanup() -> bool { true }
 fn default_style_personal() -> String { "casual".to_string() }
 fn default_style_work() -> String { "casual".to_string() }
 fn default_style_email() -> String { "formal".to_string() }
@@ -163,6 +175,7 @@ impl Default for Config {
             style_work: default_style_work(),
             style_email: default_style_email(),
             style_other: default_style_other(),
+            personalize_cleanup: default_personalize_cleanup(),
         }
     }
 }

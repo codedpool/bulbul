@@ -195,6 +195,16 @@ export default function SettingsView({ config, updateConfig }) {
       </section>
 
       <section>
+        <h3>Personalization</h3>
+        <Toggle
+          label="Personalize cleanup from past dictations"
+          hint="Show the model recent examples from the same app so cleanups adapt to how you usually write there. Adds ~150 tokens per dictation."
+          checked={config.personalize_cleanup !== false}
+          onChange={(v) => updateConfig({ ...config, personalize_cleanup: v })}
+        />
+      </section>
+
+      <section>
         <h3>Language</h3>
         <p className="muted small">
           Tell Whisper which language you'll speak. Auto-detect works for most

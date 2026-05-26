@@ -346,6 +346,49 @@ pub struct DictationRow {
     pub fix_count: i64,
 }
 
+/// Pull recent (raw, cleaned) pairs that the cleanup pipeline can use as
+/// few-shot personalization examples. Filters by foreground app + mode so
+/// the model only sees stylistically-comparable history. Falls back to
+/// mode-only when no app match exists, so a brand-new user in a new app
+/// still gets weak personalization rather than none. Each text is read
+/// verbatim — caller is responsible for truncation/formatting.
+pub fn style_memory(
+    db: &Db,
+    foreground_app: Option<&str>,
+    mode: &str,
+    k: u32,
+) -> Result<Vec<(String, String)>> {
+    let conn = db.lock();
+    if let Some(app) = foreground_app {
+        let mut stmt = conn.prepare(
+            "SELECT raw_text, cleaned_text FROM dictations
+             WHERE foreground_app = ?1 AND mode = ?2
+               AND TRIM(raw_text) != '' AND TRIM(cleaned_text) != ''
+             ORDER BY ts DESC LIMIT ?3",
+        )?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map(params![app, mode, k as i64], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if !rows.is_empty() {
+            return Ok(rows);
+        }
+    }
+    let mut stmt = conn.prepare(
+        "SELECT raw_text, cleaned_text FROM dictations
+         WHERE mode = ?1
+           AND TRIM(raw_text) != '' AND TRIM(cleaned_text) != ''
+         ORDER BY ts DESC LIMIT ?2",
+    )?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map(params![mode, k as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 pub fn recent_dictations(db: &Db, limit: u32, offset: u32) -> Result<Vec<DictationRow>> {
     let conn = db.lock();
     let mut stmt = conn.prepare(

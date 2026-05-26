@@ -1303,6 +1303,35 @@ fn restore_clipboard_with(clipboard: &mut arboard::Clipboard, original: Option<S
 }
 
 
+/// Format (raw, cleaned) pairs into a few-shot block injected into the
+/// cleanup system prompt. The model sees examples of how this user's
+/// dictations have historically been cleaned in the same app + mode, and
+/// is asked to match the tone/vocabulary. Each text capped at 280 chars so
+/// a long historical paste can't blow the prompt budget.
+fn format_style_memory(pairs: &[(String, String)]) -> Option<String> {
+    if pairs.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = pairs
+        .iter()
+        // Oldest of the recent set first so the most-recent example is
+        // closest to the actual instruction — recency bias works for us.
+        .rev()
+        .map(|(raw, clean)| {
+            let r: String = raw.chars().take(280).collect();
+            let c: String = clean.chars().take(280).collect();
+            format!("Raw: {}\nCleaned: {}", r.trim(), c.trim())
+        })
+        .collect();
+    Some(format!(
+        "Recent examples of how this user's dictations have been cleaned \
+         in this context. Match their vocabulary, punctuation habits, and \
+         formality. Do NOT copy content from these examples into the new output \
+         — they are style reference only:\n\n{}",
+        lines.join("\n\n")
+    ))
+}
+
 async fn process_pipeline(
     app: AppHandle,
     cfg: Config,
@@ -1339,15 +1368,44 @@ async fn process_pipeline(
         return;
     }
 
-    // Resolve a Style preset based on the foreground app (e.g. casual for
-    // WhatsApp, formal for Outlook). When disabled or no match, no extra
-    // instruction is appended.
-    let style_extra: Option<String> = if cfg.style_enabled {
+    // Build the extra-context block appended to the cleanup system prompt.
+    // Two independent contributions:
+    //   1. Style preset (formal/casual/very-casual) inferred from the
+    //      foreground app, when style_enabled.
+    //   2. Few-shot personalization examples from the user's own past
+    //      dictations in this same app + mode, when personalize_cleanup.
+    // Concatenated with blank lines so the model reads them as separate
+    // instructions rather than one run-on block.
+    let mut style_parts: Vec<String> = Vec::new();
+    if cfg.style_enabled {
         let category = config::style_category_for_app(meta.foreground_app.as_deref());
         let key = cfg.style_for_category(category);
-        config::style_modifier(key).map(|s| s.to_string())
-    } else {
+        if let Some(m) = config::style_modifier(key) {
+            style_parts.push(m.to_string());
+        }
+    }
+    if cfg.personalize_cleanup && !matches!(cfg.mode, CleanupMode::Raw) {
+        let pairs = db::style_memory(
+            &db,
+            meta.foreground_app.as_deref(),
+            cfg.mode.as_str(),
+            3,
+        )
+        .unwrap_or_default();
+        if let Some(block) = format_style_memory(&pairs) {
+            tracing::info!(
+                "personalization: {} few-shot example(s) for app={:?} mode={}",
+                pairs.len(),
+                meta.foreground_app.as_deref().unwrap_or("(none)"),
+                cfg.mode.as_str()
+            );
+            style_parts.push(block);
+        }
+    }
+    let style_extra: Option<String> = if style_parts.is_empty() {
         None
+    } else {
+        Some(style_parts.join("\n\n"))
     };
 
     let t_cleanup_start = Instant::now();
