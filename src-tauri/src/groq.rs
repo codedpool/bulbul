@@ -135,9 +135,20 @@ pub async fn cleanup(
     let style_block = style_extra
         .map(|s| format!("\n\n{}", s))
         .unwrap_or_default();
+    // The language-preservation clause is load-bearing: without it,
+    // `llama-3.1-8b-instant` happily translates Hindi (or any non-English)
+    // input into English because its instruction-tuning is English-heavy
+    // and "clean up" reads as "make English" when the input isn't already.
+    // Wording is deliberately direct — softer phrasings leak.
     let system = format!(
         "You are a voice dictation editor. The user just spoke the following text. \
          {mode}{style}\n\n\
+         CRITICAL: Never translate between languages. The output must be in the \
+         same language as the speaker used. If the user spoke Hindi, output Hindi \
+         (Devanagari script or romanized Hinglish in Latin script — either is \
+         acceptable, but the vocabulary must remain Hindi, never replaced with \
+         English equivalents). The same rule applies to every other non-English \
+         language. Your job is punctuation, fillers, and grammar — not translation.\n\n\
          Return ONLY the cleaned text. No preamble, no quotes, no commentary.",
         mode = cfg.mode.system_instruction(),
         style = style_block,
