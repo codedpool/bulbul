@@ -1074,7 +1074,7 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                     // Energy gate: if the recording is essentially silence,
                     // skip the API call entirely. Whisper hallucinates
                     // "thank you" / "you" on silent input.
-                    const SILENCE_PEAK_DBFS: f32 = -40.0;
+                    const SILENCE_PEAK_DBFS: f32 = -55.0;
                     if result.peak_dbfs < SILENCE_PEAK_DBFS {
                         tracing::info!(
                             "discarding silent clip ({:.1} dBFS peak, {:.2}s)",

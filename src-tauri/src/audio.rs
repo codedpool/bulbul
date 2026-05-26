@@ -122,12 +122,29 @@ impl Recorder {
                 .collect()
         };
 
+        // Capture the *pre-normalization* peak. The silence gate upstream
+        // must look at this, not the post-AGC value — otherwise AGC just
+        // inflates the noise floor and the gate becomes useless.
         let peak_dbfs = compute_peak_dbfs(&mono);
         let seconds = if self.sample_rate == 0 {
             0.0
         } else {
             mono.len() as f32 / self.sample_rate as f32
         };
+
+        // Peak-normalize AGC. Whisper hallucinates on low-amplitude input;
+        // boosting a whisper to normal-speech amplitude makes the model
+        // treat it like any other clip. Gain is clamped so a near-silent
+        // buffer can't multiply pure noise into garbage.
+        let (normalized, applied_gain) = normalize_peak(mono, TARGET_PEAK_DBFS, MAX_GAIN_LINEAR);
+        if applied_gain > 1.01 {
+            tracing::info!(
+                "AGC boost: peak {:.1} dBFS -> ~{:.1} dBFS (gain {:.1}x)",
+                peak_dbfs,
+                peak_dbfs + 20.0 * applied_gain.log10(),
+                applied_gain
+            );
+        }
 
         let spec = hound::WavSpec {
             channels: 1,
@@ -139,7 +156,7 @@ impl Recorder {
         let mut buf = Cursor::new(Vec::<u8>::new());
         {
             let mut writer = hound::WavWriter::new(&mut buf, spec).context("creating WAV writer")?;
-            for s in mono {
+            for s in normalized {
                 writer.write_sample(s)?;
             }
             writer.finalize()?;
@@ -177,4 +194,36 @@ fn compute_peak_dbfs(samples: &[i16]) -> f32 {
         return -120.0;
     }
     20.0 * (peak as f32 / i16::MAX as f32).log10()
+}
+
+/// Target the post-AGC peak just below 0 dBFS so we never clip on the
+/// loudest sample after rounding. -3 dBFS = ~0.708 of full scale.
+const TARGET_PEAK_DBFS: f32 = -3.0;
+
+/// Hard ceiling on how much we'll amplify. +29.5 dB lifts a -50 dBFS
+/// whisper to ~-20 dBFS — comfortably above Whisper's confidence floor —
+/// without letting near-silent buffers explode into hiss.
+const MAX_GAIN_LINEAR: f32 = 30.0;
+
+fn normalize_peak(mut samples: Vec<i16>, target_dbfs: f32, max_gain: f32) -> (Vec<i16>, f32) {
+    let peak = samples
+        .iter()
+        .map(|&s| s.unsigned_abs() as u32)
+        .max()
+        .unwrap_or(0);
+    if peak == 0 {
+        return (samples, 1.0);
+    }
+    let target_amp = 10f32.powf(target_dbfs / 20.0) * i16::MAX as f32;
+    let gain = (target_amp / peak as f32).clamp(1.0, max_gain);
+    if (gain - 1.0).abs() < 0.01 {
+        return (samples, 1.0);
+    }
+    let max = i16::MAX as f32;
+    let min = i16::MIN as f32;
+    for s in samples.iter_mut() {
+        let v = (*s as f32 * gain).clamp(min, max);
+        *s = v as i16;
+    }
+    (samples, gain)
 }
