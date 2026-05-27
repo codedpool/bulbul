@@ -202,6 +202,12 @@ export default function SettingsView({ config, updateConfig }) {
           checked={config.personalize_cleanup !== false}
           onChange={(v) => updateConfig({ ...config, personalize_cleanup: v })}
         />
+        <Toggle
+          label="Learn from my corrections"
+          hint="When you fix what Bulbul typed, it remembers and applies the same fix next time the words come up. Reading edited fields uses Windows accessibility; password fields are always skipped."
+          checked={config.learn_corrections !== false}
+          onChange={(v) => updateConfig({ ...config, learn_corrections: v })}
+        />
       </section>
 
       <section>

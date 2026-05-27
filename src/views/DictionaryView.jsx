@@ -10,6 +10,7 @@ const DICTIONARY_HERO_SAMPLES = [
 
 export default function DictionaryView() {
   const [entries, setEntries] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState(false);
@@ -19,13 +20,37 @@ export default function DictionaryView() {
 
   async function load() {
     try {
-      const rows = await invoke("list_dictionary");
+      const [rows, sugg] = await Promise.all([
+        invoke("list_dictionary"),
+        invoke("correction_suggestions").catch(() => []),
+      ]);
       setEntries(rows);
+      setSuggestions(sugg);
     } catch (e) {
       console.error("dictionary load failed", e);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function acceptSuggestion(s) {
+    await invoke("add_dictionary_entry", {
+      fromWord: s.from_word,
+      toWord: s.to_word,
+      caseSensitive: false,
+    });
+    await load();
+  }
+
+  async function dismissSuggestion(s) {
+    // Optimistic: drop it from the list immediately, then persist.
+    setSuggestions((prev) =>
+      prev.filter((p) => !(p.from_word === s.from_word && p.to_word === s.to_word)),
+    );
+    await invoke("dismiss_correction_suggestion", {
+      fromWord: s.from_word,
+      toWord: s.to_word,
+    });
   }
 
   async function addEntry(payload) {
@@ -86,6 +111,33 @@ export default function DictionaryView() {
         title={<>Names, brands, jargon — <em>spelled right</em> every time.</>}
         samples={DICTIONARY_HERO_SAMPLES}
       />
+
+      {suggestions.length > 0 && (
+        <div className="dict-suggestions">
+          <div className="dict-suggestions-head">
+            <h3>Suggested from your edits</h3>
+            <span className="muted small">
+              Words you fixed by hand after dictating. Add the ones you want Bulbul to spell this way automatically.
+            </span>
+          </div>
+          {suggestions.map((s) => (
+            <div className="dict-suggestion-row" key={`${s.from_word}→${s.to_word}`}>
+              <div className="dict-suggestion-main">
+                <span className="dict-from">{s.from_word}</span>
+                <span className="dict-arrow">→</span>
+                <span className="dict-term">{s.to_word}</span>
+                {s.count > 1 && (
+                  <span className="dict-suggestion-count">fixed {s.count}×</span>
+                )}
+              </div>
+              <div className="dict-suggestion-actions">
+                <button className="primary small" onClick={() => acceptSuggestion(s)}>Add</button>
+                <button className="small" onClick={() => dismissSuggestion(s)}>Dismiss</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="dict-toolbar">
         <div className="search-input">

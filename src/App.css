@@ -1489,6 +1489,70 @@ kbd {
   border: 1px solid #262626;
 }
 
+/* Suggested-from-edits strip (V3.1 correction memory) */
+.dict-suggestions {
+  margin: 4px 0 10px;
+  padding: 14px 16px 8px;
+  border: 1px solid #1d2c2a;
+  border-radius: 12px;
+  background: #0f1615;
+}
+
+.dict-suggestions-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.dict-suggestions-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5ec8c0;
+}
+
+.dict-suggestion-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 2px;
+  border-top: 1px solid #15201f;
+}
+
+.dict-suggestion-row:first-of-type {
+  border-top: none;
+}
+
+.dict-suggestion-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 15px;
+}
+
+.dict-suggestion-count {
+  font-size: 11px;
+  color: #8aa6a3;
+  background: #15201f;
+  border: 1px solid #1d2c2a;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.dict-suggestion-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+button.small {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
 .dict-row-meta {
   display: flex;
   align-items: center;

@@ -34,3 +34,11 @@ pub fn foreground_app() -> Option<String> {
         full.rsplit(['\\', '/']).next().map(|s| s.to_string())
     }
 }
+
+/// Raw handle of the current foreground window, as an `isize` for cheap
+/// equality checks. The correction watcher uses this to notice when the user
+/// clicks away from the field they just dictated into (= they're done
+/// editing). Returns 0 when there is no foreground window.
+pub fn foreground_hwnd() -> isize {
+    unsafe { GetForegroundWindow().0 as isize }
+}

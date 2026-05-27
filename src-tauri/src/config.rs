@@ -88,6 +88,9 @@ pub struct Config {
 
     #[serde(default = "default_personalize_cleanup")]
     pub personalize_cleanup: bool,
+
+    #[serde(default = "default_learn_corrections")]
+    pub learn_corrections: bool,
 }
 
 fn default_hotkey() -> String {
@@ -120,6 +123,7 @@ fn default_language() -> String {
 }
 fn default_style_enabled() -> bool { true }
 fn default_personalize_cleanup() -> bool { true }
+fn default_learn_corrections() -> bool { true }
 fn default_style_personal() -> String { "casual".to_string() }
 fn default_style_work() -> String { "casual".to_string() }
 fn default_style_email() -> String { "formal".to_string() }
@@ -176,6 +180,7 @@ impl Default for Config {
             style_email: default_style_email(),
             style_other: default_style_other(),
             personalize_cleanup: default_personalize_cleanup(),
+            learn_corrections: default_learn_corrections(),
         }
     }
 }

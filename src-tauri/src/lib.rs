@@ -1,9 +1,11 @@
 mod audio;
 mod config;
+mod correction;
 mod db;
 mod groq;
 mod hotkey;
 mod inject;
+mod uia;
 mod window_info;
 
 use crate::audio::Recorder;
@@ -518,6 +520,23 @@ fn delete_dictionary_entry(
 }
 
 #[tauri::command]
+fn correction_suggestions(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<db::CorrectionSuggestion>, String> {
+    db::correction_suggestions(&state.db).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn dismiss_correction_suggestion(
+    from_word: String,
+    to_word: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    db::dismiss_correction_suggestion(&state.db, &from_word, &to_word)
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 fn list_snippets(state: tauri::State<'_, AppState>) -> Result<Vec<db::Snippet>, String> {
     db::list_snippets(&state.db).map_err(|e| format!("{e:#}"))
 }
@@ -809,6 +828,8 @@ pub fn run() {
             add_dictionary_entry,
             update_dictionary_entry,
             delete_dictionary_entry,
+            correction_suggestions,
+            dismiss_correction_suggestion,
             list_snippets,
             add_snippet,
             update_snippet,
@@ -1332,6 +1353,31 @@ fn format_style_memory(pairs: &[(String, String)]) -> Option<String> {
     ))
 }
 
+/// Format the user's past hand-corrections (V3.1 correction memory) into a
+/// prompt block. Currently unused — the few-shot apply path was disabled
+/// after it caused the small cleanup model to echo example text. Retained for
+/// the upcoming safe apply redesign.
+#[allow(dead_code)]
+fn format_corrections(pairs: &[(String, String)]) -> Option<String> {
+    if pairs.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = pairs
+        .iter()
+        .map(|(injected, corrected)| {
+            let i: String = injected.chars().take(280).collect();
+            let c: String = corrected.chars().take(280).collect();
+            format!("Before: {}\nAfter: {}", i.trim(), c.trim())
+        })
+        .collect();
+    Some(format!(
+        "This user has previously hand-corrected your output. When the same \
+         words or patterns come up, apply the same change so they don't have to \
+         fix it again. These are corrections to learn from, not text to copy:\n\n{}",
+        lines.join("\n\n")
+    ))
+}
+
 async fn process_pipeline(
     app: AppHandle,
     cfg: Config,
@@ -1402,6 +1448,13 @@ async fn process_pipeline(
             style_parts.push(block);
         }
     }
+    // Correction memory (V3.1): the apply path is intentionally disabled.
+    // Injecting past corrections as few-shot Before/After pairs caused
+    // `llama-3.1-8b-instant` to emit the example text verbatim instead of
+    // cleaning the real transcript (observed: a "Cloud correctly" dictation
+    // came out as a stored correction's text). Capture/storage still runs so
+    // the data accrues; a safe apply mechanism is pending redesign.
+    // See `db::relevant_corrections` / `format_corrections` (kept for reuse).
     let style_extra: Option<String> = if style_parts.is_empty() {
         None
     } else {
@@ -1449,6 +1502,17 @@ async fn process_pipeline(
         return;
     }
     let t_inject_ms = t_inject_start.elapsed().as_millis() as u64;
+
+    // Correction memory (V3.1): watch the field we just pasted into for edits
+    // the user makes, on a background thread, and store any clean correction.
+    // Spawned right after injection so the snapshot sees our fresh paste.
+    if cfg.learn_corrections {
+        correction::watch_for_correction(
+            final_text.clone(),
+            meta.foreground_app.clone(),
+            db.clone(),
+        );
+    }
 
     let t_total_ms = t_pipeline_start.elapsed().as_millis() as u64;
     let word_count = final_text.split_whitespace().count();

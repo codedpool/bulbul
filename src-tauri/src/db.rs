@@ -76,6 +76,23 @@ CREATE TABLE IF NOT EXISTS notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS corrections (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              INTEGER NOT NULL,
+    injected        TEXT NOT NULL,
+    corrected       TEXT NOT NULL,
+    foreground_app  TEXT,
+    hit_count       INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_corrections_ts ON corrections(ts DESC);
+
+CREATE TABLE IF NOT EXISTS correction_dismissals (
+    from_word   TEXT NOT NULL,
+    to_word     TEXT NOT NULL,
+    PRIMARY KEY (from_word, to_word)
+);
 "#;
 
 const DEFAULT_TRANSFORMS: &[(&str, &str, &str)] = &[
@@ -387,6 +404,232 @@ pub fn style_memory(
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
+}
+
+/// Most recent corrections to keep. Correction memory is recency-biased —
+/// old fixes for vocabulary the user no longer uses age out automatically.
+const MAX_CORRECTIONS: i64 = 200;
+
+/// Persist a `{injected, corrected}` pair captured by the correction watcher.
+/// Exact-duplicate pairs refresh their timestamp and bump a hit counter
+/// instead of piling up, so a fix the user keeps making floats to the top.
+/// The table is pruned to the most recent `MAX_CORRECTIONS` on every insert.
+pub fn add_correction(
+    db: &Db,
+    injected: &str,
+    corrected: &str,
+    foreground_app: Option<&str>,
+) -> Result<()> {
+    let injected = injected.trim();
+    let corrected = corrected.trim();
+    if injected.is_empty() || corrected.is_empty() || injected == corrected {
+        return Ok(());
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = db.lock();
+    let updated = conn.execute(
+        "UPDATE corrections SET ts = ?, hit_count = hit_count + 1
+         WHERE injected = ? AND corrected = ?",
+        params![now, injected, corrected],
+    )?;
+    if updated == 0 {
+        conn.execute(
+            "INSERT INTO corrections (ts, injected, corrected, foreground_app, hit_count)
+             VALUES (?, ?, ?, ?, 0)",
+            params![now, injected, corrected, foreground_app],
+        )?;
+    }
+    conn.execute(
+        "DELETE FROM corrections WHERE id NOT IN
+            (SELECT id FROM corrections ORDER BY ts DESC LIMIT ?)",
+        params![MAX_CORRECTIONS],
+    )?;
+    Ok(())
+}
+
+/// Pick the corrections most relevant to the text the user just dictated, for
+/// injection into the cleanup prompt. Relevance is matched against the words
+/// that *actually changed* in each correction (the symmetric difference of
+/// its before/after tokens), not every word it contains. A `"GLaud"→"Claude"`
+/// fix is only relevant when the new transcript itself contains "glaud" or
+/// "claude" — it shouldn't fire just because both mention "check". This keeps
+/// recurring-error fixes (the whole point) while ignoring incidental overlap
+/// on common words. Ties break toward the more frequently repeated fix.
+///
+/// Currently unused: the few-shot apply path was disabled after it caused the
+/// cleanup model to echo example text. Retained for the safe apply redesign.
+#[allow(dead_code)]
+pub fn relevant_corrections(
+    db: &Db,
+    transcript: &str,
+    k: u32,
+) -> Result<Vec<(String, String)>> {
+    let conn = db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT injected, corrected, hit_count FROM corrections
+         ORDER BY ts DESC LIMIT 100",
+    )?;
+    let rows: Vec<(String, String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let trans_tokens: HashSet<String> = tokenize_words(transcript)
+        .into_iter()
+        .filter(|w| is_meaningful(w))
+        .collect();
+    if trans_tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut scored: Vec<(i64, i64, (String, String))> = rows
+        .into_iter()
+        .map(|(inj, cor, hits)| {
+            let inj_tokens: HashSet<String> = tokenize_words(&inj).into_iter().collect();
+            let cor_tokens: HashSet<String> = tokenize_words(&cor).into_iter().collect();
+            // Only the words that changed in this correction can make it
+            // relevant to a new transcript.
+            let overlap = inj_tokens
+                .symmetric_difference(&cor_tokens)
+                .filter(|t| {
+                    let w = t.as_str();
+                    is_meaningful(w) && trans_tokens.contains(w)
+                })
+                .count() as i64;
+            (overlap, hits, (inj, cor))
+        })
+        .filter(|(overlap, _, _)| *overlap > 0)
+        .collect();
+    // Most changed-word matches first, then most-repeated correction.
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    Ok(scored
+        .into_iter()
+        .take(k as usize)
+        .map(|(_, _, pair)| pair)
+        .collect())
+}
+
+#[derive(Debug, Serialize)]
+pub struct CorrectionSuggestion {
+    pub from_word: String,
+    pub to_word: String,
+    pub count: i64,
+}
+
+/// If `injected` and `corrected` differ by exactly one whitespace-delimited
+/// word (ignoring surrounding punctuation), return that `(from, to)` swap.
+/// This is the safe, dictionary-shaped subset of corrections — a clean
+/// single-word fix like "GLaud" → "Claude". Multi-word or structural edits
+/// return `None` and never become suggestions.
+fn extract_word_substitution(injected: &str, corrected: &str) -> Option<(String, String)> {
+    let inj: Vec<&str> = injected.split_whitespace().collect();
+    let cor: Vec<&str> = corrected.split_whitespace().collect();
+    if inj.is_empty() || inj.len() != cor.len() {
+        return None;
+    }
+    fn strip(w: &str) -> &str {
+        w.trim_matches(|c: char| !c.is_alphanumeric())
+    }
+    let mut diff: Option<(String, String)> = None;
+    for (a, b) in inj.iter().zip(cor.iter()) {
+        let (sa, sb) = (strip(a), strip(b));
+        if sa == sb {
+            continue;
+        }
+        if diff.is_some() {
+            return None; // more than one word changed — not a clean swap
+        }
+        diff = Some((sa.to_string(), sb.to_string()));
+    }
+    let (from, to) = diff?;
+    if from.is_empty() || to.is_empty() || from.chars().count() > 40 || to.chars().count() > 40 {
+        return None;
+    }
+    Some((from, to))
+}
+
+/// Distinct single-word fixes the user has made, as dictionary suggestions.
+/// Each captured correction is reduced to its one changed word (if it is a
+/// clean swap); identical swaps are grouped and counted. Pairs already in the
+/// dictionary or previously dismissed are excluded. Sorted by how often the
+/// fix recurred (most-repeated first), capped to keep the list reviewable.
+pub fn correction_suggestions(db: &Db) -> Result<Vec<CorrectionSuggestion>> {
+    let conn = db.lock();
+    let dict: HashSet<String> = {
+        let mut s = conn.prepare("SELECT from_word FROM dictionary")?;
+        let set = s
+            .query_map([], |r| r.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .map(|w| w.to_lowercase())
+            .collect();
+        set
+    };
+    let dismissed: HashSet<(String, String)> = {
+        let mut s = conn.prepare("SELECT from_word, to_word FROM correction_dismissals")?;
+        let set = s
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+        set
+    };
+    let rows: Vec<(String, String)> = {
+        let mut s = conn.prepare("SELECT injected, corrected FROM corrections ORDER BY ts DESC")?;
+        let v = s
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        v
+    };
+
+    // Preserve recency order of first appearance so ties sort newest-first.
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut map: std::collections::HashMap<(String, String), CorrectionSuggestion> =
+        std::collections::HashMap::new();
+    for (inj, cor) in rows {
+        let Some((from, to)) = extract_word_substitution(&inj, &cor) else {
+            continue;
+        };
+        let from_lower = from.to_lowercase();
+        let to_lower = to.to_lowercase();
+        if dict.contains(&from_lower) {
+            continue;
+        }
+        let key = (from_lower, to_lower);
+        if dismissed.contains(&key) {
+            continue;
+        }
+        match map.get_mut(&key) {
+            Some(existing) => existing.count += 1,
+            None => {
+                order.push(key.clone());
+                map.insert(
+                    key,
+                    CorrectionSuggestion {
+                        from_word: from,
+                        to_word: to,
+                        count: 1,
+                    },
+                );
+            }
+        }
+    }
+    let mut out: Vec<CorrectionSuggestion> =
+        order.into_iter().filter_map(|k| map.remove(&k)).collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count)); // stable: keeps recency within ties
+    out.truncate(20);
+    Ok(out)
+}
+
+/// Remember that the user dismissed a suggested correction so it stops being
+/// offered. Stored case-insensitively to match `correction_suggestions`.
+pub fn dismiss_correction_suggestion(db: &Db, from_word: &str, to_word: &str) -> Result<()> {
+    let conn = db.lock();
+    conn.execute(
+        "INSERT OR IGNORE INTO correction_dismissals (from_word, to_word) VALUES (?, ?)",
+        params![from_word.to_lowercase(), to_word.to_lowercase()],
+    )?;
+    Ok(())
 }
 
 pub fn recent_dictations(db: &Db, limit: u32, offset: u32) -> Result<Vec<DictationRow>> {
