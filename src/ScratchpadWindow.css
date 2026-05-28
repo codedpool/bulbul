@@ -346,6 +346,49 @@ html, body, #root {
 
 .sp-body-input::placeholder { color: #555; }
 
+/* Transform-on-selection toolbar */
+.sp-transforms {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 6px 22px 2px;
+  flex-shrink: 0;
+}
+
+.sp-transforms-label {
+  font-size: 11px;
+  color: #6e6e6e;
+  margin-right: 2px;
+}
+
+.sp-transform-chip {
+  font-size: 11px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: #161616;
+  border: 1px solid #262626;
+  color: #cfcfcf;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.sp-transform-chip:hover:not(:disabled) {
+  background: #1d2c2a;
+  border-color: #2c4340;
+  color: #8fe3da;
+}
+
+.sp-transform-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sp-transform-err {
+  font-size: 11px;
+  color: #d46b6b;
+}
+
 .sp-save {
   font-size: 10px;
   font-weight: 600;

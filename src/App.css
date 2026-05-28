@@ -2101,6 +2101,50 @@ button.small {
 
 .scratch-body::placeholder { color: #4f4d48; }
 
+/* Transform-on-selection toolbar (V2 tail) */
+.scratch-transforms {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 22px;
+  border-bottom: 1px solid #181818;
+  flex-shrink: 0;
+}
+
+.scratch-transforms-label {
+  font-size: 12px;
+  color: #6e6e6e;
+  margin-right: 2px;
+}
+
+.scratch-transform-chip {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #161616;
+  border: 1px solid #262626;
+  color: #cfcfcf;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.scratch-transform-chip:hover:not(:disabled) {
+  background: #1d2c2a;
+  border-color: #2c4340;
+  color: #8fe3da;
+}
+
+.scratch-transform-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.scratch-transform-err {
+  font-size: 12px;
+  color: #d46b6b;
+}
+
 .save-badge {
   font-size: 10px;
   font-weight: 600;

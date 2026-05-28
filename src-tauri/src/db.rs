@@ -1014,6 +1014,15 @@ impl RegexCache {
         }
         (working, hits)
     }
+
+    /// Pre-compile both caches from the database so the first dictation of a
+    /// session doesn't pay the ~50–120ms compile cost. Running the apply pass
+    /// over an empty string just triggers the lazy build and returns at once.
+    /// Safe to call on a background thread at boot.
+    pub fn warm(&self, db: &Db) {
+        let _ = self.apply_dictionary(db, "");
+        let _ = self.apply_snippets(db, "");
+    }
 }
 
 #[derive(Debug, Serialize, serde::Deserialize, Clone)]

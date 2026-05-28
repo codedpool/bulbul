@@ -16,14 +16,57 @@ export default function ScratchpadWindow() {
   const [saveState, setSaveState] = useState("idle");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [copyState, setCopyState] = useState("idle");
+  const [transforms, setTransforms] = useState([]);
+  const [runningTransformId, setRunningTransformId] = useState(null);
+  const [transformError, setTransformError] = useState("");
+  const [hasSelection, setHasSelection] = useState(false);
   const saveTimer = useRef(null);
   const dirtyRef = useRef(false);
+  const bodyRef = useRef(null);
+  const selRef = useRef({ start: 0, end: 0 });
 
   useEffect(() => {
     load();
+    invoke("list_transforms").then(setTransforms).catch(() => {});
     const un = listen("notes-changed", () => loadKeepSelection());
     return () => { un.then((f) => f()); };
   }, []);
+
+  function rememberSelection() {
+    const el = bodyRef.current;
+    if (!el) return;
+    selRef.current = { start: el.selectionStart, end: el.selectionEnd };
+    setHasSelection(el.selectionEnd > el.selectionStart);
+  }
+
+  async function applyTransform(transform) {
+    const { start, end } = selRef.current;
+    if (end <= start) return;
+    const selected = body.slice(start, end);
+    setRunningTransformId(transform.id);
+    setTransformError("");
+    try {
+      const out = await invoke("run_transform_on_text", {
+        transformId: transform.id,
+        text: selected,
+      });
+      const next = body.slice(0, start) + out + body.slice(end);
+      onBodyChange(next);
+      requestAnimationFrame(() => {
+        const el = bodyRef.current;
+        if (el) {
+          const caret = start + out.length;
+          el.focus();
+          el.setSelectionRange(caret, caret);
+          selRef.current = { start: caret, end: caret };
+        }
+      });
+    } catch (e) {
+      setTransformError(String(e));
+    } finally {
+      setRunningTransformId(null);
+    }
+  }
 
   async function loadKeepSelection() {
     try {
@@ -218,11 +261,36 @@ export default function ScratchpadWindow() {
                 />
                 <SaveBadge state={saveState} />
               </div>
+              {transforms.length > 0 && (
+                <div className="sp-transforms">
+                  <span className="sp-transforms-label">
+                    {hasSelection ? "Rewrite selection:" : "Select text to rewrite:"}
+                  </span>
+                  {transforms.map((t) => (
+                    <button
+                      key={t.id}
+                      className="sp-transform-chip"
+                      disabled={!hasSelection || runningTransformId != null}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => applyTransform(t)}
+                      title={t.description || t.name}
+                    >
+                      {runningTransformId === t.id ? "Rewriting…" : t.name}
+                    </button>
+                  ))}
+                  {transformError && <span className="sp-transform-err">{transformError}</span>}
+                </div>
+              )}
               <textarea
+                ref={bodyRef}
                 className="sp-body-input"
                 placeholder="Start typing, or dictate with your hotkey…"
                 value={body}
                 onChange={(e) => onBodyChange(e.target.value)}
+                onSelect={rememberSelection}
+                onMouseUp={rememberSelection}
+                onKeyUp={rememberSelection}
+                onBlur={rememberSelection}
               />
               <button className="sp-copy" onClick={copyBody} disabled={!body}>
                 <CopyIcon />

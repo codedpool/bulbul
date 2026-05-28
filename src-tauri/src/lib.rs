@@ -665,6 +665,39 @@ fn delete_transform(
     Ok(())
 }
 
+/// Run a Transform against arbitrary text (used by the Scratchpad to rewrite a
+/// selection in place — no clipboard or global hotkey involved). Returns the
+/// rewritten text; the caller substitutes it back into the note.
+#[tauri::command]
+async fn run_transform_on_text(
+    transform_id: i64,
+    text: String,
+    app: AppHandle,
+) -> Result<String, String> {
+    let (cfg, db) = {
+        let state = app.state::<AppState>();
+        let cfg = state.config.lock().clone();
+        let db = state.db.clone();
+        (cfg, db)
+    };
+    if !cfg.has_api_key() {
+        return Err("Set your Groq API key in Settings first.".into());
+    }
+    if text.trim().is_empty() {
+        return Ok(text);
+    }
+    let transform = db::list_transforms(&db)
+        .map_err(|e| format!("{e:#}"))?
+        .into_iter()
+        .find(|t| t.id == transform_id)
+        .ok_or_else(|| "Transform not found".to_string())?;
+    let out = groq::execute_transform(&cfg, &transform.system_prompt, &text, None)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    let _ = db::bump_transform_hits(&db, transform_id);
+    Ok(out)
+}
+
 #[tauri::command]
 fn set_default_transform(
     id: i64,
@@ -887,6 +920,7 @@ pub fn run() {
             add_transform,
             update_transform,
             delete_transform,
+            run_transform_on_text,
             set_default_transform,
             reset_transforms,
             list_transform_slot_statuses,
@@ -932,6 +966,15 @@ pub fn run() {
                 db: db_handle,
                 regex_cache: Arc::new(db::RegexCache::new()),
             });
+
+            // Warm the dictionary/snippet regex caches in the background so the
+            // first dictation of the session isn't slower than every one after.
+            {
+                let state = handle.state::<AppState>();
+                let regex_cache = state.regex_cache.clone();
+                let db = state.db.clone();
+                std::thread::spawn(move || regex_cache.warm(&db));
+            }
 
             // Initial registration happens here; refresh_transform_bindings
             // below also re-runs install_global_shortcuts so the slot
