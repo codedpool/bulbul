@@ -7,9 +7,12 @@ import { listen } from "@tauri-apps/api/event";
 // <html data-theme="…">, which theme.css keys off of.
 
 const STORAGE_KEY = "bulbul-theme";
+const ANIM_CLASS = "theme-anim";
+const ANIM_MS = 480;
 const mq = window.matchMedia("(prefers-color-scheme: dark)");
 let currentPref = "dark";
 let listenersWired = false;
+let animTimer = null;
 
 function resolve(pref) {
   if (pref === "system") return mq.matches ? "dark" : "light";
@@ -24,8 +27,23 @@ function setAttr(pref) {
   } catch {}
 }
 
+// Same as setAttr, but briefly enables a color crossfade (see .theme-anim in
+// theme.css) so the switch is gradual. The class is removed after the
+// transition so it never interferes with hover/interaction transitions.
+function setAttrAnimated(pref) {
+  if (resolve(pref) === resolve(currentPref)) {
+    setAttr(pref); // no visible change (e.g. system→system) — skip the fade
+    return;
+  }
+  const root = document.documentElement;
+  root.classList.add(ANIM_CLASS);
+  setAttr(pref);
+  if (animTimer) clearTimeout(animTimer);
+  animTimer = setTimeout(() => root.classList.remove(ANIM_CLASS), ANIM_MS);
+}
+
 function onSystemChange() {
-  if (currentPref === "system") setAttr("system");
+  if (currentPref === "system") setAttrAnimated("system");
 }
 
 /** Current stored preference ("dark" | "light" | "system"). */
@@ -38,9 +56,9 @@ export function resolvedTheme() {
   return resolve(currentPref);
 }
 
-/** Apply a preference immediately (instant feedback, no round-trip). */
+/** Apply a preference with a gradual crossfade (instant, no round-trip). */
 export function applyTheme(pref) {
-  setAttr(pref);
+  setAttrAnimated(pref);
 }
 
 /**
@@ -61,7 +79,7 @@ export function initTheme() {
     listenersWired = true;
     if (mq.addEventListener) mq.addEventListener("change", onSystemChange);
     else if (mq.addListener) mq.addListener(onSystemChange);
-    listen("theme-changed", (e) => setAttr(e.payload || "dark")).catch(() => {});
+    listen("theme-changed", (e) => setAttrAnimated(e.payload || "dark")).catch(() => {});
   }
 
   // Reconcile with the source of truth (config) in the background.

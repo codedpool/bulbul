@@ -16,6 +16,19 @@
      both themes, since the accent is the same in both).
    ───────────────────────────────────────────────────────────── */
 
+/* Cinematic crossfade between themes. theme.js adds .theme-anim to <html>
+   only for the duration of a switch, so these transitions never slow down
+   hover/interaction states the rest of the time. Limited to colour-ish
+   properties so layout transitions (width/transform) are untouched. */
+:root.theme-anim,
+:root.theme-anim *,
+:root.theme-anim *::before,
+:root.theme-anim *::after {
+  transition: background-color 450ms ease, color 450ms ease,
+    border-color 450ms ease, box-shadow 450ms ease, fill 450ms ease,
+    stroke 450ms ease !important;
+}
+
 :root {
   color-scheme: dark;
 
@@ -86,67 +99,68 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  /* Warm ivory + lifted cards. Depth comes from a clear step between the
-     ivory CANVAS and the warm-white CARDS, plus soft shadows (added below
-     for light mode only). The canvas is deliberately deeper than the cards
-     so cards read as floating sheets — that's what cures the flat look. */
-  --bg: #ece4d3;            /* ivory canvas */
-  --bg-sunken: #e4dbc6;     /* sidebar — a touch deeper */
-  --surface: #fdfbf6;       /* note / editor sheet (warm white) */
-  --surface-1: #fdfbf6;     /* cards / panels — lift off the canvas */
-  --surface-2: #fdfbf6;
-  --surface-sunken: #e8e0cf;
-  --surface-hover: #f5f0e4;
-  --field: #e6ddc9;         /* input wells, tracks — sunken on a card */
-  --fill: #efe7d4;          /* buttons / kbd / tags */
-  --fill-2: #ebe2cd;
-  --fill-active: #e0d5bf;
+  /* Cool "floating cards". A soft cool-gray CANVAS with crisp white CARDS
+     that lift off it via soft shadows (added below, light mode only). Card
+     edges get a clearly-defined border (--border-strong) so each card reads
+     as a clean rectangle — the crispness borrowed from the editorial look. */
+  --bg: #eef0f3;            /* cool gray canvas */
+  --bg-sunken: #e6e9ee;     /* sidebar — a touch deeper */
+  --surface: #ffffff;       /* note / editor sheet */
+  --surface-1: #ffffff;     /* cards / panels — float on the canvas */
+  --surface-2: #ffffff;
+  --surface-sunken: #eef0f3;
+  --surface-hover: #f1f3f6;
+  --field: #eef0f3;         /* input wells, tracks — sunken on a white card */
+  --fill: #f1f3f6;          /* buttons / kbd / tags */
+  --fill-2: #e9ecf1;
+  --fill-active: #e0e4ea;
 
-  /* Warm borders — present but the shadow now does most of the separating. */
-  --border: #e2dac7;
-  --border-strong: #d2c6ab;
-  --border-hover: #c2b596;
+  /* Crisp, defined cool borders. --border is the clean general line;
+     --border-strong is the bolder card/element edge. */
+  --border: #d4d8e0;
+  --border-strong: #b4bcc8;
+  --border-hover: #98a1af;
 
-  /* Warm "ink" text — strong, soothing contrast on the warm white. */
-  --text: #2a251b;
-  --text-heading: #241f15;
-  --text-2: #3a3326;
-  --text-3: #463e2e;
-  --text-4: #564d39;
-  --text-5: #675d46;
-  --text-muted: #857a62;
-  --text-faint: #9c9176;
-  --text-dim: #bbb094;
-  --text-placeholder: #b3a98d;
+  /* Cool near-black text — high, clean contrast. */
+  --text: #181b21;
+  --text-heading: #14171c;
+  --text-2: #2a2e36;
+  --text-3: #363b44;
+  --text-4: #474d57;
+  --text-5: #565d68;
+  --text-muted: #6b7280;
+  --text-faint: #98a0ab;
+  --text-dim: #b7bdc7;
+  --text-placeholder: #aeb4bd;
 
-  --toggle-thumb: #fdfbf6;
+  --toggle-thumb: #ffffff;
 
-  --hero-em: #9a7b2e;
+  --hero-em: #2f8f86;
 
-  /* Accent-tinted surfaces (teal on warm) */
-  --accent-surface: #e7f1ec;
-  --accent-fill: #dceee6;
-  --accent-border: #bfe0d6;
-  --accent-border-strong: #a6d4c9;
-  --accent-text: #357a6f;
+  /* Accent-tinted surfaces (teal on cool gray) */
+  --accent-surface: #ecf6f4;
+  --accent-fill: #e0f1ec;
+  --accent-border: #c2e4dc;
+  --accent-border-strong: #a3d6cd;
+  --accent-text: #1f8c82;
 
   /* Heatmap ramp */
-  --heat-1: #cde9e4;
-  --heat-2: #99dad1;
-  --heat-3: #70ccc2;
+  --heat-1: #d3ebe8;
+  --heat-2: #93d7ce;
+  --heat-3: #63c6bc;
 
-  /* Active-state tints lean warm-brown to match the paper. */
-  --warm-tint-1: rgba(90, 65, 20, 0.06);
-  --warm-tint-2: rgba(90, 65, 20, 0.05);
-  --warm-border: rgba(90, 65, 20, 0.20);
+  /* Active-state tints lean cool to match the gray. */
+  --warm-tint-1: rgba(30, 41, 59, 0.05);
+  --warm-tint-2: rgba(30, 41, 59, 0.04);
+  --warm-border: rgba(30, 41, 59, 0.14);
 
-  /* Neutral alphas → warm black */
-  --row-hover: rgba(70, 50, 15, 0.05);
-  --surface-a1: rgba(70, 50, 15, 0.06);
-  --border-a1: rgba(70, 50, 15, 0.16);
-  --text-on-fill: rgba(40, 35, 25, 0.72);
+  /* Neutral alphas → cool black */
+  --row-hover: rgba(20, 30, 50, 0.04);
+  --surface-a1: rgba(20, 30, 50, 0.05);
+  --border-a1: rgba(20, 30, 50, 0.12);
+  --text-on-fill: rgba(20, 25, 35, 0.72);
 
-  --shadow: rgba(60, 45, 20, 0.16);
+  --shadow: rgba(20, 30, 55, 0.16);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -155,12 +169,12 @@
    ───────────────────────────────────────────────────────────── */
 
 :root[data-theme="light"] .style-banner {
-  background: linear-gradient(135deg, #fdfbf6 0%, #f7f1e4 100%);
-  border-color: var(--border);
+  background: linear-gradient(135deg, #ffffff 0%, #f1f3f6 100%);
+  border-color: var(--border-strong);
 }
 
-/* Soft warm shadows lift cards off the ivory canvas (light mode only —
-   the dark theme stays shadowless and separates surfaces with borders). */
+/* Soft cool shadows lift cards off the gray canvas (light mode only — the
+   dark theme stays shadowless and separates surfaces with borders). */
 :root[data-theme="light"] .stat-card,
 :root[data-theme="light"] .day-card,
 :root[data-theme="light"] .insight-card,
@@ -177,5 +191,23 @@
 :root[data-theme="light"] .snippet-form,
 :root[data-theme="light"] .transform-editor,
 :root[data-theme="light"] .modal {
-  box-shadow: 0 1px 2px rgba(60, 45, 20, 0.05), 0 6px 18px rgba(60, 45, 20, 0.07);
+  box-shadow: 0 1px 2px rgba(20, 30, 55, 0.06), 0 6px 18px rgba(20, 30, 55, 0.08);
+}
+
+/* Crisp, defined card edges (the "editorial" border, kept cool). Applied to
+   the neutral cards only — the teal-bordered editor forms keep their accent
+   edge. */
+:root[data-theme="light"] .stat-card,
+:root[data-theme="light"] .day-card,
+:root[data-theme="light"] .insight-card,
+:root[data-theme="light"] .insight-panel,
+:root[data-theme="light"] .voice-narrative-card,
+:root[data-theme="light"] .voice-peak-card,
+:root[data-theme="light"] .voice-stat-tile,
+:root[data-theme="light"] .transform-card,
+:root[data-theme="light"] .style-card,
+:root[data-theme="light"] .feature-hero,
+:root[data-theme="light"] .scratch-editor,
+:root[data-theme="light"] .modal {
+  border-color: var(--border-strong);
 }
