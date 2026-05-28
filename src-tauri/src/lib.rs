@@ -478,10 +478,9 @@ fn maybe_auto_refresh_voice(app: &AppHandle, cfg: &Config, db: &db::Db) {
     if !cfg.has_api_key() {
         return;
     }
-    let Ok(stats) = db::voice_stats(db, true) else {
-        return;
-    };
-    let Some(last) = stats.last_generated_at else {
+    // Cheap timestamp lookup — never the full voice_stats aggregation on the
+    // hot path. Only *refresh* an existing profile; first gen stays manual.
+    let Some(last) = db::voice_last_generated_at(db).ok().flatten() else {
         return;
     };
     if db::dictations_since(db, last).unwrap_or(0) < VOICE_AUTO_REFRESH_AFTER {

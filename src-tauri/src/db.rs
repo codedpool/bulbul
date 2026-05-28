@@ -1643,6 +1643,19 @@ pub fn voice_stats(db: &Db, has_api_key: bool) -> Result<VoiceStats> {
     })
 }
 
+/// Cheap read of just the last voice-profile generation timestamp. Used on
+/// the dictation hot path to decide whether an auto-refresh is due, without
+/// running the full (expensive) `voice_stats` aggregation every time.
+pub fn voice_last_generated_at(db: &Db) -> Result<Option<i64>> {
+    let conn = db.lock();
+    let ts: Option<i64> = conn.query_row(
+        "SELECT last_generated_at FROM voice_profile WHERE id = 1",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(ts)
+}
+
 pub fn save_voice_narrative(
     db: &Db,
     voice_narrative: &str,
