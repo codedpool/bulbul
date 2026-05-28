@@ -1489,6 +1489,78 @@ kbd {
   border: 1px solid #262626;
 }
 
+/* Correction history (Insights → Corrections tab) */
+.corrections-intro {
+  margin: 0 0 14px;
+}
+
+.corrections-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.correction-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 4px;
+  border-top: 1px solid #161616;
+}
+
+.correction-row:first-of-type {
+  border-top: none;
+}
+
+.correction-diff {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  font-size: 14px;
+}
+
+.correction-before {
+  color: #8a8a8a;
+  text-decoration: line-through;
+  text-decoration-color: #4a3a3a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+.correction-after {
+  color: #e6e6e6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+.correction-arrow {
+  color: #5ec8c0;
+  flex-shrink: 0;
+}
+
+.correction-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #6e6e6e;
+}
+
+.correction-count {
+  background: #15201f;
+  border: 1px solid #1d2c2a;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #8aa6a3;
+}
+
 /* Suggested-from-edits strip (V3.1 correction memory) */
 .dict-suggestions {
   margin: 4px 0 10px;

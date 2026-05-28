@@ -632,6 +632,51 @@ pub fn dismiss_correction_suggestion(db: &Db, from_word: &str, to_word: &str) ->
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+pub struct CorrectionHistoryRow {
+    pub injected: String,
+    pub corrected: String,
+    pub foreground_app: Option<String>,
+    pub ts: i64,
+    pub hit_count: i64,
+}
+
+/// Full correction history (most recent first) for the Insights view — every
+/// hand-fix the watcher captured, not just the ones distilled into dictionary
+/// suggestions.
+pub fn list_corrections(db: &Db, limit: u32) -> Result<Vec<CorrectionHistoryRow>> {
+    let conn = db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT injected, corrected, foreground_app, ts, hit_count
+         FROM corrections ORDER BY ts DESC LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit], |r| {
+            Ok(CorrectionHistoryRow {
+                injected: r.get(0)?,
+                corrected: r.get(1)?,
+                foreground_app: r.get(2)?,
+                ts: r.get(3)?,
+                hit_count: r.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Count dictations logged at or after `ts`. Used to decide when enough new
+/// dictations have accrued since the last voice-profile generation to warrant
+/// an automatic refresh.
+pub fn dictations_since(db: &Db, ts: i64) -> Result<i64> {
+    let conn = db.lock();
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM dictations WHERE ts >= ?1",
+        params![ts],
+        |r| r.get(0),
+    )?;
+    Ok(n)
+}
+
 pub fn recent_dictations(db: &Db, limit: u32, offset: u32) -> Result<Vec<DictationRow>> {
     let conn = db.lock();
     let mut stmt = conn.prepare(

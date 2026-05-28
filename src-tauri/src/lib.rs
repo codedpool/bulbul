@@ -434,17 +434,11 @@ fn get_voice_stats(state: tauri::State<'_, AppState>) -> Result<db::VoiceStats, 
     db::voice_stats(&state.db, has_key).map_err(|e| format!("{e:#}"))
 }
 
-#[tauri::command]
-async fn refresh_voice_narrative(app: AppHandle) -> Result<db::VoiceStats, String> {
-    let state = app.state::<AppState>();
-    let cfg = state.config.lock().clone();
-    let db = state.db.clone();
-    if !cfg.has_api_key() {
-        return Err("Set your Groq API key in Settings first.".into());
-    }
-
-    // Gather a stats summary the model can reason about, plus recent samples.
-    let stats = db::voice_stats(&db, true).map_err(|e| format!("{e:#}"))?;
+/// Gather stats + samples, ask Groq for the two narrative blurbs, and persist
+/// them. Shared by the manual Refresh command and the automatic refresh that
+/// fires after enough new dictations.
+async fn regenerate_voice_narrative(cfg: &Config, db: &db::Db) -> anyhow::Result<()> {
+    let stats = db::voice_stats(db, true)?;
     let mut summary_lines = Vec::<String>::new();
     summary_lines.push(format!("Total words dictated: {}", stats.total_words));
     if let Some(w) = &stats.most_used_word {
@@ -463,17 +457,64 @@ async fn refresh_voice_narrative(app: AppHandle) -> Result<db::VoiceStats, Strin
         summary_lines.push(format!("Peak app: {}", app));
     }
     let stats_summary = summary_lines.join("\n");
-
-    let samples = db::voice_profile_context(&db).map_err(|e| format!("{e:#}"))?;
-
+    let samples = db::voice_profile_context(db)?;
     let (voice_narrative, peak_narrative) =
-        groq::generate_voice_profile(&cfg, &stats_summary, &samples)
-            .await
-            .map_err(|e| format!("{e:#}"))?;
+        groq::generate_voice_profile(cfg, &stats_summary, &samples).await?;
+    db::save_voice_narrative(db, &voice_narrative, &peak_narrative)?;
+    Ok(())
+}
 
-    db::save_voice_narrative(&db, &voice_narrative, &peak_narrative)
+/// Number of new dictations (since the last generation) that triggers an
+/// automatic voice-profile refresh. Kept high so the profile only refreshes
+/// once a meaningful amount of new material has accrued — it's a nice-to-have
+/// that spends a Groq call, not something to regenerate constantly.
+const VOICE_AUTO_REFRESH_AFTER: i64 = 100;
+
+/// Fire-and-forget background refresh of the voice profile once enough new
+/// dictations have accrued. Only *refreshes* an existing profile — the first
+/// generation stays a deliberate manual action so we never spend the user's
+/// Groq quota unprompted.
+fn maybe_auto_refresh_voice(app: &AppHandle, cfg: &Config, db: &db::Db) {
+    if !cfg.has_api_key() {
+        return;
+    }
+    let Ok(stats) = db::voice_stats(db, true) else {
+        return;
+    };
+    let Some(last) = stats.last_generated_at else {
+        return;
+    };
+    if db::dictations_since(db, last).unwrap_or(0) < VOICE_AUTO_REFRESH_AFTER {
+        return;
+    }
+    let cfg = cfg.clone();
+    let db = db.clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match regenerate_voice_narrative(&cfg, &db).await {
+            Ok(()) => {
+                tracing::info!(
+                    "voice profile auto-refreshed ({}+ new dictations)",
+                    VOICE_AUTO_REFRESH_AFTER
+                );
+                let _ = app.emit("voice-profile-updated", ());
+            }
+            Err(e) => tracing::warn!("voice profile auto-refresh failed: {e:#}"),
+        }
+    });
+}
+
+#[tauri::command]
+async fn refresh_voice_narrative(app: AppHandle) -> Result<db::VoiceStats, String> {
+    let state = app.state::<AppState>();
+    let cfg = state.config.lock().clone();
+    let db = state.db.clone();
+    if !cfg.has_api_key() {
+        return Err("Set your Groq API key in Settings first.".into());
+    }
+    regenerate_voice_narrative(&cfg, &db)
+        .await
         .map_err(|e| format!("{e:#}"))?;
-
     db::voice_stats(&db, true).map_err(|e| format!("{e:#}"))
 }
 
@@ -534,6 +575,13 @@ fn dismiss_correction_suggestion(
 ) -> Result<(), String> {
     db::dismiss_correction_suggestion(&state.db, &from_word, &to_word)
         .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn list_corrections(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<db::CorrectionHistoryRow>, String> {
+    db::list_corrections(&state.db, 100).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -830,6 +878,7 @@ pub fn run() {
             delete_dictionary_entry,
             correction_suggestions,
             dismiss_correction_suggestion,
+            list_corrections,
             list_snippets,
             add_snippet,
             update_snippet,
@@ -1563,6 +1612,9 @@ async fn process_pipeline(
     ) {
         tracing::warn!("failed to log dictation: {e:#}");
     }
+
+    // Keep the voice profile current without the user having to click Refresh.
+    maybe_auto_refresh_voice(&app, &cfg, &db);
 
     emit_status(&app, "done", Some(final_text));
 }

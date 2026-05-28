@@ -25,11 +25,75 @@ export default function InsightsView() {
           >
             Your Voice
           </button>
+          <button
+            className={`tab ${tab === "corrections" ? "active" : ""}`}
+            onClick={() => setTab("corrections")}
+          >
+            Corrections
+          </button>
         </div>
       </header>
 
       {tab === "usage" && <UsageTab />}
       {tab === "voice" && <VoiceTab />}
+      {tab === "corrections" && <CorrectionsTab />}
+    </div>
+  );
+}
+
+// ─────────────── Corrections ───────────────
+
+function CorrectionsTab() {
+  const [rows, setRows] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      try {
+        const r = await invoke("list_corrections");
+        if (mounted) setRows(r);
+      } catch (e) {
+        console.error("corrections load failed", e);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    const un = listen("bulbul-status", (e) => {
+      if (e.payload.state === "done") load();
+    });
+    return () => { mounted = false; un.then((f) => f()); };
+  }, []);
+
+  if (loading) return <div className="empty-state"><p className="muted">Loading…</p></div>;
+  if (!rows || rows.length === 0) {
+    return (
+      <div className="insights-empty">
+        <p>No corrections yet. When you edit what Bulbul typed, your fixes land here — and recurring single-word ones become Dictionary suggestions.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="corrections-list">
+      <p className="muted small corrections-intro">
+        Edits you made to Bulbul's output. Recurring single-word fixes are offered as Dictionary suggestions.
+      </p>
+      {rows.map((c, i) => (
+        <div className="correction-row" key={i}>
+          <div className="correction-diff">
+            <span className="correction-before">{c.injected}</span>
+            <span className="correction-arrow">→</span>
+            <span className="correction-after">{c.corrected}</span>
+          </div>
+          <div className="correction-meta">
+            {c.foreground_app && <span className="correction-app">{stripExe(c.foreground_app)}</span>}
+            <span className="correction-date">{formatDate(c.ts)}</span>
+            {c.hit_count > 0 && <span className="correction-count">×{c.hit_count + 1}</span>}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -168,6 +232,10 @@ function VoiceTab() {
       }
     }
     load();
+    // Background auto-refresh (after N dictations) emits this — pull the
+    // freshly generated narrative in without the user clicking Refresh.
+    const un = listen("voice-profile-updated", () => load());
+    return () => { mounted = false; un.then((f) => f()); };
   }, []);
 
   async function refresh() {
