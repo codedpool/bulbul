@@ -117,7 +117,11 @@ export default function Overlay() {
         <div className={`pill pill-${status.state}`}>
           <span className="pill-icon">{renderIcon(status.state, hovered)}</span>
           {expanded && status.state !== "idle" && (
-            <span className="pill-label">{label(status.state)}</span>
+            <span className="pill-label">
+              {status.state === "rate_limited"
+                ? (status.message || "Rate limited…")
+                : label(status.state)}
+            </span>
           )}
         </div>
 
@@ -154,6 +158,7 @@ function renderIcon(state, hovered) {
       );
     case "processing":
     case "injecting":
+    case "rate_limited":
       return <div className="spinner" aria-hidden />;
     case "done":
       return <span className="glyph">✓</span>;

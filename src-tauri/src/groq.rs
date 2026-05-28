@@ -2,8 +2,96 @@ use crate::config::{CleanupMode, Config};
 use anyhow::{anyhow, Context, Result};
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 const BASE_URL: &str = "https://api.groq.com/openai/v1";
+
+/// Hard cap on attempts (1 initial + 3 retries) before giving up on a
+/// rate-limited or transiently-failing Groq request.
+const MAX_ATTEMPTS: u32 = 4;
+
+/// Callback fired right before each backoff sleep, with the wait in seconds,
+/// so the UI can show "retrying in Ns" instead of appearing frozen.
+pub type RetryNotify<'a> = dyn Fn(u64) + Send + Sync + 'a;
+
+/// Send a Groq request, retrying on 429 (rate limit) and 5xx with backoff,
+/// and return the response body on success. Honors the `Retry-After` header
+/// when present, otherwise uses exponential backoff capped at 30s. `make` is
+/// invoked fresh for every attempt because request bodies (multipart forms,
+/// JSON) can't be reused across sends.
+async fn send_with_retry(
+    make: impl Fn() -> reqwest::RequestBuilder,
+    label: &str,
+    notify: Option<&RetryNotify<'_>>,
+) -> Result<String> {
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let resp = make()
+            .send()
+            .await
+            .with_context(|| format!("POST {label}"))?;
+        let status = resp.status();
+        if (status.as_u16() == 429 || status.is_server_error()) && attempt < MAX_ATTEMPTS {
+            let wait = retry_wait_secs(&resp, attempt);
+            tracing::warn!("Groq {label}: {status}; retry {attempt}/{MAX_ATTEMPTS} after {wait}s");
+            if let Some(n) = notify {
+                n(wait);
+            }
+            tokio::time::sleep(Duration::from_secs(wait)).await;
+            continue;
+        }
+        let body = resp
+            .text()
+            .await
+            .with_context(|| format!("reading {label} response body"))?;
+        if status.as_u16() == 429 {
+            return Err(anyhow!(
+                "Groq is rate-limited right now. Wait a few seconds and try again."
+            ));
+        }
+        if !status.is_success() {
+            return Err(anyhow!("Groq {label} {status}: {body}"));
+        }
+        return Ok(body);
+    }
+}
+
+/// How long to wait before the next attempt: the server's `Retry-After`
+/// (seconds) if it sent one, else exponential backoff (2s, 4s, 8s…) capped
+/// at 30s.
+fn retry_wait_secs(resp: &reqwest::Response, attempt: u32) -> u64 {
+    if let Some(secs) = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+    {
+        return secs.clamp(1, 30);
+    }
+    backoff_secs(attempt)
+}
+
+/// Exponential backoff: attempt 1 → 2s, 2 → 4s, 3 → 8s, …, capped at 30s.
+fn backoff_secs(attempt: u32) -> u64 {
+    (1u64 << attempt.min(20)).clamp(2, 30)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_progression_and_cap() {
+        assert_eq!(backoff_secs(1), 2);
+        assert_eq!(backoff_secs(2), 4);
+        assert_eq!(backoff_secs(3), 8);
+        assert_eq!(backoff_secs(4), 16);
+        // Never exceeds the 30s ceiling, even for absurd attempt counts.
+        assert_eq!(backoff_secs(10), 30);
+        assert_eq!(backoff_secs(100), 30);
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct TranscriptionResponse {
@@ -45,48 +133,47 @@ pub async fn transcribe(
     cfg: &Config,
     wav_bytes: Vec<u8>,
     vocabulary: &[String],
+    notify: Option<&RetryNotify<'_>>,
 ) -> Result<String> {
     if !cfg.has_api_key() {
         return Err(anyhow!("Groq API key not set"));
     }
     let client = reqwest::Client::new();
-    let part = multipart::Part::bytes(wav_bytes)
-        .file_name("recording.wav")
-        .mime_str("audio/wav")?;
-    let mut form = multipart::Form::new()
-        .part("file", part)
-        .text("model", cfg.stt_model.clone())
-        .text("response_format", "json");
-    // Whisper auto-detects when the field is omitted. Pass it only when the
-    // user has chosen a specific ISO-639-1 code.
-    let lang = cfg.language.trim();
-    if !lang.is_empty() && lang != "auto" {
-        form = form.text("language", lang.to_string());
-    }
-    // Dictionary entries become a `prompt` hint so Whisper biases toward the
-    // user's preferred spellings (e.g. "Groq", "GitHub", "iOS") at
-    // transcription time. Capped well under Whisper's 224-token limit.
-    if !vocabulary.is_empty() {
-        let mut joined = vocabulary.join(", ");
-        if joined.chars().count() > 600 {
-            joined = joined.chars().take(600).collect();
+    let url = format!("{BASE_URL}/audio/transcriptions");
+    // Rebuilt per attempt: a multipart Form is consumed on send, so retries
+    // need a fresh body (the wav bytes are cloned each time).
+    let make = || {
+        let part = multipart::Part::bytes(wav_bytes.clone())
+            .file_name("recording.wav")
+            .mime_str("audio/wav")
+            .expect("audio/wav is a valid MIME type");
+        let mut form = multipart::Form::new()
+            .part("file", part)
+            .text("model", cfg.stt_model.clone())
+            .text("response_format", "json");
+        // Whisper auto-detects when the field is omitted. Pass it only when
+        // the user has chosen a specific ISO-639-1 code.
+        let lang = cfg.language.trim();
+        if !lang.is_empty() && lang != "auto" {
+            form = form.text("language", lang.to_string());
         }
-        form = form.text("prompt", joined);
-    }
+        // Dictionary entries become a `prompt` hint so Whisper biases toward
+        // the user's preferred spellings (e.g. "Groq", "GitHub", "iOS") at
+        // transcription time. Capped well under Whisper's 224-token limit.
+        if !vocabulary.is_empty() {
+            let mut joined = vocabulary.join(", ");
+            if joined.chars().count() > 600 {
+                joined = joined.chars().take(600).collect();
+            }
+            form = form.text("prompt", joined);
+        }
+        client
+            .post(url.as_str())
+            .bearer_auth(&cfg.groq_api_key)
+            .multipart(form)
+    };
 
-    let resp = client
-        .post(format!("{BASE_URL}/audio/transcriptions"))
-        .bearer_auth(&cfg.groq_api_key)
-        .multipart(form)
-        .send()
-        .await
-        .context("POST /audio/transcriptions")?;
-
-    let status = resp.status();
-    let body = resp.text().await.context("reading STT response body")?;
-    if !status.is_success() {
-        return Err(anyhow!("Groq STT {status}: {body}"));
-    }
+    let body = send_with_retry(make, "STT", notify).await?;
     let parsed: TranscriptionResponse =
         serde_json::from_str(&body).with_context(|| format!("parsing STT body: {body}"))?;
     Ok(parsed.text.trim().to_string())
@@ -124,6 +211,7 @@ pub async fn cleanup(
     cfg: &Config,
     transcript: &str,
     style_extra: Option<&str>,
+    notify: Option<&RetryNotify<'_>>,
 ) -> Result<String> {
     if matches!(cfg.mode, CleanupMode::Raw) {
         return Ok(transcript.to_string());
@@ -170,19 +258,14 @@ pub async fn cleanup(
     };
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{BASE_URL}/chat/completions"))
-        .bearer_auth(&cfg.groq_api_key)
-        .json(&request)
-        .send()
-        .await
-        .context("POST /chat/completions")?;
-
-    let status = resp.status();
-    let body = resp.text().await.context("reading cleanup response body")?;
-    if !status.is_success() {
-        return Err(anyhow!("Groq chat {status}: {body}"));
-    }
+    let url = format!("{BASE_URL}/chat/completions");
+    let make = || {
+        client
+            .post(url.as_str())
+            .bearer_auth(&cfg.groq_api_key)
+            .json(&request)
+    };
+    let body = send_with_retry(make, "cleanup", notify).await?;
     let parsed: ChatResponse =
         serde_json::from_str(&body).with_context(|| format!("parsing chat body: {body}"))?;
     let text = parsed
@@ -201,6 +284,7 @@ pub async fn execute_transform(
     cfg: &Config,
     system_prompt: &str,
     text: &str,
+    notify: Option<&RetryNotify<'_>>,
 ) -> Result<String> {
     if !cfg.has_api_key() {
         return Err(anyhow!("Groq API key not set"));
@@ -225,19 +309,14 @@ pub async fn execute_transform(
     };
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{BASE_URL}/chat/completions"))
-        .bearer_auth(&cfg.groq_api_key)
-        .json(&request)
-        .send()
-        .await
-        .context("POST /chat/completions (transform)")?;
-
-    let status = resp.status();
-    let body = resp.text().await.context("reading transform response body")?;
-    if !status.is_success() {
-        return Err(anyhow!("Groq transform {status}: {body}"));
-    }
+    let url = format!("{BASE_URL}/chat/completions");
+    let make = || {
+        client
+            .post(url.as_str())
+            .bearer_auth(&cfg.groq_api_key)
+            .json(&request)
+    };
+    let body = send_with_retry(make, "transform", notify).await?;
     let parsed: ChatResponse =
         serde_json::from_str(&body).with_context(|| format!("parsing transform body: {body}"))?;
     let out = parsed
@@ -297,19 +376,15 @@ pub async fn generate_voice_profile(
     };
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{BASE_URL}/chat/completions"))
-        .bearer_auth(&cfg.groq_api_key)
-        .json(&request)
-        .send()
-        .await
-        .context("POST /chat/completions (voice profile)")?;
-
-    let status = resp.status();
-    let body = resp.text().await.context("reading voice profile body")?;
-    if !status.is_success() {
-        return Err(anyhow!("Groq voice {status}: {body}"));
-    }
+    let url = format!("{BASE_URL}/chat/completions");
+    let make = || {
+        client
+            .post(url.as_str())
+            .bearer_auth(&cfg.groq_api_key)
+            .json(&request)
+    };
+    // Background task — no UI notifier, but it still benefits from retry.
+    let body = send_with_retry(make, "voice profile", None).await?;
 
     let parsed: ChatResponse = serde_json::from_str(&body)
         .with_context(|| format!("parsing voice profile body: {body}"))?;

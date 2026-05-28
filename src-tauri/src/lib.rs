@@ -1230,7 +1230,12 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
 
     emit_status(&app, "processing", None);
     let t_llm_start = Instant::now();
-    let polished = match groq::execute_transform(&cfg, prompt, &selected).await {
+    let rl_app = app.clone();
+    let on_rate_limit = move |secs: u64| {
+        emit_status(&rl_app, "rate_limited", Some(format!("Rate limited · {secs}s")));
+    };
+    let notify_rl: &groq::RetryNotify = &on_rate_limit;
+    let polished = match groq::execute_transform(&cfg, prompt, &selected, Some(notify_rl)).await {
         Ok(p) => p,
         Err(e) => {
             tracing::error!("transform failed: {e:#}");
@@ -1396,8 +1401,16 @@ async fn process_pipeline(
         .map(|e| e.to_word)
         .collect();
 
+    // Shared across STT + cleanup: tell the overlay we're backing off on a
+    // Groq rate limit instead of letting the dictation appear to hang.
+    let rl_app = app.clone();
+    let on_rate_limit = move |secs: u64| {
+        emit_status(&rl_app, "rate_limited", Some(format!("Rate limited · {secs}s")));
+    };
+    let notify_rl: &groq::RetryNotify = &on_rate_limit;
+
     let t_stt_start = Instant::now();
-    let transcript = match groq::transcribe(&cfg, wav, &vocabulary).await {
+    let transcript = match groq::transcribe(&cfg, wav, &vocabulary, Some(notify_rl)).await {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("STT failed: {e:#}");
@@ -1462,7 +1475,7 @@ async fn process_pipeline(
     };
 
     let t_cleanup_start = Instant::now();
-    let cleaned = match groq::cleanup(&cfg, &transcript, style_extra.as_deref()).await {
+    let cleaned = match groq::cleanup(&cfg, &transcript, style_extra.as_deref(), Some(notify_rl)).await {
         Ok(t) => t,
         Err(e) => {
             tracing::warn!("cleanup failed, falling back to raw: {e:#}");
