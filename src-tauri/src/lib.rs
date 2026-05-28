@@ -333,18 +333,23 @@ fn save_config(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (prev_has_key, prev_hotkey, prev_polish) = {
+    let (prev_has_key, prev_hotkey, prev_polish, prev_theme) = {
         let cfg = state.config.lock();
-        (cfg.has_api_key(), cfg.hotkey.clone(), cfg.polish_hotkey.clone())
+        (cfg.has_api_key(), cfg.hotkey.clone(), cfg.polish_hotkey.clone(), cfg.theme.clone())
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
     let next_has_key = new_cfg.has_api_key();
     let next_hotkey = new_cfg.hotkey.clone();
     let next_polish = new_cfg.polish_hotkey.clone();
+    let next_theme = new_cfg.theme.clone();
     *state.config.lock() = new_cfg;
 
     if prev_has_key != next_has_key {
         update_tray_icon(&app, next_has_key);
+    }
+    if prev_theme != next_theme {
+        // Broadcast to every window so the dashboard + scratchpad re-theme live.
+        let _ = app.emit("theme-changed", next_theme);
     }
     if prev_hotkey != next_hotkey || prev_polish != next_polish {
         {

@@ -1,0 +1,181 @@
+/* ─────────────────────────────────────────────────────────────
+   Theme tokens.
+
+   :root holds the DARK palette (the original, established look) so
+   that with no JS the app renders exactly as before. The JS theme
+   apply step (theme.js) sets data-theme="light" | "dark" on
+   <html>; the light overrides below take over when it's "light".
+
+   Conventions:
+   - The teal accent, amber, error-red, the close-button red and the
+     Insights category colors are theme-INDEPENDENT and stay as
+     literals in the component CSS — they read fine on both surfaces.
+   - Everything neutral (backgrounds, surfaces, borders, text) and a
+     few accent-tinted surfaces are tokenised here.
+   - --on-accent is the foreground used ON the teal accent (dark in
+     both themes, since the accent is the same in both).
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+
+  /* Backgrounds & surfaces */
+  --bg: #0e0e0e;
+  --bg-sunken: #0a0a0a;
+  --surface: #0f0f0f;
+  --surface-1: #111111;
+  --surface-2: #141414;
+  --surface-sunken: #0d0d0d;
+  --surface-hover: #131313;
+  --field: #161616;
+  --fill: #1a1a1a;
+  --fill-2: #181818;
+  --fill-active: #222222;
+
+  /* Borders */
+  --border: #1c1c1c;
+  --border-strong: #262626;
+  --border-hover: #2a2a2a;
+
+  /* Text */
+  --text: #e6e6e6;
+  --text-heading: #ece9e0;
+  --text-2: #d6d6d6;
+  --text-3: #d0d0d0;
+  --text-4: #c8c8c8;
+  --text-5: #b8b8b8;
+  --text-muted: #8a8a8a;
+  --text-faint: #6e6e6e;
+  --text-dim: #555555;
+  --text-placeholder: #5a5752;
+
+  /* Foreground on the teal accent (dark in both themes) */
+  --on-accent: #0e0e0e;
+  --toggle-thumb: #888888;
+
+  /* Decorative warm gold (hero emphasis) */
+  --hero-em: #dccba0;
+
+  /* Accent-tinted surfaces (V3 correction / suggestion UI) */
+  --accent-surface: #0f1615;
+  --accent-fill: #15201f;
+  --accent-border: #1d2c2a;
+  --accent-border-strong: #2c4340;
+  --accent-text: #8aa6a3;
+
+  /* Insights heatmap ramp (level-0 uses --fill, level-4 is the accent) */
+  --heat-1: #1d3835;
+  --heat-2: #2d6863;
+  --heat-3: #4aa39d;
+
+  /* Warm-white tints (active states, hero glow) */
+  --warm-tint-1: rgba(232, 230, 223, 0.05);
+  --warm-tint-2: rgba(232, 230, 223, 0.04);
+  --warm-border: rgba(232, 230, 223, 0.22);
+
+  /* Neutral alphas */
+  --row-hover: rgba(255, 255, 255, 0.02);
+  --surface-a1: rgba(255, 255, 255, 0.05);
+  --border-a1: rgba(255, 255, 255, 0.10);
+  --text-on-fill: rgba(255, 255, 255, 0.7);
+
+  /* Shadow */
+  --shadow: rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Warm ivory + lifted cards. Depth comes from a clear step between the
+     ivory CANVAS and the warm-white CARDS, plus soft shadows (added below
+     for light mode only). The canvas is deliberately deeper than the cards
+     so cards read as floating sheets — that's what cures the flat look. */
+  --bg: #ece4d3;            /* ivory canvas */
+  --bg-sunken: #e4dbc6;     /* sidebar — a touch deeper */
+  --surface: #fdfbf6;       /* note / editor sheet (warm white) */
+  --surface-1: #fdfbf6;     /* cards / panels — lift off the canvas */
+  --surface-2: #fdfbf6;
+  --surface-sunken: #e8e0cf;
+  --surface-hover: #f5f0e4;
+  --field: #e6ddc9;         /* input wells, tracks — sunken on a card */
+  --fill: #efe7d4;          /* buttons / kbd / tags */
+  --fill-2: #ebe2cd;
+  --fill-active: #e0d5bf;
+
+  /* Warm borders — present but the shadow now does most of the separating. */
+  --border: #e2dac7;
+  --border-strong: #d2c6ab;
+  --border-hover: #c2b596;
+
+  /* Warm "ink" text — strong, soothing contrast on the warm white. */
+  --text: #2a251b;
+  --text-heading: #241f15;
+  --text-2: #3a3326;
+  --text-3: #463e2e;
+  --text-4: #564d39;
+  --text-5: #675d46;
+  --text-muted: #857a62;
+  --text-faint: #9c9176;
+  --text-dim: #bbb094;
+  --text-placeholder: #b3a98d;
+
+  --toggle-thumb: #fdfbf6;
+
+  --hero-em: #9a7b2e;
+
+  /* Accent-tinted surfaces (teal on warm) */
+  --accent-surface: #e7f1ec;
+  --accent-fill: #dceee6;
+  --accent-border: #bfe0d6;
+  --accent-border-strong: #a6d4c9;
+  --accent-text: #357a6f;
+
+  /* Heatmap ramp */
+  --heat-1: #cde9e4;
+  --heat-2: #99dad1;
+  --heat-3: #70ccc2;
+
+  /* Active-state tints lean warm-brown to match the paper. */
+  --warm-tint-1: rgba(90, 65, 20, 0.06);
+  --warm-tint-2: rgba(90, 65, 20, 0.05);
+  --warm-border: rgba(90, 65, 20, 0.20);
+
+  /* Neutral alphas → warm black */
+  --row-hover: rgba(70, 50, 15, 0.05);
+  --surface-a1: rgba(70, 50, 15, 0.06);
+  --border-a1: rgba(70, 50, 15, 0.16);
+  --text-on-fill: rgba(40, 35, 25, 0.72);
+
+  --shadow: rgba(60, 45, 20, 0.16);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Targeted light overrides for rules whose dark values are baked
+   into multi-stop gradients (can't be expressed as a single token).
+   ───────────────────────────────────────────────────────────── */
+
+:root[data-theme="light"] .style-banner {
+  background: linear-gradient(135deg, #fdfbf6 0%, #f7f1e4 100%);
+  border-color: var(--border);
+}
+
+/* Soft warm shadows lift cards off the ivory canvas (light mode only —
+   the dark theme stays shadowless and separates surfaces with borders). */
+:root[data-theme="light"] .stat-card,
+:root[data-theme="light"] .day-card,
+:root[data-theme="light"] .insight-card,
+:root[data-theme="light"] .insight-panel,
+:root[data-theme="light"] .voice-narrative-card,
+:root[data-theme="light"] .voice-peak-card,
+:root[data-theme="light"] .voice-stat-tile,
+:root[data-theme="light"] .transform-card,
+:root[data-theme="light"] .style-card,
+:root[data-theme="light"] .style-banner,
+:root[data-theme="light"] .feature-hero,
+:root[data-theme="light"] .scratch-editor,
+:root[data-theme="light"] .dict-form,
+:root[data-theme="light"] .snippet-form,
+:root[data-theme="light"] .transform-editor,
+:root[data-theme="light"] .modal {
+  box-shadow: 0 1px 2px rgba(60, 45, 20, 0.05), 0 6px 18px rgba(60, 45, 20, 0.07);
+}

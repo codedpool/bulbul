@@ -2,8 +2,8 @@ html, body, #root {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #0e0e0e;
-  color: #e6e6e6;
+  background: var(--bg);
+  color: var(--text);
   font-family: "DM Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
   font-optical-sizing: auto;
   font-size: 13px;
@@ -23,7 +23,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #0e0e0e;
+  background: var(--bg);
 }
 
 /* ─────────── Custom title bar (matches main app) ─────────── */
@@ -58,19 +58,19 @@ html, body, #root {
   justify-content: center;
   background: transparent;
   border: 0;
-  color: #9a9a9a;
+  color: var(--text-faint);
   cursor: pointer;
   padding: 0;
   transition: background 100ms ease, color 100ms ease;
 }
 
 .sp-tb-btn:hover {
-  background: #1a1a1a;
-  color: #e6e6e6;
+  background: var(--fill);
+  color: var(--text);
 }
 
 .sp-tb-btn:active {
-  background: #222;
+  background: var(--fill-active);
 }
 
 .sp-tb-close:hover {
@@ -93,8 +93,8 @@ html, body, #root {
 .sp-sidebar {
   width: 230px;
   flex-shrink: 0;
-  background: #0a0a0a;
-  border-right: 1px solid #161616;
+  background: var(--bg-sunken);
+  border-right: 1px solid var(--field);
   display: flex;
   flex-direction: column;
   padding: 40px 10px 12px;
@@ -110,7 +110,7 @@ html, body, #root {
   border: none;
   border-radius: 8px;
   padding: 9px 12px;
-  color: #c8c8c8;
+  color: var(--text-4);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -120,12 +120,12 @@ html, body, #root {
 }
 
 .sp-side-btn:hover {
-  background: #161616;
-  color: #e6e6e6;
+  background: var(--field);
+  color: var(--text);
 }
 
-.sp-side-btn svg { color: #8a8a8a; }
-.sp-side-btn:hover svg { color: #e6e6e6; }
+.sp-side-btn svg { color: var(--text-muted); }
+.sp-side-btn:hover svg { color: var(--text); }
 
 .sp-side-search {
   display: flex;
@@ -135,25 +135,25 @@ html, body, #root {
   border-radius: 8px;
 }
 
-.sp-side-search svg { color: #8a8a8a; }
+.sp-side-search svg { color: var(--text-muted); }
 
 .sp-side-search input {
   background: transparent;
   border: none;
   outline: none;
   flex: 1;
-  color: #e6e6e6;
+  color: var(--text);
   font: inherit;
   font-size: 13px;
   -webkit-user-select: text;
   user-select: text;
 }
 
-.sp-side-search input::placeholder { color: #6e6e6e; }
+.sp-side-search input::placeholder { color: var(--text-faint); }
 
 .sp-side-sep {
   margin: 6px 8px;
-  border-top: 1px solid #161616;
+  border-top: 1px solid var(--field);
 }
 
 .sp-note-list {
@@ -168,7 +168,7 @@ html, body, #root {
 
 .sp-side-empty {
   text-align: center;
-  color: #6e6e6e;
+  color: var(--text-faint);
   font-size: 12px;
   padding: 24px 8px;
 }
@@ -190,7 +190,7 @@ html, body, #root {
 }
 
 .sp-note-item:hover {
-  background: #141414;
+  background: var(--surface-2);
 }
 
 .sp-note-item.active {
@@ -201,7 +201,7 @@ html, body, #root {
 .sp-note-item-title {
   font-size: 12px;
   font-weight: 500;
-  color: #e6e6e6;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -209,7 +209,7 @@ html, body, #root {
 
 .sp-note-item-preview {
   font-size: 11px;
-  color: #8a8a8a;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -221,7 +221,7 @@ html, body, #root {
   right: 6px;
   background: transparent;
   border: none;
-  color: #6e6e6e;
+  color: var(--text-faint);
   width: 22px;
   height: 22px;
   padding: 0;
@@ -240,10 +240,10 @@ html, body, #root {
 /* Collapsed sidebar handle */
 .sp-sidebar-handle {
   width: 40px;
-  background: #0a0a0a;
+  background: var(--bg-sunken);
   border: none;
-  border-right: 1px solid #161616;
-  color: #8a8a8a;
+  border-right: 1px solid var(--field);
+  color: var(--text-muted);
   cursor: pointer;
   display: flex;
   align-items: flex-start;
@@ -252,7 +252,7 @@ html, body, #root {
   transition: color 120ms ease, background 120ms ease;
 }
 
-.sp-sidebar-handle:hover { color: #e6e6e6; background: #101010; }
+.sp-sidebar-handle:hover { color: var(--text); background: var(--surface-hover); }
 
 /* ─────────── Editor ─────────── */
 
@@ -262,7 +262,7 @@ html, body, #root {
   flex-direction: column;
   min-width: 0;
   position: relative;
-  background: #0e0e0e;
+  background: var(--bg);
   padding-top: 32px; /* room for the floating titlebar */
 }
 
@@ -283,28 +283,28 @@ html, body, #root {
   font-weight: 600;
   letter-spacing: -0.01em;
   margin: 0;
-  color: #d0d0d0;
+  color: var(--text-3);
 }
 
 .sp-empty p {
-  color: #8a8a8a;
+  color: var(--text-muted);
   margin: 0;
 }
 
 .sp-cta {
   margin-top: 8px;
-  background: #f5f5f5;
-  color: #0e0e0e;
+  background: var(--text);
+  color: var(--bg);
   border: none;
   border-radius: 999px;
   padding: 9px 18px;
   font: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: background 120ms ease;
+  transition: background 120ms ease, opacity 120ms ease;
 }
 
-.sp-cta:hover { background: #ffffff; }
+.sp-cta:hover { opacity: 0.85; }
 
 .sp-editor-head {
   display: flex;
@@ -321,13 +321,13 @@ html, body, #root {
   font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  color: #e6e6e6;
+  color: var(--text);
   font-family: ui-serif, Georgia, serif;
   -webkit-user-select: text;
   user-select: text;
 }
 
-.sp-title::placeholder { color: #555; }
+.sp-title::placeholder { color: var(--text-dim); }
 
 .sp-body-input {
   flex: 1;
@@ -339,12 +339,12 @@ html, body, #root {
   font-family: -apple-system, "Segoe UI", "Inter", sans-serif;
   font-size: 14px;
   line-height: 1.65;
-  color: #d6d6d6;
+  color: var(--text-2);
   -webkit-user-select: text;
   user-select: text;
 }
 
-.sp-body-input::placeholder { color: #555; }
+.sp-body-input::placeholder { color: var(--text-dim); }
 
 /* Transform-on-selection toolbar */
 .sp-transforms {
@@ -358,7 +358,7 @@ html, body, #root {
 
 .sp-transforms-label {
   font-size: 11px;
-  color: #6e6e6e;
+  color: var(--text-faint);
   margin-right: 2px;
 }
 
@@ -366,17 +366,17 @@ html, body, #root {
   font-size: 11px;
   padding: 4px 11px;
   border-radius: 999px;
-  background: #161616;
-  border: 1px solid #262626;
-  color: #cfcfcf;
+  background: var(--field);
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
 }
 
 .sp-transform-chip:hover:not(:disabled) {
-  background: #1d2c2a;
-  border-color: #2c4340;
-  color: #8fe3da;
+  background: var(--accent-border);
+  border-color: var(--accent-border-strong);
+  color: var(--accent-text);
 }
 
 .sp-transform-chip:disabled {
@@ -399,7 +399,7 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-.sp-save.dirty { background: #1a1a1a; color: #8a8a8a; border: 1px solid #262626; }
+.sp-save.dirty { background: var(--fill); color: var(--text-muted); border: 1px solid var(--border-strong); }
 .sp-save.saving { background: rgba(212, 166, 87, 0.15); color: #d4a657; border: 1px solid rgba(212, 166, 87, 0.30); }
 .sp-save.saved { background: rgba(94, 200, 192, 0.15); color: #5ec8c0; border: 1px solid rgba(94, 200, 192, 0.30); }
 
@@ -408,9 +408,9 @@ html, body, #root {
   position: absolute;
   bottom: 20px;
   right: 22px;
-  background: #1a1a1a;
-  color: #e6e6e6;
-  border: 1px solid #262626;
+  background: var(--fill);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   padding: 8px 16px;
   display: inline-flex;
@@ -420,12 +420,12 @@ html, body, #root {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px var(--shadow);
   transition: background 120ms ease, border-color 120ms ease;
 }
 
 .sp-copy:hover:not(:disabled) {
-  background: #222;
+  background: var(--fill-active);
   border-color: #5ec8c0;
 }
 
@@ -434,4 +434,4 @@ html, body, #root {
   cursor: not-allowed;
 }
 
-.sp-copy svg { color: #d4d4d4; }
+.sp-copy svg { color: var(--text-2); }

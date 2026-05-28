@@ -11,6 +11,7 @@ import TransformsView from "./views/TransformsView.jsx";
 import StyleView from "./views/StyleView.jsx";
 import ScratchpadView from "./views/ScratchpadView.jsx";
 import bulbulMark from "./assets/bulbul-mark.png";
+import { applyTheme } from "./theme.js";
 import "./App.css";
 
 const ICONS = {
@@ -91,6 +92,20 @@ function App() {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+
+  useEffect(() => {
+    const m = window.matchMedia("(prefers-color-scheme: dark)");
+    const h = (e) => setSystemDark(e.matches);
+    if (m.addEventListener) m.addEventListener("change", h);
+    else m.addListener(h);
+    return () => {
+      if (m.removeEventListener) m.removeEventListener("change", h);
+      else m.removeListener(h);
+    };
+  }, []);
 
   useEffect(() => {
     invoke("get_config").then((cfg) => {
@@ -114,6 +129,11 @@ function App() {
     setConfig(next);
   }
 
+  function setThemePref(pref) {
+    applyTheme(pref); // instant, before the async save round-trips
+    updateConfig({ ...config, theme: pref });
+  }
+
   async function ackPrivacy() {
     await updateConfig({ ...config, privacy_acknowledged: true });
     setShowPrivacy(false);
@@ -121,11 +141,17 @@ function App() {
 
   if (!config) return <div className="loading">Loading…</div>;
 
+  const themePref = config.theme || "dark";
+  const resolvedTheme =
+    themePref === "system" ? (systemDark ? "dark" : "light") : themePref === "light" ? "light" : "dark";
+
   return (
     <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
       <TitleBar
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        resolvedTheme={resolvedTheme}
+        onToggleTheme={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
       />
       {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
 
@@ -174,7 +200,7 @@ function App() {
   );
 }
 
-function TitleBar({ sidebarOpen, onToggleSidebar }) {
+function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const win = getCurrentWindow();
 
@@ -207,6 +233,23 @@ function TitleBar({ sidebarOpen, onToggleSidebar }) {
       </div>
       <div className="titlebar-spacer" data-tauri-drag-region />
       <div className="titlebar-controls">
+        <button
+          className="tb-btn"
+          aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          title={resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
+          onClick={onToggleTheme}
+        >
+          {resolvedTheme === "dark" ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          )}
+        </button>
         <button
           className="tb-btn"
           aria-label="Minimize"

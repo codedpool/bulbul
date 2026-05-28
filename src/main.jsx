@@ -1,6 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import "./theme.css";
+import { initTheme } from "./theme.js";
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
@@ -18,6 +20,10 @@ function renderError(label, err) {
   try {
     label = getCurrentWindow().label;
   } catch {}
+
+  // The overlay pill intentionally stays dark (a neutral HUD over arbitrary
+  // app content); every other window follows the user's theme preference.
+  if (label !== "overlay") initTheme();
 
   try {
     if (label === "overlay") {

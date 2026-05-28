@@ -382,7 +382,7 @@ function WpmGauge({ percentile }) {
   const fill = Math.max(2, 100 - percentile);
   return (
     <svg viewBox="0 0 100 60" className="wpm-gauge" aria-hidden>
-      <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#222" strokeWidth="8" strokeLinecap="round" />
+      <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" style={{ stroke: "var(--fill-active)" }} strokeWidth="8" strokeLinecap="round" />
       <path
         d="M 10 50 A 40 40 0 0 1 90 50"
         fill="none"

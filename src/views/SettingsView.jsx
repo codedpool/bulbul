@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { applyTheme } from "../theme.js";
 
 const MODES = [
   { value: "raw", label: "Raw", hint: "Fix obvious errors only. Keeps every word." },
   { value: "clean", label: "Clean", hint: "Remove fillers, fix punctuation. Default." },
   { value: "polished", label: "Polished", hint: "Rewrite for clarity. Preserves intent." },
+];
+
+const THEMES = [
+  { value: "dark", label: "Dark", hint: "The default. Deep neutral surfaces." },
+  { value: "light", label: "Light", hint: "Soft off-white surfaces." },
+  { value: "system", label: "System", hint: "Follow Windows — switches automatically." },
 ];
 
 const LANGUAGES = [
@@ -188,6 +195,33 @@ export default function SettingsView({ config, updateConfig }) {
               <div>
                 <div className="mode-label">{m.label}</div>
                 <div className="mode-hint">{m.hint}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3>Appearance</h3>
+        <div className="modes">
+          {THEMES.map((t) => (
+            <label
+              key={t.value}
+              className={`mode ${(config.theme || "dark") === t.value ? "selected" : ""}`}
+            >
+              <input
+                type="radio"
+                name="theme"
+                value={t.value}
+                checked={(config.theme || "dark") === t.value}
+                onChange={() => {
+                  applyTheme(t.value);
+                  updateConfig({ ...config, theme: t.value });
+                }}
+              />
+              <div>
+                <div className="mode-label">{t.label}</div>
+                <div className="mode-hint">{t.hint}</div>
               </div>
             </label>
           ))}
