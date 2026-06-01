@@ -69,7 +69,7 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
       if (!k) { setRecordingHotkeyFor(null); return; }
       parts.push(k);
       const combo = parts.join("+");
-      const field = recordingHotkeyFor === "polish" ? "polish_hotkey" : "hotkey";
+      const field = recordingHotkeyFor === "default_transform" ? "default_transform_hotkey" : "hotkey";
       updateConfig({ ...config, [field]: combo });
       setRecordingHotkeyFor(null);
     };
@@ -155,11 +155,11 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
             onCancel={() => setRecordingHotkeyFor(null)}
           />
           <HotkeyRow
-            label="Polish selection"
-            hint="Select text anywhere, tap this combo — Bulbul rewrites it in place."
-            combo={config.polish_hotkey || "Ctrl+Shift+P"}
-            isRecording={recordingHotkeyFor === "polish"}
-            onStart={() => setRecordingHotkeyFor("polish")}
+            label="Default transform shortcut"
+            hint="Tap this combo to run your default transform on the current selection. Same effect as Alt+1 by default — handy if you want a more memorable key."
+            combo={config.default_transform_hotkey || "Win+Alt+P"}
+            isRecording={recordingHotkeyFor === "default_transform"}
+            onStart={() => setRecordingHotkeyFor("default_transform")}
             onCancel={() => setRecordingHotkeyFor(null)}
           />
         </Card>

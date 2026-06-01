@@ -24,7 +24,7 @@ const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 80;
 pub enum HotkeyEvent {
     DictationPressed,
     DictationReleased,
-    PolishTriggered,
+    DefaultTransformTriggered,
     TransformTriggered(i64),
 }
 
@@ -80,7 +80,7 @@ impl ParsedHotkey {
 #[derive(Clone, Debug, Default)]
 pub struct HotkeySet {
     pub dictation: ParsedHotkey,
-    pub polish: ParsedHotkey,
+    pub default_transform: ParsedHotkey,
     /// Per-transform slot bindings (transform_id, parsed hotkey).
     pub transform_bindings: Vec<(i64, ParsedHotkey)>,
 }
@@ -449,15 +449,18 @@ fn re_register(
         }
     }
 
-    // Polish: single-shot press only.
-    if let Some(polish_sc) = parsed_to_shortcut(&snapshot.polish) {
-        let tx_pol = tx.clone();
-        let last_polish = Arc::new(Mutex::new(None::<Instant>));
+    // Default-transform hotkey: single-shot press only. Fires whichever
+    // transform is marked default (db::get_default_transform), so it's
+    // effectively a configurable favourites shortcut for the user's most-
+    // used transform — separate from the Alt+1..9 slot bindings below.
+    if let Some(dt_sc) = parsed_to_shortcut(&snapshot.default_transform) {
+        let tx_dt = tx.clone();
+        let last_dt = Arc::new(Mutex::new(None::<Instant>));
         let handler = move |_app: &AppHandle, _sc: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent| {
             if event.state() != ShortcutState::Pressed {
                 return;
             }
-            let mut last = last_polish.lock();
+            let mut last = last_dt.lock();
             let cooled = last.map_or(true, |t: Instant| {
                 t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
             });
@@ -465,12 +468,15 @@ fn re_register(
                 return;
             }
             *last = Some(Instant::now());
-            let _ = tx_pol.send(HotkeyEvent::PolishTriggered);
+            let _ = tx_dt.send(HotkeyEvent::DefaultTransformTriggered);
         };
-        if let Err(e) = gs.on_shortcut(polish_sc, handler) {
-            tracing::warn!("register polish hotkey failed: {e:#}");
+        if let Err(e) = gs.on_shortcut(dt_sc, handler) {
+            tracing::warn!("register default-transform hotkey failed: {e:#}");
         } else {
-            tracing::info!("registered polish shortcut: {:?}", snapshot.polish);
+            tracing::info!(
+                "registered default-transform shortcut: {:?}",
+                snapshot.default_transform
+            );
         }
     }
 

@@ -79,7 +79,7 @@ export default function TransformsView() {
         <div>
           <h1>Transforms</h1>
           <p className="muted small">
-            Apply an AI transform to selected text — Bulbul rewrites, cleans up, or restructures it in place. The default transform runs when you press your polish hotkey or click the wand on the pill.
+            Apply an AI transform to selected text — Bulbul rewrites, cleans up, or restructures it in place. The default transform runs when you press your default-transform shortcut (or click the wand on the pill).
           </p>
         </div>
         <div className="header-actions">
@@ -159,7 +159,7 @@ function TransformCard({ transform, slotStatus, onEdit, onDelete, onSetDefault }
             <button
               className="text-btn small"
               onClick={onSetDefault}
-              title="Use when polish hotkey or wand is triggered"
+              title="Run when the default-transform shortcut or wand is triggered"
             >
               Set default
             </button>
