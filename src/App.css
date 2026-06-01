@@ -689,11 +689,14 @@ kbd {
 
 /* ─────────── Settings grid + cards ─────────── */
 
+/* Multi-column layout (not CSS grid). Each card uses break-inside: avoid
+   so the browser keeps it intact, and column-fill: balance evens column
+   heights — no asymmetric blank tails under short cards the way a grid
+   row-stretch would leave. .wide cards use column-span: all to break
+   the column flow and span the full row. */
 .settings-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 14px;
-  align-items: start;
+  columns: 280px;
+  column-gap: 14px;
 }
 
 .settings-card {
@@ -706,9 +709,11 @@ kbd {
   gap: 12px;
   box-shadow: 0 4px 18px var(--shadow);
   min-width: 0;
+  break-inside: avoid;
+  margin-bottom: 14px;
 }
 
-.settings-card.wide { grid-column: 1 / -1; }
+.settings-card.wide { column-span: all; }
 
 .settings-card-head {
   display: flex;
