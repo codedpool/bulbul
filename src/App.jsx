@@ -94,6 +94,8 @@ function App() {
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [autostart, setAutostart] = useState(false);
+  const [stagedUpdate, setStagedUpdate] = useState(null);
+  const [installing, setInstalling] = useState(false);
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches
   );
@@ -116,6 +118,11 @@ function App() {
       if (!cfg.has_api_key && !cfg.groq_api_key) setSection("settings");
     });
     invoke("get_autostart").then(setAutostart).catch(() => {});
+    // Mode-B auto-update: the Rust watcher emits this event after it
+    // downloads a new installer. If the user reopens the app between
+    // checks, the version is still in the slot — fetch it on mount.
+    invoke("get_staged_update_version").then(setStagedUpdate).catch(() => {});
+    const unStaged = listen("update-staged", (e) => setStagedUpdate(e.payload));
     const un = listen("bulbul-status", (e) => setStatus(e.payload));
     const onKey = (e) => {
       if (e.key === "Escape") getCurrentWindow().hide();
@@ -123,9 +130,22 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => {
       un.then((f) => f());
+      unStaged.then((f) => f());
       window.removeEventListener("keydown", onKey);
     };
   }, []);
+
+  async function installUpdate() {
+    setInstalling(true);
+    try {
+      // The Rust command returns only on failure — on success the
+      // installer kills this process mid-call.
+      await invoke("install_staged_update");
+    } catch (e) {
+      console.error("install_staged_update failed:", e);
+      setInstalling(false);
+    }
+  }
 
   async function updateConfig(next) {
     await invoke("save_config", { newCfg: next });
@@ -215,11 +235,26 @@ function App() {
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
           </div>
-          <div className="version muted small">v0.1.0 · MIT</div>
+          <div className="version muted small">v1.0.0 · MIT</div>
         </div>
       </aside>
 
       <main className="content">
+        {stagedUpdate && (
+          <div className="update-banner" role="status">
+            <span className="update-banner-dot" aria-hidden />
+            <span className="update-banner-text">
+              <strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.
+            </span>
+            <button
+              className="update-banner-btn"
+              onClick={installUpdate}
+              disabled={installing}
+            >
+              {installing ? "Installing…" : "Install & restart"}
+            </button>
+          </div>
+        )}
         {section === "home" && <HomeView />}
         {section === "settings" && (
           <SettingsView

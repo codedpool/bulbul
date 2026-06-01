@@ -46,6 +46,22 @@ pub struct AppState {
     /// dictation vs. recompiling from the DB row each time. Invalidated
     /// whenever a CRUD command on those tables runs.
     regex_cache: Arc<db::RegexCache>,
+    /// Mode-B auto-update slot. The background watcher (see
+    /// `spawn_update_watcher`) downloads new installers into here on
+    /// discovery. The frontend banner reads `version` to render, and the
+    /// "Install & restart" button consumes the `Update` to run the
+    /// installer. When `Some`, an update is sitting on disk waiting to
+    /// be applied — the user picks the moment.
+    staged_update: Arc<Mutex<Option<StagedUpdate>>>,
+}
+
+/// A downloaded-but-not-yet-installed update. Holds the Tauri `Update`
+/// handle (so we can call `install` later) alongside the already-downloaded
+/// installer bytes and a stable version string for the UI.
+pub struct StagedUpdate {
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+    pub version: String,
 }
 
 struct PendingDictation {
@@ -276,6 +292,87 @@ fn spawn_hover_watcher(app: AppHandle) {
     });
 }
 
+
+/// Background loop that polls GitHub Releases for newer Bulbul versions
+/// and silently downloads them into the AppState's `staged_update` slot.
+/// The frontend listens for the `update-staged` Tauri event and renders
+/// a banner; nothing else happens until the user (or the tray Quit) calls
+/// `install_staged_update`.
+///
+/// Cadence:
+/// - 10s grace after boot so we don't fight with first-dictation traffic
+/// - Re-check every 6 hours while the app stays open
+/// - Skip checks while an update is already staged (no double-downloads)
+fn spawn_update_watcher(app: AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        loop {
+            // Skip if an update is already sitting in the slot — the user
+            // hasn't restarted yet and re-downloading is wasted bandwidth.
+            // Clone the Arc out of State before locking so the lifetime
+            // chain from `app.state()` doesn't trip the borrow checker.
+            let staged_arc = app.state::<AppState>().staged_update.clone();
+            let already_staged = staged_arc.lock().is_some();
+            if !already_staged {
+                match app.updater() {
+                    Ok(updater) => match updater.check().await {
+                        Ok(Some(update)) => {
+                            let version = update.version.clone();
+                            tracing::info!("update watcher: v{version} available, downloading…");
+                            match update.download(|_chunk, _len| {}, || {}).await {
+                                Ok(bytes) => {
+                                    let slot = app.state::<AppState>().staged_update.clone();
+                                    *slot.lock() = Some(StagedUpdate {
+                                        update,
+                                        bytes,
+                                        version: version.clone(),
+                                    });
+                                    tracing::info!(
+                                        "update watcher: v{version} downloaded, staged for install"
+                                    );
+                                    let _ = app.emit("update-staged", version);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("update download failed: {e:#}");
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            tracing::debug!("update watcher: already up to date");
+                        }
+                        Err(e) => {
+                            tracing::debug!("update watcher check failed: {e:#}");
+                        }
+                    },
+                    Err(e) => {
+                        tracing::debug!("update watcher: updater not available: {e:#}");
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+        }
+    });
+}
+
+/// If an update is staged, run the installer synchronously before exit.
+/// Called from the tray Quit handler — turns "Quit" into "Quit and install".
+/// On the happy path the installer kills our process mid-call and the
+/// function never returns; on failure we log and let the normal exit
+/// continue.
+fn install_staged_if_present(app: &AppHandle) {
+    let slot = app.state::<AppState>().staged_update.clone();
+    let staged = slot.lock().take();
+    let Some(staged) = staged else {
+        return;
+    };
+    tracing::info!("tray quit: installing staged update v{}", staged.version);
+    // install is sync in Tauri 2's updater plugin — it writes the bytes
+    // to a temp file and spawns the installer. We don't await anything.
+    if let Err(e) = staged.update.install(staged.bytes) {
+        tracing::warn!("staged-update install failed on quit: {e:#}");
+    }
+}
 
 fn work_area_bottom_logical(scale: f64) -> Option<f64> {
     use windows::Win32::Foundation::RECT;
@@ -933,6 +1030,38 @@ async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
     }
 }
 
+/// If the background watcher (see `spawn_update_watcher`) has downloaded
+/// a newer version, returns its version string for the UI to render in
+/// the "update ready" banner. Returns None when no update is staged.
+#[tauri::command]
+fn get_staged_update_version(state: tauri::State<'_, AppState>) -> Option<String> {
+    state.staged_update.lock().as_ref().map(|s| s.version.clone())
+}
+
+/// Install the currently-staged update. Tauri's `install` writes the
+/// previously-downloaded bytes to a temp file and spawns the installer
+/// (passive mode — quick progress bar, then auto-restart). Bulbul's own
+/// process is killed by the installer mid-replace, so we never see the
+/// `Ok(())` on the happy path — the function returns only on error.
+///
+/// Called both from the dashboard banner ("Install & restart") and from
+/// the tray Quit handler when an update is sitting in the slot.
+#[tauri::command]
+async fn install_staged_update(app: AppHandle) -> Result<(), String> {
+    let slot = app.state::<AppState>().staged_update.clone();
+    let staged = slot.lock().take();
+    let Some(staged) = staged else {
+        return Err("no update is staged".into());
+    };
+    // `install` moves the Update and the bytes. From here, the installer
+    // process is in the driver's seat.
+    staged
+        .update
+        .install(staged.bytes)
+        .map_err(|e| format!("{e}"))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -969,6 +1098,8 @@ pub fn run() {
             complete_onboarding,
             track_event,
             check_for_updates,
+            get_staged_update_version,
+            install_staged_update,
             get_autostart,
             set_autostart,
             show_settings_window,
@@ -1038,6 +1169,7 @@ pub fn run() {
                 icons,
                 db: db_handle,
                 regex_cache: Arc::new(db::RegexCache::new()),
+                staged_update: Arc::new(Mutex::new(None)),
             });
 
             // Warm the dictionary/snippet regex caches in the background so the
@@ -1092,6 +1224,12 @@ pub fn run() {
                 .expect("hotkey rx already consumed");
             spawn_orchestrator(handle.clone(), rx);
             spawn_hover_watcher(handle.clone());
+
+            // Mode-B auto-update: silently poll GitHub Releases on a
+            // 6-hour cadence (10s grace after boot), download new
+            // installers into AppState.staged_update, fire `update-staged`
+            // event. The UI banner and the tray Quit handler do the rest.
+            spawn_update_watcher(handle.clone());
 
             // Telemetry boot. The opt-in toggle is per-call, but we always
             // start the periodic flush so any track() calls that happen
@@ -1171,7 +1309,13 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
                     }
                 });
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                // Mode-B promise: "install on next restart". If an update
+                // is already downloaded, the installer takes over from
+                // here — passive mode runs ~3s of UI then relaunches.
+                install_staged_if_present(app);
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

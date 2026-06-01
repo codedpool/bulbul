@@ -36,6 +36,61 @@ body, html, #root {
   padding: 80px;
 }
 
+/* ─────────── Update banner (Mode-B auto-update) ─────────── */
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  margin: -16px -16px 16px;
+  background: linear-gradient(180deg, rgba(94, 200, 192, 0.18), rgba(94, 200, 192, 0.10));
+  border-bottom: 1px solid rgba(94, 200, 192, 0.32);
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.update-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #5ec8c0;
+  box-shadow: 0 0 0 3px rgba(94, 200, 192, 0.22);
+  flex-shrink: 0;
+}
+
+.update-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.update-banner-text strong {
+  font-weight: 600;
+  margin-right: 2px;
+}
+
+.update-banner-btn {
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: 1px solid #5ec8c0;
+  background: #5ec8c0;
+  color: #0a1716;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.update-banner-btn:hover:not(:disabled) {
+  background: #6dd4cc;
+  border-color: #6dd4cc;
+}
+
+.update-banner-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
 /* ─────────── Shell ─────────── */
 
 .app-shell {

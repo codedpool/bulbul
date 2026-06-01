@@ -1,0 +1,86 @@
+name: Release
+
+# Trigger on every annotated tag that looks like a version. Pushing
+# `git tag v1.0.0 -m "..."` then `git push --tags` cuts a release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish-tauri:
+    permissions:
+      # tauri-action creates a GitHub Release + uploads installer + latest.json.
+      # That requires write access to the repo's contents.
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Single-platform for now — Windows is the only target we ship.
+        # Add macos-latest / ubuntu-22.04 entries here when those ports land.
+        include:
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          # No `cache` field on purpose — this repo has no package-lock.json
+          # in the canonical sense (Cargo handles Rust deps separately).
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build + sign + release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The private signing key (contents of bulbul.key) and its
+          # passphrase. Set in repo Settings → Secrets and variables →
+          # Actions. tauri-action passes them through to `tauri build`,
+          # which uses them to sign the installer.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # Tag → release mapping. github.ref_name is "v1.0.0" for a tag
+          # push, which both names the release and labels the assets.
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Bulbul ${{ github.ref_name }}'
+          releaseBody: |
+            ## What's new
+
+            (Edit this in the GitHub Releases UI before publishing.)
+
+            ## Install
+
+            - **Windows installer**: `Bulbul_${{ github.ref_name }}_x64-setup.exe`
+            - First install on Windows triggers SmartScreen — click "More info"
+              then "Run anyway". Bulbul is unsigned by a code-signing cert today;
+              the updater signature below guarantees the file came from this repo.
+
+            See `latest.json` if you're wiring up auto-updates for a fork.
+
+          # Drafts let you write proper release notes before going public.
+          # Flip to false once you're confident in the pipeline.
+          releaseDraft: true
+          prerelease: false
+
+          # This is the line that makes auto-update work. tauri-action will
+          # emit `latest.json` alongside the installer, with version, URL,
+          # and signature populated. The endpoint in tauri.conf.json points
+          # to /releases/latest/download/latest.json, so the running app
+          # always picks up the most recent release.
+          includeUpdaterJson: true
+
+          args: ${{ matrix.args }}
