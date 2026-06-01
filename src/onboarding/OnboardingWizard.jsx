@@ -33,7 +33,11 @@ const HOTKEY_PRESETS = [
 const VIDEO_URL = "https://www.youtube.com/watch?v=9VDbhptCzlU";
 const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/9VDbhptCzlU";
 
-const SAMPLE_LINE = "Hi Bulbul, this is my first test — and it looks like everything is working great.";
+// Sample line deliberately seeded with "um", "uh", "like" so the cleanup
+// pass visibly removes them — the user sees Bulbul not just transcribe but
+// clean. If they're on Raw mode every filler stays, which is also useful
+// feedback ("ah, that's what Raw mode means").
+const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test — and like, it looks great.";
 
 export default function OnboardingWizard({ config, updateConfig, onComplete }) {
   const [step, setStep] = useState(0);
@@ -496,7 +500,7 @@ function StepDone({ onFinish, hotkey }) {
 
 function EyeIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
       <circle cx="12" cy="12" r="3" />
     </svg>
@@ -505,7 +509,7 @@ function EyeIcon() {
 
 function EyeOffIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
       <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
       <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />

@@ -254,8 +254,8 @@
 .onb-key-eye {
   background: transparent;
   border: none;
-  color: var(--text-faint);
-  width: 38px;
+  color: var(--text-2);
+  width: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -288,9 +288,10 @@
 }
 
 .onb-verify-btn.state-valid {
-  background: rgba(94, 200, 192, 0.16);
-  border-color: rgba(94, 200, 192, 0.5);
-  color: #5ec8c0;
+  background: #5ec8c0;
+  border-color: #5ec8c0;
+  color: #0a1716;
+  opacity: 1;
   cursor: default;
 }
 
