@@ -333,13 +333,19 @@ fn save_config(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (prev_has_key, prev_hotkey, prev_theme) = {
+    let (prev_has_key, prev_hotkey, prev_pol, prev_theme) = {
         let cfg = state.config.lock();
-        (cfg.has_api_key(), cfg.hotkey.clone(), cfg.theme.clone())
+        (
+            cfg.has_api_key(),
+            cfg.hotkey.clone(),
+            cfg.polish_hotkey.clone(),
+            cfg.theme.clone(),
+        )
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
     let next_has_key = new_cfg.has_api_key();
     let next_hotkey = new_cfg.hotkey.clone();
+    let next_pol = new_cfg.polish_hotkey.clone();
     let next_theme = new_cfg.theme.clone();
     *state.config.lock() = new_cfg;
 
@@ -350,10 +356,11 @@ fn save_config(
         // Broadcast to every window so the dashboard + scratchpad re-theme live.
         let _ = app.emit("theme-changed", next_theme);
     }
-    if prev_hotkey != next_hotkey {
+    if prev_hotkey != next_hotkey || prev_pol != next_pol {
         {
             let mut set = state.hotkeys.lock();
             set.dictation = ParsedHotkey::parse(&next_hotkey);
+            set.polish_dictation = ParsedHotkey::parse(&next_pol);
         }
         hotkey::install_global_shortcuts(&app, state.hotkeys.clone(), state.hotkey_tx.clone());
     }
@@ -888,6 +895,7 @@ pub fn run() {
     let has_key_on_boot = initial_config.has_api_key();
     let initial_set = HotkeySet {
         dictation: ParsedHotkey::parse(&initial_config.hotkey),
+        polish_dictation: ParsedHotkey::parse(&initial_config.polish_hotkey),
         transform_bindings: Vec::new(),
     };
     let hotkey_mutex = Arc::new(Mutex::new(initial_set));
@@ -1137,10 +1145,22 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
     // handlers + release poller (see hotkey.rs) send events through it.
 
     thread::spawn(move || {
+        // meta.mode carries the cleanup mode chosen at press time:
+        //   - DictationPressed       → cfg.mode (whatever the user set)
+        //   - PolishDictationPressed → CleanupMode::Polished, forced
+        // Release handlers ignore which key fired and just process the
+        // active recording with whatever meta.mode says.
         let mut active: Option<(Recorder, PendingDictation)> = None;
         for evt in rx {
             match evt {
-                HotkeyEvent::DictationPressed => {
+                HotkeyEvent::DictationPressed | HotkeyEvent::PolishDictationPressed => {
+                    // Cross-key race guard: only one recording in flight at
+                    // a time. (Each hotkey's plugin handler has its own
+                    // auto-repeat guard; this catches near-simultaneous
+                    // presses of both hotkeys.)
+                    if active.is_some() {
+                        continue;
+                    }
                     let cfg_arc = handle.state::<AppState>().config.clone();
                     let cfg = cfg_arc.lock().clone();
                     if !cfg.has_api_key() {
@@ -1153,15 +1173,20 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                         show_settings(&handle);
                         continue;
                     }
+                    let cleanup_mode = if matches!(evt, HotkeyEvent::PolishDictationPressed) {
+                        CleanupMode::Polished
+                    } else {
+                        cfg.mode.clone()
+                    };
                     match Recorder::start() {
                         Ok(rec) => {
-                            tracing::info!("recording started");
+                            tracing::info!("recording started (mode={cleanup_mode:?})");
                             emit_status(&handle, "listening", None);
                             let meta = PendingDictation {
                                 started_at: Instant::now(),
                                 foreground_app: window_info::foreground_app(),
                                 language: cfg.language.clone(),
-                                mode: cfg.mode.clone(),
+                                mode: cleanup_mode,
                             };
                             active = Some((rec, meta));
                         }
@@ -1172,13 +1197,17 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                         }
                     }
                 }
-                HotkeyEvent::DictationReleased => {
+                HotkeyEvent::DictationReleased | HotkeyEvent::PolishDictationReleased => {
                     let Some((rec, meta)) = active.take() else {
                         continue;
                     };
                     let captured = rec.captured_seconds();
                     let cfg_arc = handle.state::<AppState>().config.clone();
-                    let cfg = cfg_arc.lock().clone();
+                    let mut cfg = cfg_arc.lock().clone();
+                    // Honor the cleanup mode chosen at press time — the
+                    // polish hotkey forces Polished even if the user's
+                    // global mode is Raw or Clean.
+                    cfg.mode = meta.mode.clone();
                     if captured < cfg.min_recording_seconds {
                         tracing::info!(
                             "discarding {:.2}s clip (min {:.2}s)",

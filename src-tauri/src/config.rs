@@ -54,6 +54,18 @@ pub struct Config {
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
 
+    /// Push-to-talk hotkey that records audio and runs it through the
+    /// pipeline with CleanupMode::Polished forced — the user gets a
+    /// rewritten-for-clarity output regardless of their global cleanup
+    /// mode. Single LLM call (cleanup), same latency as normal dictation.
+    /// Alias covers users upgrading from default_transform_hotkey.
+    #[serde(
+        default = "default_polish_hotkey",
+        alias = "default_transform_hotkey",
+        alias = "voice_transform_hotkey"
+    )]
+    pub polish_hotkey: String,
+
     #[serde(default = "default_stt_model")]
     pub stt_model: String,
 
@@ -97,6 +109,13 @@ pub struct Config {
     /// first-run wizard. Defaults to false so fresh installs see it.
     #[serde(default)]
     pub onboarding_completed: bool,
+}
+
+fn default_polish_hotkey() -> String {
+    // Win+Alt+P. Win as the lead modifier keeps the Alt-menu-flash that
+    // would otherwise eat the keystroke from happening. Held to record,
+    // released to transcribe with CleanupMode::Polished forced.
+    "Win+Alt+P".to_string()
 }
 
 fn default_hotkey() -> String {
@@ -172,6 +191,7 @@ impl Default for Config {
             groq_api_key: String::new(),
             mode: CleanupMode::default(),
             hotkey: default_hotkey(),
+            polish_hotkey: default_polish_hotkey(),
             stt_model: default_stt_model(),
             chat_model: default_chat_model(),
             min_recording_seconds: default_min_seconds(),

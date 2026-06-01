@@ -69,7 +69,8 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
       if (!k) { setRecordingHotkeyFor(null); return; }
       parts.push(k);
       const combo = parts.join("+");
-      updateConfig({ ...config, hotkey: combo });
+      const field = recordingHotkeyFor === "polish" ? "polish_hotkey" : "hotkey";
+      updateConfig({ ...config, [field]: combo });
       setRecordingHotkeyFor(null);
     };
     window.addEventListener("keydown", handler, true);
@@ -144,17 +145,25 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
           {keyState === "invalid" && <p className="err">{keyError}</p>}
         </Card>
 
-        <Card title="Hotkey" sub="Hold to record. Release to transcribe and insert.">
+        <Card className="wide" title="Hotkeys" sub="Two hold-to-talk shortcuts.">
           <HotkeyRow
             label="Dictation"
-            hint={null}
+            hint="Hold to record. Release to transcribe with your current cleanup mode."
             combo={config.hotkey}
             isRecording={recordingHotkeyFor === "dictation"}
             onStart={() => setRecordingHotkeyFor("dictation")}
             onCancel={() => setRecordingHotkeyFor(null)}
           />
+          <HotkeyRow
+            label="Polish dictation"
+            hint="Hold to record. Release to transcribe with Polished mode forced — rewrites the transcript for clarity before pasting."
+            combo={config.polish_hotkey || "Win+Alt+P"}
+            isRecording={recordingHotkeyFor === "polish"}
+            onStart={() => setRecordingHotkeyFor("polish")}
+            onCancel={() => setRecordingHotkeyFor(null)}
+          />
           <p className="muted small" style={{ marginTop: 0 }}>
-            Transform shortcuts (<kbd>Alt+1</kbd>…<kbd>Alt+5</kbd>) live on the Transforms page — that's where you assign them.
+            Transform shortcuts (<kbd>Alt+1</kbd>…<kbd>Alt+5</kbd>) for rewriting selected text live on the Transforms page.
           </p>
         </Card>
 

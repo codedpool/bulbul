@@ -24,6 +24,8 @@ const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 80;
 pub enum HotkeyEvent {
     DictationPressed,
     DictationReleased,
+    PolishDictationPressed,
+    PolishDictationReleased,
     TransformTriggered(i64),
 }
 
@@ -79,6 +81,7 @@ impl ParsedHotkey {
 #[derive(Clone, Debug, Default)]
 pub struct HotkeySet {
     pub dictation: ParsedHotkey,
+    pub polish_dictation: ParsedHotkey,
     /// Per-transform slot bindings (transform_id, parsed hotkey).
     pub transform_bindings: Vec<(i64, ParsedHotkey)>,
 }
@@ -291,8 +294,10 @@ fn modifier_chord_alive_slot() -> &'static Mutex<Option<Arc<AtomicBool>>> {
 }
 
 /// Hold-to-talk release detector. RegisterHotKey only signals key-down;
-/// we poll the actual key state to detect when the user lets go.
-fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
+/// we poll the actual key state to detect when the user lets go. The
+/// `release_evt` parameter lets the same poller drive either the
+/// dictation pipeline or the voice-transform pipeline.
+fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey, release_evt: HotkeyEvent) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
     };
@@ -309,7 +314,7 @@ fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
             thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
             if started.elapsed() > Duration::from_secs(60) {
                 tracing::warn!("release poller timed out — forcing release");
-                let _ = tx.send(HotkeyEvent::DictationReleased);
+                let _ = tx.send(release_evt.clone());
                 return;
             }
             let main_down = is_key_down(main_vk);
@@ -320,7 +325,7 @@ fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
                 || is_key_down(VK_LWIN.0 as i32)
                 || is_key_down(VK_RWIN.0 as i32);
             if !(main_down && ctrl_ok && shift_ok && alt_ok && meta_ok) {
-                let _ = tx.send(HotkeyEvent::DictationReleased);
+                let _ = tx.send(release_evt.clone());
                 return;
             }
         }
@@ -431,7 +436,7 @@ fn re_register(
             let dict_active_clone = dict_active.clone();
             thread::spawn(move || {
                 let (poll_tx, poll_rx) = mpsc::channel();
-                spawn_release_poller(poll_tx, parsed);
+                spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
                     let _ = tx_release.send(evt);
                 }
@@ -444,6 +449,60 @@ fn re_register(
             );
         } else {
             tracing::info!("registered dictation shortcut: {:?}", snapshot.dictation);
+        }
+    }
+
+    // Polish-dictation hotkey: hold to record, releases like dictation but
+    // the orchestrator forces CleanupMode::Polished on the pipeline so the
+    // output is rewritten-for-clarity regardless of the user's global
+    // cleanup mode. Same press/release-poller pattern as dictation,
+    // parameterised on PolishDictationReleased.
+    if let Some(pol_sc) = parsed_to_shortcut(&snapshot.polish_dictation) {
+        let tx_pol = tx.clone();
+        let pol_parsed = snapshot.polish_dictation.clone();
+        let pol_active = Arc::new(Mutex::new(false));
+        let last_fire = Arc::new(Mutex::new(None::<Instant>));
+        let handler = move |_app: &AppHandle, sc: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent| {
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            {
+                let mut active = pol_active.lock();
+                if *active {
+                    return;
+                }
+                let mut last = last_fire.lock();
+                let cooled = last.map_or(true, |t: Instant| {
+                    t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+                });
+                if !cooled {
+                    return;
+                }
+                *active = true;
+                *last = Some(Instant::now());
+            }
+            tracing::debug!("global-shortcut polish-dictation pressed: {:?}", sc);
+            let _ = tx_pol.send(HotkeyEvent::PolishDictationPressed);
+
+            let tx_release = tx_pol.clone();
+            let parsed = pol_parsed.clone();
+            let pol_active_clone = pol_active.clone();
+            thread::spawn(move || {
+                let (poll_tx, poll_rx) = mpsc::channel();
+                spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
+                if let Ok(evt) = poll_rx.recv() {
+                    let _ = tx_release.send(evt);
+                }
+                *pol_active_clone.lock() = false;
+            });
+        };
+        if let Err(e) = gs.on_shortcut(pol_sc, handler) {
+            tracing::warn!("register polish-dictation hotkey failed: {e:#}");
+        } else {
+            tracing::info!(
+                "registered polish-dictation shortcut: {:?}",
+                snapshot.polish_dictation
+            );
         }
     }
 
