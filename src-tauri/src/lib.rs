@@ -409,6 +409,17 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Mark the first-run wizard as finished and persist. Called whether the
+/// user completed all the steps or chose "Skip for now" — both should
+/// stop the wizard from re-appearing on the next launch.
+#[tauri::command]
+fn complete_onboarding(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut cfg = state.config.lock();
+    cfg.onboarding_completed = true;
+    config::save(&cfg).map_err(|e| format!("{e:#}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn show_settings_window(app: AppHandle) {
     show_settings(&app);
@@ -899,6 +910,7 @@ pub fn run() {
             get_config,
             save_config,
             validate_api_key,
+            complete_onboarding,
             check_for_updates,
             get_autostart,
             set_autostart,

@@ -95,6 +95,11 @@ pub struct Config {
     /// UI theme preference: "dark" (default) | "light" | "system".
     #[serde(default = "default_theme")]
     pub theme: String,
+
+    /// True once the user has finished (or explicitly skipped) the
+    /// first-run wizard. Defaults to false so fresh installs see it.
+    #[serde(default)]
+    pub onboarding_completed: bool,
 }
 
 fn default_hotkey() -> String {
@@ -192,6 +197,7 @@ impl Default for Config {
             personalize_cleanup: default_personalize_cleanup(),
             learn_corrections: default_learn_corrections(),
             theme: default_theme(),
+            onboarding_completed: false,
         }
     }
 }

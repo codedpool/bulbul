@@ -11,6 +11,7 @@ import TransformsView from "./views/TransformsView.jsx";
 import StyleView from "./views/StyleView.jsx";
 import ScratchpadView from "./views/ScratchpadView.jsx";
 import bulbulMark from "./assets/bulbul-mark.png";
+import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import { applyTheme } from "./theme.js";
 import "./App.css";
 
@@ -144,6 +145,16 @@ function App() {
   const themePref = config.theme || "dark";
   const resolvedTheme =
     themePref === "system" ? (systemDark ? "dark" : "light") : themePref === "light" ? "light" : "dark";
+
+  if (!config.onboarding_completed) {
+    return (
+      <OnboardingWizard
+        config={config}
+        updateConfig={updateConfig}
+        onComplete={() => setConfig({ ...config, onboarding_completed: true })}
+      />
+    );
+  }
 
   return (
     <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
