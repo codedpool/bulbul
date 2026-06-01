@@ -98,7 +98,12 @@ pub struct Config {
 }
 
 fn default_hotkey() -> String {
-    "Ctrl+Shift+Space".to_string()
+    // Modifier-only chord, modifier-only hold-to-talk. The keyboard
+    // hook (see hotkey.rs::spawn_modifier_chord_watcher) detects this as
+    // a dictation press once both modifiers have been held for ~80ms.
+    // Existing users with a previously-saved hotkey keep theirs; this
+    // default only applies to fresh installs.
+    "Ctrl+Win".to_string()
 }
 fn default_polish_hotkey() -> String {
     // Win+Alt+P matches the commercial dictation apps convention. Bare Alt combos

@@ -1,7 +1,8 @@
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,11 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 const FIRE_COOLDOWN_MS: u128 = 700;
 /// How often the release poller checks the dictation hotkey's key state.
 const RELEASE_POLL_MS: u64 = 25;
+/// How long both modifiers of a modifier-only chord (e.g. Ctrl+Win) must
+/// be held before we treat it as a dictation request. Short enough to feel
+/// snappy, long enough that brushing both keys for unrelated reasons
+/// (Ctrl+Win+arrow to switch desktop, etc.) doesn't fire dictation.
+const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 80;
 
 #[derive(Clone, Debug)]
 pub enum HotkeyEvent {
@@ -53,6 +59,20 @@ impl ParsedHotkey {
 
     pub fn is_meaningful(&self) -> bool {
         self.key.is_some() || self.ctrl || self.shift || self.alt || self.meta
+    }
+
+    /// True if this hotkey is a pure modifier chord (no non-modifier key)
+    /// with at least two modifiers. RegisterHotKey can't represent these,
+    /// so we watch them with a polling thread instead.
+    pub fn is_modifier_chord(&self) -> bool {
+        if self.key.is_some() {
+            return false;
+        }
+        let count = [self.ctrl, self.shift, self.alt, self.meta]
+            .iter()
+            .filter(|b| **b)
+            .count();
+        count >= 2
     }
 }
 
@@ -168,6 +188,110 @@ fn is_key_down(vk: i32) -> bool {
     unsafe { GetAsyncKeyState(vk) < 0 }
 }
 
+/// Read the currently-held state of every modifier we care about.
+/// Returns (ctrl, shift, alt, meta). VK_CONTROL/VK_SHIFT/VK_MENU are the
+/// "either left or right" virtual keys; Win has separate L/R so we OR them.
+fn modifier_state() -> (bool, bool, bool, bool) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+    (
+        is_key_down(VK_CONTROL.0 as i32),
+        is_key_down(VK_SHIFT.0 as i32),
+        is_key_down(VK_MENU.0 as i32),
+        is_key_down(VK_LWIN.0 as i32) || is_key_down(VK_RWIN.0 as i32),
+    )
+}
+
+/// True if every required modifier in `need` is currently held.
+fn required_mods_held(need: &ParsedHotkey, state: (bool, bool, bool, bool)) -> bool {
+    let (ctrl, shift, alt, meta) = state;
+    (!need.ctrl || ctrl)
+        && (!need.shift || shift)
+        && (!need.alt || alt)
+        && (!need.meta || meta)
+}
+
+/// Long-running watcher for a modifier-only chord like Ctrl+Win. Polls
+/// modifier state every 25ms. Fires DictationPressed once both required
+/// modifiers have been held for MODIFIER_CHORD_DEBOUNCE_MS, and
+/// DictationReleased the instant either is released. Stops when `alive`
+/// is set to false (settings change → re_register swaps in a new watcher).
+fn spawn_modifier_chord_watcher(
+    tx: Sender<HotkeyEvent>,
+    hotkey: ParsedHotkey,
+    alive: Arc<AtomicBool>,
+) {
+    thread::spawn(move || {
+        // State machine: Idle → Arming(start) → Pressing.
+        // Cooldown across consecutive presses guards against accidental
+        // re-trigger when the user briefly bounces a key.
+        enum State {
+            Idle,
+            Arming(Instant),
+            Pressing,
+        }
+        let mut state = State::Idle;
+        let mut last_fire: Option<Instant> = None;
+        tracing::info!(
+            "modifier-chord watcher started for {:?}",
+            hotkey
+        );
+        while alive.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
+            let held = required_mods_held(&hotkey, modifier_state());
+            match state {
+                State::Idle => {
+                    if held {
+                        let cooled = last_fire.map_or(true, |t| {
+                            t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+                        });
+                        if cooled {
+                            state = State::Arming(Instant::now());
+                        }
+                    }
+                }
+                State::Arming(start) => {
+                    if !held {
+                        // Released before the debounce — treat as noise.
+                        state = State::Idle;
+                    } else if start.elapsed().as_millis()
+                        >= MODIFIER_CHORD_DEBOUNCE_MS as u128
+                    {
+                        tracing::debug!(
+                            "modifier-chord dictation pressed: {:?}",
+                            hotkey
+                        );
+                        let _ = tx.send(HotkeyEvent::DictationPressed);
+                        last_fire = Some(Instant::now());
+                        state = State::Pressing;
+                    }
+                }
+                State::Pressing => {
+                    if !held {
+                        let _ = tx.send(HotkeyEvent::DictationReleased);
+                        state = State::Idle;
+                    }
+                }
+            }
+        }
+        // Stopped — if we were mid-press make sure release fires so the
+        // orchestrator doesn't get stuck holding a recording open.
+        if matches!(state, State::Pressing) {
+            let _ = tx.send(HotkeyEvent::DictationReleased);
+        }
+        tracing::info!("modifier-chord watcher exited for {:?}", hotkey);
+    });
+}
+
+/// Holds the AtomicBool that keeps the current modifier-chord watcher
+/// alive. re_register swaps in a fresh flag and signals the old one to
+/// stop, so only one watcher runs at a time.
+fn modifier_chord_alive_slot() -> &'static Mutex<Option<Arc<AtomicBool>>> {
+    static SLOT: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
 /// Hold-to-talk release detector. RegisterHotKey only signals key-down;
 /// we poll the actual key state to detect when the user lets go.
 fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
@@ -246,10 +370,34 @@ fn re_register(
         tracing::warn!("unregister_all failed: {e:#}");
     }
 
+    // Stop any modifier-chord watcher from the previous registration. We
+    // always swap, even if the new dictation hotkey is also a modifier
+    // chord — a new watcher with the up-to-date spec gets spawned below.
+    {
+        let mut slot = modifier_chord_alive_slot().lock();
+        if let Some(prev) = slot.take() {
+            prev.store(false, Ordering::Relaxed);
+        }
+    }
+
     let snapshot = set.lock().clone();
 
-    // Dictation: press + release semantics via plugin press + poller.
-    if let Some(dict_sc) = parsed_to_shortcut(&snapshot.dictation) {
+    // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
+    // plugin's RegisterHotKey backend can't represent these, so we run a
+    // background polling thread that watches the modifier state directly.
+    if snapshot.dictation.is_modifier_chord() {
+        let alive = Arc::new(AtomicBool::new(true));
+        *modifier_chord_alive_slot().lock() = Some(alive.clone());
+        spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone(), alive);
+        tracing::info!(
+            "registered dictation (modifier-chord watcher): {:?}",
+            snapshot.dictation
+        );
+    }
+    // Dictation, branch B: regular combo with a non-modifier key
+    // (Ctrl+Shift+Space etc.). Uses the global-shortcut plugin for press,
+    // and a one-shot release poller for the key-up edge.
+    else if let Some(dict_sc) = parsed_to_shortcut(&snapshot.dictation) {
         let tx_dict = tx.clone();
         let dict_parsed = snapshot.dictation.clone();
         let dict_active = Arc::new(Mutex::new(false));
