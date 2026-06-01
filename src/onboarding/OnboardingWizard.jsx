@@ -166,19 +166,8 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
     config.groq_api_key && config.groq_api_key.trim().length > 0 ? "valid" : "idle"
   );
   const [keyError, setKeyError] = useState("");
+  const [showKey, setShowKey] = useState(false);
   const [videoOpen, setVideoOpen] = useState(false);
-
-  async function pasteFromClipboard() {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text && text.trim()) {
-        setKeyValue(text.trim());
-        validateAndSave(text.trim());
-      }
-    } catch {
-      // clipboard read can fail silently — user can just paste manually
-    }
-  }
 
   async function validateAndSave(value) {
     const v = (value ?? keyValue).trim();
@@ -199,6 +188,21 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
     }
   }
 
+  function handlePaste(e) {
+    const pasted = e.clipboardData?.getData("text") ?? "";
+    if (pasted.trim()) {
+      // The input will receive the paste itself; we just kick off the
+      // verification with the new value rather than waiting for blur.
+      setTimeout(() => validateAndSave(pasted.trim()), 0);
+    }
+  }
+
+  const verifyLabel =
+    keyState === "valid" ? "Verified ✓" :
+    keyState === "checking" ? "Checking…" :
+    keyState === "invalid" ? "Retry" :
+    "Verify";
+
   return (
     <div className="onb-page-inner">
       <header className="onb-step-head">
@@ -210,24 +214,44 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
       </header>
 
       <div className="onb-key-row">
-        <input
-          type="password"
-          className={`onb-input ${keyState === "valid" ? "ok" : keyState === "invalid" ? "bad" : ""}`}
-          placeholder="gsk_..."
-          value={keyValue}
-          onChange={(e) => { setKeyValue(e.target.value); setKeyState("idle"); setKeyError(""); }}
-          onBlur={() => validateAndSave()}
-          spellCheck={false}
-          autoFocus
-        />
-        <button className="onb-btn ghost" onClick={pasteFromClipboard} type="button">Paste</button>
+        <div className={`onb-key-input-wrap ${keyState === "valid" ? "ok" : keyState === "invalid" ? "bad" : ""}`}>
+          <input
+            type={showKey ? "text" : "password"}
+            className="onb-input"
+            placeholder="gsk_..."
+            value={keyValue}
+            onChange={(e) => { setKeyValue(e.target.value); setKeyState("idle"); setKeyError(""); }}
+            onPaste={handlePaste}
+            onBlur={() => validateAndSave()}
+            spellCheck={false}
+            autoFocus
+          />
+          <button
+            type="button"
+            className="onb-key-eye"
+            onClick={() => setShowKey((v) => !v)}
+            aria-label={showKey ? "Hide key" : "Show key"}
+            title={showKey ? "Hide" : "Show"}
+            tabIndex={-1}
+          >
+            {showKey ? <EyeOffIcon /> : <EyeIcon />}
+          </button>
+        </div>
+        <button
+          type="button"
+          className={`onb-verify-btn state-${keyState}`}
+          onClick={() => validateAndSave()}
+          disabled={keyState === "checking" || keyState === "valid" || keyValue.trim().length === 0}
+        >
+          {verifyLabel}
+        </button>
       </div>
 
       <div className="onb-key-status">
-        {keyState === "checking" && <span className="onb-muted">Checking…</span>}
-        {keyState === "valid" && <span className="onb-ok">✓ Key verified.</span>}
-        {keyState === "invalid" && <span className="onb-bad">✗ {keyError}</span>}
-        {keyState === "idle" && <span className="onb-muted">We'll verify it as soon as you paste.</span>}
+        {keyState === "invalid" && <span className="onb-bad">{keyError}</span>}
+        {keyState === "idle" && keyValue.trim().length === 0 && (
+          <span className="onb-muted">We'll verify it the moment you paste.</span>
+        )}
       </div>
 
       <div className="onb-video-block">
@@ -467,6 +491,26 @@ function StepDone({ onFinish, hotkey }) {
         <button className="onb-btn primary" onClick={onFinish}>Open Bulbul →</button>
       </div>
     </div>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
   );
 }
 
