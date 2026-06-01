@@ -69,41 +69,30 @@
 
 .onb-top-right {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
+  gap: 0;
   flex: 1;
   justify-content: flex-end;
+  height: 48px;
 }
 
-.onb-theme-btn {
+.onb-tb-btn {
   background: transparent;
   border: none;
   color: var(--text-muted);
-  width: 32px;
-  height: 32px;
-  border-radius: 7px;
+  width: 44px;
+  height: 100%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
+  padding: 0;
+  transition: color 100ms ease, background 100ms ease;
 }
 
-.onb-theme-btn:hover { color: var(--text); background: var(--fill); }
-
-.onb-skip {
-  background: transparent;
-  border: none;
-  color: var(--text-faint);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-  padding: 5px 10px;
-  border-radius: 7px;
-  transition: color 120ms ease, background 120ms ease;
-}
-
-.onb-skip:hover { color: var(--text); background: var(--fill); }
+.onb-tb-btn:hover { color: var(--text); background: var(--fill); }
+.onb-tb-close:hover { background: #c42b1c; color: #ffffff; }
+.onb-tb-close:active { background: #a52415; }
 
 /* ─────────── Full-bleed page ─────────── */
 .onb-page {

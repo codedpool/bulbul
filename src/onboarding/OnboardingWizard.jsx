@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
 import { applyTheme } from "../theme.js";
@@ -54,15 +55,12 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
     updateConfig({ ...config, theme: next });
   }
 
-  async function skip() {
-    await invoke("complete_onboarding");
-    onComplete();
-  }
-
   async function finish() {
     await invoke("complete_onboarding");
     onComplete();
   }
+
+  const win = getCurrentWindow();
 
   return (
     <div className="onb-shell">
@@ -78,14 +76,34 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
         </div>
         <div className="onb-top-right">
           <button
-            className="onb-theme-btn"
+            className="onb-tb-btn"
             onClick={toggleTheme}
             aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           >
             {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
           </button>
-          <button className="onb-skip" onClick={skip}>Skip for now</button>
+          <button
+            className="onb-tb-btn"
+            onClick={() => win.minimize().catch(() => {})}
+            aria-label="Minimize"
+            title="Minimize"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+              <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
+            className="onb-tb-btn onb-tb-close"
+            onClick={() => win.close().catch(() => {})}
+            aria-label="Close"
+            title="Close"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+              <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
       </header>
 

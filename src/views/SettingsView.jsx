@@ -294,6 +294,19 @@ export default function SettingsView({ config, updateConfig }) {
           <p className="err">{updateState.message}</p>
         )}
       </section>
+
+      <section>
+        <h3>Setup</h3>
+        <p className="muted small" style={{ marginTop: 0 }}>
+          Walk through the first-run wizard again — useful if you want to change the API key, switch
+          the hotkey, or test the dictation flow.
+        </p>
+        <div className="row">
+          <button onClick={() => updateConfig({ ...config, onboarding_completed: false })}>
+            Re-run setup wizard
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
