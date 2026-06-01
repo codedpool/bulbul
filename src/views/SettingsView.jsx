@@ -256,6 +256,15 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
           )}
         </Card>
 
+        <Card title="Privacy" sub="What leaves your machine.">
+          <Toggle
+            label="Share anonymous usage stats"
+            hint="Counts, durations, error categories, mode/language. Never your transcripts, audio, dictionary, or which app you're typing into. On by default — flip off if you'd rather not share."
+            checked={!!config.telemetry_enabled}
+            onChange={(v) => updateConfig({ ...config, telemetry_enabled: v })}
+          />
+        </Card>
+
         <Card title="Setup" sub="Re-do the first-run flow.">
           <div className="row">
             <button onClick={() => updateConfig({ ...config, onboarding_completed: false })}>

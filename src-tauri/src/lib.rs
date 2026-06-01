@@ -5,6 +5,7 @@ mod db;
 mod groq;
 mod hotkey;
 mod inject;
+mod telemetry;
 mod uia;
 mod window_info;
 
@@ -333,13 +334,16 @@ fn save_config(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (prev_has_key, prev_hotkey, prev_pol, prev_theme) = {
+    let (prev_has_key, prev_hotkey, prev_pol, prev_theme, prev_mode, prev_telemetry, prev_style) = {
         let cfg = state.config.lock();
         (
             cfg.has_api_key(),
             cfg.hotkey.clone(),
             cfg.polish_hotkey.clone(),
             cfg.theme.clone(),
+            cfg.mode.as_str().to_string(),
+            cfg.telemetry_enabled,
+            cfg.style_enabled,
         )
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
@@ -347,7 +351,36 @@ fn save_config(
     let next_hotkey = new_cfg.hotkey.clone();
     let next_pol = new_cfg.polish_hotkey.clone();
     let next_theme = new_cfg.theme.clone();
+    let next_mode = new_cfg.mode.as_str().to_string();
+    let next_telemetry = new_cfg.telemetry_enabled;
+    let next_style = new_cfg.style_enabled;
     *state.config.lock() = new_cfg;
+
+    // Telemetry: emit one event per actual change so dashboards can count
+    // which knobs people actually turn. We never send the value (e.g. the
+    // specific hotkey string), only the field name. Gated on the *new*
+    // value of telemetry_enabled so flipping it ON emits a final
+    // confirmation event, and flipping it OFF silently stops sending.
+    if next_telemetry {
+        if prev_hotkey != next_hotkey {
+            telemetry::track("settings_changed", serde_json::json!({"field": "hotkey"}));
+        }
+        if prev_pol != next_pol {
+            telemetry::track("settings_changed", serde_json::json!({"field": "polish_hotkey"}));
+        }
+        if prev_mode != next_mode {
+            telemetry::track("settings_changed", serde_json::json!({"field": "mode", "value": next_mode}));
+        }
+        if prev_theme != next_theme {
+            telemetry::track("settings_changed", serde_json::json!({"field": "theme", "value": next_theme}));
+        }
+        if prev_style != next_style {
+            telemetry::track("settings_changed", serde_json::json!({"field": "style_enabled", "value": next_style}));
+        }
+        if prev_telemetry != next_telemetry {
+            telemetry::track("settings_changed", serde_json::json!({"field": "telemetry_enabled", "value": true}));
+        }
+    }
 
     if prev_has_key != next_has_key {
         update_tray_icon(&app, next_has_key);
@@ -423,6 +456,24 @@ fn complete_onboarding(state: tauri::State<'_, AppState>) -> Result<(), String> 
     cfg.onboarding_completed = true;
     config::save(&cfg).map_err(|e| format!("{e:#}"))?;
     Ok(())
+}
+
+/// Frontend-callable telemetry pass-through. The React side uses this for
+/// events that originate in the UI (onboarding step completion, etc.). The
+/// `telemetry_enabled` gate lives here so the JS caller never has to know
+/// or check — flip the master toggle off and every track_event becomes a
+/// no-op automatically.
+#[tauri::command]
+fn track_event(
+    event_name: String,
+    props: Option<serde_json::Value>,
+    state: tauri::State<'_, AppState>,
+) {
+    if !state.config.lock().telemetry_enabled {
+        return;
+    }
+    let props = props.unwrap_or_else(|| serde_json::json!({}));
+    telemetry::track(&event_name, props);
 }
 
 #[tauri::command]
@@ -916,6 +967,7 @@ pub fn run() {
             save_config,
             validate_api_key,
             complete_onboarding,
+            track_event,
             check_for_updates,
             get_autostart,
             set_autostart,
@@ -1040,6 +1092,32 @@ pub fn run() {
                 .expect("hotkey rx already consumed");
             spawn_orchestrator(handle.clone(), rx);
             spawn_hover_watcher(handle.clone());
+
+            // Telemetry boot. The opt-in toggle is per-call, but we always
+            // start the periodic flush so any track() calls that happen
+            // while opted in get drained on a steady cadence. If the user
+            // is opted out, the buffer never fills (no one calls track),
+            // so the flush is a no-op.
+            telemetry::spawn_periodic_flush();
+            {
+                let state = handle.state::<AppState>();
+                let cfg = state.config.lock();
+                if cfg.telemetry_enabled {
+                    telemetry::track(
+                        "app_started",
+                        serde_json::json!({
+                            "has_api_key": cfg.has_api_key(),
+                            "mode": cfg.mode.as_str(),
+                            "language": cfg.language,
+                            "theme": cfg.theme,
+                            "onboarding_completed": cfg.onboarding_completed,
+                            "style_enabled": cfg.style_enabled,
+                            "personalize_cleanup": cfg.personalize_cleanup,
+                            "open_dashboard_on_launch": cfg.open_dashboard_on_launch,
+                        }),
+                    );
+                }
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -1525,6 +1603,7 @@ async fn process_pipeline(
             tracing::error!("STT failed: {e:#}");
             emit_status(&app, "error", Some(format!("STT: {e:#}")));
             notify(&app, "Bulbul transcription failed", &format!("{e:#}"));
+            track_dictation_failed(&app, "stt", &meta.mode);
             return;
         }
     };
@@ -1649,6 +1728,7 @@ async fn process_pipeline(
         tracing::error!("inject failed: {e:#}");
         emit_status(&app, "error", Some(format!("Inject: {e:#}")));
         notify(&app, "Bulbul inject failed", &format!("{e:#}"));
+        track_dictation_failed(&app, "inject", &meta.mode);
         return;
     }
     let t_inject_ms = t_inject_start.elapsed().as_millis() as u64;
@@ -1682,6 +1762,25 @@ async fn process_pipeline(
         word_count
     );
 
+    // Snapshot the meta fields we need for telemetry BEFORE the
+    // LogEntry below consumes them. Cheap clones — short strings.
+    let telemetry_payload = if cfg.telemetry_enabled {
+        let venue_category = cfg.category_for_app(meta.foreground_app.as_deref());
+        Some(serde_json::json!({
+            "mode": meta.mode.as_str(),
+            "language": meta.language.clone(),
+            "duration_bucket": telemetry::duration_bucket(duration_ms),
+            "word_count_bucket": telemetry::word_count_bucket(word_count),
+            "had_dict_hits": !dict_hits.is_empty(),
+            "had_snippet_hits": !snip_hits.is_empty(),
+            "venue_category": venue_category,
+            "stt_ms_bucket": telemetry::duration_bucket(t_stt_ms),
+            "cleanup_ms_bucket": telemetry::duration_bucket(t_cleanup_ms),
+        }))
+    } else {
+        None
+    };
+
     // Atomic activity-log + hit-counter write. Single transaction so SQLite
     // does one fsync instead of three. Best-effort — failures never block
     // injection or surface to the user.
@@ -1704,5 +1803,28 @@ async fn process_pipeline(
     // Keep the voice profile current without the user having to click Refresh.
     maybe_auto_refresh_voice(&app, &cfg, &db);
 
+    if let Some(props) = telemetry_payload {
+        telemetry::track("dictation_completed", props);
+    }
+
     emit_status(&app, "done", Some(final_text));
+}
+
+/// Fire a telemetry event for a failed dictation. Caller still emits the
+/// user-visible error; this only adds an anonymous datapoint.
+fn track_dictation_failed(app: &AppHandle, category: &str, mode: &CleanupMode) {
+    // Bind the State explicitly so the MutexGuard's borrow outlives the
+    // surrounding statement.
+    let state = app.state::<AppState>();
+    let enabled = state.config.lock().telemetry_enabled;
+    if !enabled {
+        return;
+    }
+    telemetry::track(
+        "dictation_failed",
+        serde_json::json!({
+            "error_category": category,
+            "mode": mode.as_str(),
+        }),
+    );
 }

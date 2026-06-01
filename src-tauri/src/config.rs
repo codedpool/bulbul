@@ -129,6 +129,16 @@ pub struct Config {
     /// first-run wizard. Defaults to false so fresh installs see it.
     #[serde(default)]
     pub onboarding_completed: bool,
+
+    /// Anonymous usage telemetry. On by default for fresh installs so the
+    /// solo-dev signal isn't permanently zero, but always toggleable from
+    /// onboarding (the toggle is visible on the final step) and from
+    /// Settings → Privacy. Content (transcripts, audio, foreground exe
+    /// names) is never sent regardless of this flag; only counts,
+    /// durations, modes, and error categories. See [crate::telemetry] for
+    /// the full taxonomy.
+    #[serde(default = "default_telemetry_enabled")]
+    pub telemetry_enabled: bool,
 }
 
 fn default_polish_hotkey() -> String {
@@ -169,6 +179,7 @@ fn default_style_enabled() -> bool { true }
 fn default_personalize_cleanup() -> bool { true }
 fn default_learn_corrections() -> bool { true }
 fn default_theme() -> String { "light".to_string() }
+fn default_telemetry_enabled() -> bool { true }
 fn default_style_personal() -> String { "casual".to_string() }
 fn default_style_work() -> String { "casual".to_string() }
 fn default_style_email() -> String { "formal".to_string() }
@@ -304,6 +315,7 @@ impl Default for Config {
             learn_corrections: default_learn_corrections(),
             theme: default_theme(),
             onboarding_completed: false,
+            telemetry_enabled: default_telemetry_enabled(),
         }
     }
 }

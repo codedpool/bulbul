@@ -128,7 +128,14 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
             onNext={() => setStep(3)}
           />
         )}
-        {step === 3 && <StepDone onFinish={finish} hotkey={config.hotkey} />}
+        {step === 3 && (
+          <StepDone
+            onFinish={finish}
+            hotkey={config.hotkey}
+            telemetryEnabled={!!config.telemetry_enabled}
+            onToggleTelemetry={(v) => updateConfig({ ...config, telemetry_enabled: v })}
+          />
+        )}
       </main>
     </div>
   );
@@ -149,7 +156,7 @@ function StepWelcome({ onNext }) {
         </div>
         <div className="onb-value">
           <div className="onb-value-title">Free and open source</div>
-          <p>Local app, no subscription, no telemetry. Yours to fork.</p>
+          <p>Local app, no subscription, no surprises. Yours to fork.</p>
         </div>
         <div className="onb-value">
           <div className="onb-value-title">Two minutes to set up</div>
@@ -468,7 +475,7 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
   );
 }
 
-function StepDone({ onFinish, hotkey }) {
+function StepDone({ onFinish, hotkey, telemetryEnabled, onToggleTelemetry }) {
   return (
     <div className="onb-page-inner onb-done">
       <div className="onb-done-check">✓</div>
@@ -491,6 +498,24 @@ function StepDone({ onFinish, hotkey }) {
           <p>Change hotkeys, model, theme, mic in Settings — anytime.</p>
         </div>
       </div>
+
+      <label className="onb-telemetry-row">
+        <span className={`toggle ${telemetryEnabled ? "on" : ""}`}>
+          <input
+            type="checkbox"
+            checked={telemetryEnabled}
+            onChange={(e) => onToggleTelemetry(e.target.checked)}
+          />
+          <span className="toggle-thumb" />
+        </span>
+        <span className="onb-telemetry-text">
+          <strong>Anonymous usage stats are on.</strong>
+          <span className="onb-muted small">
+            Bulbul is solo-built — counts and error categories help me know what to fix. Never your transcripts, audio, dictionary, or which app you're typing into. Flip this off if you'd rather not share — you can change it anytime in Settings → Privacy.
+          </span>
+        </span>
+      </label>
+
       <div className="onb-actions onb-actions-center">
         <button className="onb-btn primary" onClick={onFinish}>Open Bulbul →</button>
       </div>

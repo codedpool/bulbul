@@ -68,3 +68,8 @@ features = ["env-filter"]
 
 [dependencies.parking_lot]
 version = "0.12"
+
+# Anonymous IDs for opt-in telemetry. v4 only — never derived from identity.
+[dependencies.uuid]
+version = "1"
+features = ["v4"]

@@ -341,8 +341,14 @@ function PrivacyModal({ onAck }) {
         <h2>Before you start</h2>
         <p>
           Bulbul sends your spoken audio to <strong>Groq's servers</strong> for
-          transcription and cleanup, using <em>your</em> API key. No data is sent
-          anywhere else — no Bulbul server, no telemetry.
+          transcription and cleanup, using <em>your</em> API key. Your transcripts,
+          audio, dictionary, and notes never leave your machine for any other purpose.
+        </p>
+        <p className="muted small">
+          Anonymous usage stats (counts, durations, error categories) are on by default
+          so I can see what works and what breaks. They never include your transcripts,
+          audio, or which app you're typing into. Flip them off in Settings → Privacy
+          if you'd rather not share.
         </p>
         <p className="muted">
           Make sure you trust Groq's privacy policy before dictating sensitive content.
