@@ -197,13 +197,16 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <label className="sidebar-toggle-row" title="Start Bulbul automatically when Windows starts">
-            <span className="sidebar-toggle-label">Run at startup</span>
-            <span className={`toggle ${autostart ? "on" : ""}`}>
+          <label
+            className="sidebar-toggle-row"
+            title="When on, the dashboard pops up at startup. When off, Bulbul boots silently to the tray — the pill still appears when you dictate."
+          >
+            <span className="sidebar-toggle-label">Open at startup</span>
+            <span className={`toggle ${config.open_dashboard_on_launch ? "on" : ""}`}>
               <input
                 type="checkbox"
-                checked={autostart}
-                onChange={(e) => toggleAutostart(e.target.checked)}
+                checked={!!config.open_dashboard_on_launch}
+                onChange={(e) => updateConfig({ ...config, open_dashboard_on_launch: e.target.checked })}
               />
               <span className="toggle-thumb" />
             </span>
