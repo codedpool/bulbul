@@ -10,9 +10,9 @@ const MODES = [
 ];
 
 const THEMES = [
-  { value: "dark", label: "Dark", hint: "The default. Deep neutral surfaces." },
-  { value: "light", label: "Light", hint: "Soft off-white surfaces." },
-  { value: "system", label: "System", hint: "Follow Windows — switches automatically." },
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+  { value: "system", label: "System" },
 ];
 
 const LANGUAGES = [
@@ -83,6 +83,8 @@ export default function SettingsView({ config, updateConfig }) {
   }, [recordingHotkeyFor, config, updateConfig]);
 
   const hasKey = config.groq_api_key && config.groq_api_key.trim().length > 0;
+  const activeMode = MODES.find((m) => m.value === config.mode) || MODES[1];
+  const activeTheme = config.theme || "dark";
 
   async function saveKey() {
     setKeyState("checking");
@@ -123,190 +125,169 @@ export default function SettingsView({ config, updateConfig }) {
         <h1>Settings</h1>
       </header>
 
-      <section>
-        <h3>Groq API key</h3>
-        {!hasKey && (
-          <p className="muted">
-            Paste your Groq API key to get started.{" "}
-            <a
-              href="https://console.groq.com/keys"
-              onClick={(e) => { e.preventDefault(); openUrl("https://console.groq.com/keys"); }}
+      <div className="settings-grid">
+
+        <Card className="wide" title="Groq API key" sub={hasKey ? "Connected." : "Paste your key to get started."}>
+          {!hasKey && (
+            <p className="muted small" style={{ marginTop: -2 }}>
+              <a
+                href="https://console.groq.com/keys"
+                onClick={(e) => { e.preventDefault(); openUrl("https://console.groq.com/keys"); }}
+              >
+                Grab a free key from console.groq.com →
+              </a>
+            </p>
+          )}
+          <div className="row">
+            <input
+              type="password"
+              value={draftKey}
+              placeholder="gsk_…"
+              onChange={(e) => { setDraftKey(e.target.value); setKeyState("idle"); }}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <button
+              className="primary"
+              disabled={!draftKey.trim() || keyState === "checking"}
+              onClick={saveKey}
             >
-              Get one here →
-            </a>
-          </p>
-        )}
-        <div className="row">
-          <input
-            type="password"
-            value={draftKey}
-            placeholder="gsk_…"
-            onChange={(e) => { setDraftKey(e.target.value); setKeyState("idle"); }}
-            spellCheck={false}
-            autoComplete="off"
+              {keyState === "checking" ? "Checking…" : hasKey ? "Update" : "Save"}
+            </button>
+          </div>
+          {keyState === "valid" && <p className="ok">Key validated and saved.</p>}
+          {keyState === "invalid" && <p className="err">{keyError}</p>}
+        </Card>
+
+        <Card className="wide" title="Hotkeys" sub="Two combos. Dictation is hold-to-talk; Polish is single-press.">
+          <HotkeyRow
+            label="Dictation"
+            hint="Hold to record. Release to transcribe and insert."
+            combo={config.hotkey}
+            isRecording={recordingHotkeyFor === "dictation"}
+            onStart={() => setRecordingHotkeyFor("dictation")}
+            onCancel={() => setRecordingHotkeyFor(null)}
           />
-          <button
-            className="primary"
-            disabled={!draftKey.trim() || keyState === "checking"}
-            onClick={saveKey}
+          <HotkeyRow
+            label="Polish selection"
+            hint="Select text anywhere, tap this combo — Bulbul rewrites it in place."
+            combo={config.polish_hotkey || "Ctrl+Shift+P"}
+            isRecording={recordingHotkeyFor === "polish"}
+            onStart={() => setRecordingHotkeyFor("polish")}
+            onCancel={() => setRecordingHotkeyFor(null)}
+          />
+        </Card>
+
+        <Card title="Cleanup mode" sub={activeMode.hint}>
+          <select
+            className="select-input"
+            value={config.mode || "clean"}
+            onChange={(e) => updateConfig({ ...config, mode: e.target.value })}
           >
-            {keyState === "checking" ? "Checking…" : hasKey ? "Update" : "Save"}
-          </button>
-        </div>
-        {keyState === "valid" && <p className="ok">Key validated and saved.</p>}
-        {keyState === "invalid" && <p className="err">{keyError}</p>}
-      </section>
+            {MODES.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </Card>
 
-      <section>
-        <h3>Hotkeys</h3>
-        <HotkeyRow
-          label="Dictation"
-          hint="Hold this combo to record. Release to transcribe and insert."
-          combo={config.hotkey}
-          isRecording={recordingHotkeyFor === "dictation"}
-          onStart={() => setRecordingHotkeyFor("dictation")}
-          onCancel={() => setRecordingHotkeyFor(null)}
-        />
-        <HotkeyRow
-          label="Polish selection with AI"
-          hint="Select text anywhere, tap this combo — Bulbul rewrites it in place."
-          combo={config.polish_hotkey || "Ctrl+Shift+P"}
-          isRecording={recordingHotkeyFor === "polish"}
-          onStart={() => setRecordingHotkeyFor("polish")}
-          onCancel={() => setRecordingHotkeyFor(null)}
-        />
-      </section>
-
-      <section>
-        <h3>Cleanup mode</h3>
-        <div className="modes">
-          {MODES.map((m) => (
-            <label
-              key={m.value}
-              className={`mode ${config.mode === m.value ? "selected" : ""}`}
-            >
-              <input
-                type="radio"
-                name="mode"
-                value={m.value}
-                checked={config.mode === m.value}
-                onChange={() => updateConfig({ ...config, mode: m.value })}
-              />
-              <div>
-                <div className="mode-label">{m.label}</div>
-                <div className="mode-hint">{m.hint}</div>
-              </div>
-            </label>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <h3>Appearance</h3>
-        <div className="modes">
-          {THEMES.map((t) => (
-            <label
-              key={t.value}
-              className={`mode ${(config.theme || "dark") === t.value ? "selected" : ""}`}
-            >
-              <input
-                type="radio"
-                name="theme"
-                value={t.value}
-                checked={(config.theme || "dark") === t.value}
-                onChange={() => {
+        <Card title="Appearance" sub="Light, dark, or follow Windows.">
+          <div className="segmented">
+            {THEMES.map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                className={`segmented-btn ${activeTheme === t.value ? "selected" : ""}`}
+                onClick={() => {
                   applyTheme(t.value);
                   updateConfig({ ...config, theme: t.value });
                 }}
-              />
-              <div>
-                <div className="mode-label">{t.label}</div>
-                <div className="mode-hint">{t.hint}</div>
-              </div>
-            </label>
-          ))}
-        </div>
-      </section>
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </Card>
 
-      <section>
-        <h3>Personalization</h3>
-        <Toggle
-          label="Personalize cleanup from past dictations"
-          hint="Show the model recent examples from the same app so cleanups adapt to how you usually write there. Adds ~150 tokens per dictation."
-          checked={config.personalize_cleanup !== false}
-          onChange={(v) => updateConfig({ ...config, personalize_cleanup: v })}
-        />
-        <Toggle
-          label="Learn from my corrections"
-          hint="When you fix what Bulbul typed, it remembers and applies the same fix next time the words come up. Reading edited fields uses Windows accessibility; password fields are always skipped."
-          checked={config.learn_corrections !== false}
-          onChange={(v) => updateConfig({ ...config, learn_corrections: v })}
-        />
-      </section>
+        <Card title="Language" sub="Auto-detect is fine; a specific pick is slightly faster.">
+          <select
+            className="select-input"
+            value={config.language || "auto"}
+            onChange={(e) => updateConfig({ ...config, language: e.target.value })}
+          >
+            {LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>{l.label}</option>
+            ))}
+          </select>
+        </Card>
 
-      <section>
-        <h3>Language</h3>
-        <p className="muted small">
-          Tell Whisper which language you'll speak. Auto-detect works for most
-          languages but a specific choice is slightly faster and more accurate.
-        </p>
-        <select
-          className="select-input"
-          value={config.language || "auto"}
-          onChange={(e) => updateConfig({ ...config, language: e.target.value })}
-        >
-          {LANGUAGES.map((l) => (
-            <option key={l.code} value={l.code}>{l.label}</option>
-          ))}
-        </select>
-      </section>
+        <Card title="Personalization" sub="Adapt to how you write.">
+          <Toggle
+            label="Personalize cleanup from past dictations"
+            hint="Show the model recent examples from the same app. Adds ~150 tokens per dictation."
+            checked={config.personalize_cleanup !== false}
+            onChange={(v) => updateConfig({ ...config, personalize_cleanup: v })}
+          />
+          <Toggle
+            label="Learn from my corrections"
+            hint="When you edit what Bulbul typed, it remembers and applies the same fix next time. Password fields are always skipped."
+            checked={config.learn_corrections !== false}
+            onChange={(v) => updateConfig({ ...config, learn_corrections: v })}
+          />
+        </Card>
 
-      <section>
-        <h3>Startup</h3>
-        <Toggle
-          label="Start Bulbul when Windows starts"
-          hint="Boots silently in the tray on login."
-          checked={autostart}
-          onChange={toggleAutostart}
-        />
-        <Toggle
-          label="Open this window when Bulbul starts"
-          hint="Turn off to launch straight into the tray."
-          checked={!!config.open_dashboard_on_launch}
-          onChange={(v) => updateConfig({ ...config, open_dashboard_on_launch: v })}
-        />
-      </section>
+        <Card title="Startup" sub="What happens when Windows boots.">
+          <Toggle
+            label="Start Bulbul with Windows"
+            hint="Boots silently in the tray on login."
+            checked={autostart}
+            onChange={toggleAutostart}
+          />
+          <Toggle
+            label="Open this window when Bulbul starts"
+            hint="Off = land straight in the tray."
+            checked={!!config.open_dashboard_on_launch}
+            onChange={(v) => updateConfig({ ...config, open_dashboard_on_launch: v })}
+          />
+        </Card>
 
-      <section>
-        <h3>Updates</h3>
-        <div className="row">
-          <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
-            {updateState.state === "checking" ? "Checking…" : "Check for updates"}
-          </button>
-        </div>
-        {updateState.state === "available" && (
-          <p className="ok">Update available: {updateState.message}</p>
-        )}
-        {updateState.state === "uptodate" && (
-          <p className="muted small">{updateState.message}</p>
-        )}
-        {updateState.state === "error" && (
-          <p className="err">{updateState.message}</p>
-        )}
-      </section>
+        <Card title="Updates" sub="Bulbul checks GitHub releases.">
+          <div className="row">
+            <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
+              {updateState.state === "checking" ? "Checking…" : "Check for updates"}
+            </button>
+          </div>
+          {updateState.state === "available" && (
+            <p className="ok">Update available: {updateState.message}</p>
+          )}
+          {updateState.state === "uptodate" && (
+            <p className="muted small">{updateState.message}</p>
+          )}
+          {updateState.state === "error" && (
+            <p className="err">{updateState.message}</p>
+          )}
+        </Card>
 
-      <section>
-        <h3>Setup</h3>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          Walk through the first-run wizard again — useful if you want to change the API key, switch
-          the hotkey, or test the dictation flow.
-        </p>
-        <div className="row">
-          <button onClick={() => updateConfig({ ...config, onboarding_completed: false })}>
-            Re-run setup wizard
-          </button>
-        </div>
-      </section>
+        <Card title="Setup" sub="Re-do the first-run flow.">
+          <div className="row">
+            <button onClick={() => updateConfig({ ...config, onboarding_completed: false })}>
+              Re-run setup wizard
+            </button>
+          </div>
+        </Card>
+
+      </div>
+    </div>
+  );
+}
+
+function Card({ title, sub, className = "", children }) {
+  return (
+    <div className={`settings-card ${className}`}>
+      <div className="settings-card-head">
+        <div className="settings-card-title">{title}</div>
+        {sub && <div className="settings-card-sub">{sub}</div>}
+      </div>
+      <div className="settings-card-body">{children}</div>
     </div>
   );
 }
