@@ -1170,6 +1170,11 @@ pub fn get_transform(db: &Db, id: i64) -> Result<Transform> {
     Ok(row)
 }
 
+#[allow(dead_code)] // No callers since the default-transform hotkey was
+                    // removed, but the is_default DB flag is still written
+                    // by set_default_transform and Transforms UI; this
+                    // getter stays available for future readers (e.g. a
+                    // pill wand button, app-aware prompt selection).
 pub fn get_default_transform(db: &Db) -> Result<Transform> {
     let conn = db.lock();
     let row = conn.query_row(

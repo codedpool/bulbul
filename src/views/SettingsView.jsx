@@ -69,8 +69,7 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
       if (!k) { setRecordingHotkeyFor(null); return; }
       parts.push(k);
       const combo = parts.join("+");
-      const field = recordingHotkeyFor === "default_transform" ? "default_transform_hotkey" : "hotkey";
-      updateConfig({ ...config, [field]: combo });
+      updateConfig({ ...config, hotkey: combo });
       setRecordingHotkeyFor(null);
     };
     window.addEventListener("keydown", handler, true);
@@ -145,23 +144,18 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
           {keyState === "invalid" && <p className="err">{keyError}</p>}
         </Card>
 
-        <Card className="wide" title="Hotkeys" sub="Two combos. Dictation is hold-to-talk; Polish is single-press.">
+        <Card title="Hotkey" sub="Hold to record. Release to transcribe and insert.">
           <HotkeyRow
             label="Dictation"
-            hint="Hold to record. Release to transcribe and insert."
+            hint={null}
             combo={config.hotkey}
             isRecording={recordingHotkeyFor === "dictation"}
             onStart={() => setRecordingHotkeyFor("dictation")}
             onCancel={() => setRecordingHotkeyFor(null)}
           />
-          <HotkeyRow
-            label="Default transform shortcut"
-            hint="Tap this combo to run your default transform on the current selection. Same effect as Alt+1 by default — handy if you want a more memorable key."
-            combo={config.default_transform_hotkey || "Win+Alt+P"}
-            isRecording={recordingHotkeyFor === "default_transform"}
-            onStart={() => setRecordingHotkeyFor("default_transform")}
-            onCancel={() => setRecordingHotkeyFor(null)}
-          />
+          <p className="muted small" style={{ marginTop: 0 }}>
+            Transform shortcuts (<kbd>Alt+1</kbd>…<kbd>Alt+5</kbd>) live on the Transforms page — that's where you assign them.
+          </p>
         </Card>
 
         <Card title="Cleanup mode" sub={activeMode.hint}>

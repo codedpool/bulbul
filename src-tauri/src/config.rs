@@ -54,16 +54,6 @@ pub struct Config {
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
 
-    /// Hotkey for the "default transform" — whichever transform is marked
-    /// default in the Transforms table. Carries through every install via
-    /// the legacy `polish_hotkey` alias so users who saved their combo
-    /// under the old name don't lose it on upgrade.
-    #[serde(
-        default = "default_default_transform_hotkey",
-        alias = "polish_hotkey"
-    )]
-    pub default_transform_hotkey: String,
-
     #[serde(default = "default_stt_model")]
     pub stt_model: String,
 
@@ -116,13 +106,6 @@ fn default_hotkey() -> String {
     // Existing users with a previously-saved hotkey keep theirs; this
     // default only applies to fresh installs.
     "Ctrl+Win".to_string()
-}
-fn default_default_transform_hotkey() -> String {
-    // Win+Alt+P matches the commercial dictation apps convention. Bare Alt combos
-    // briefly activate the Windows menu bar and deselect text before
-    // our Ctrl+C runs, so we always include Win as the lead modifier
-    // for transform-style hotkeys. Existing users keep whatever they had.
-    "Win+Alt+P".to_string()
 }
 fn default_stt_model() -> String {
     "whisper-large-v3-turbo".to_string()
@@ -189,7 +172,6 @@ impl Default for Config {
             groq_api_key: String::new(),
             mode: CleanupMode::default(),
             hotkey: default_hotkey(),
-            default_transform_hotkey: default_default_transform_hotkey(),
             stt_model: default_stt_model(),
             chat_model: default_chat_model(),
             min_recording_seconds: default_min_seconds(),

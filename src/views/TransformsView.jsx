@@ -79,7 +79,7 @@ export default function TransformsView() {
         <div>
           <h1>Transforms</h1>
           <p className="muted small">
-            Apply an AI transform to selected text — Bulbul rewrites, cleans up, or restructures it in place. The default transform runs when you press your default-transform shortcut (or click the wand on the pill).
+            Apply an AI transform to selected text — Bulbul rewrites, cleans up, or restructures it in place. Press <kbd>Alt+1</kbd>…<kbd>Alt+5</kbd> to run a transform on the current selection. The transform marked default is the one used elsewhere in the app.
           </p>
         </div>
         <div className="header-actions">
@@ -159,7 +159,7 @@ function TransformCard({ transform, slotStatus, onEdit, onDelete, onSetDefault }
             <button
               className="text-btn small"
               onClick={onSetDefault}
-              title="Run when the default-transform shortcut or wand is triggered"
+              title="Mark this as your default transform. The slot binding (Alt+N) stays its own thing."
             >
               Set default
             </button>

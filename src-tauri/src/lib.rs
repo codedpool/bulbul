@@ -333,14 +333,13 @@ fn save_config(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (prev_has_key, prev_hotkey, prev_dt, prev_theme) = {
+    let (prev_has_key, prev_hotkey, prev_theme) = {
         let cfg = state.config.lock();
-        (cfg.has_api_key(), cfg.hotkey.clone(), cfg.default_transform_hotkey.clone(), cfg.theme.clone())
+        (cfg.has_api_key(), cfg.hotkey.clone(), cfg.theme.clone())
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
     let next_has_key = new_cfg.has_api_key();
     let next_hotkey = new_cfg.hotkey.clone();
-    let next_dt = new_cfg.default_transform_hotkey.clone();
     let next_theme = new_cfg.theme.clone();
     *state.config.lock() = new_cfg;
 
@@ -351,11 +350,10 @@ fn save_config(
         // Broadcast to every window so the dashboard + scratchpad re-theme live.
         let _ = app.emit("theme-changed", next_theme);
     }
-    if prev_hotkey != next_hotkey || prev_dt != next_dt {
+    if prev_hotkey != next_hotkey {
         {
             let mut set = state.hotkeys.lock();
             set.dictation = ParsedHotkey::parse(&next_hotkey);
-            set.default_transform = ParsedHotkey::parse(&next_dt);
         }
         hotkey::install_global_shortcuts(&app, state.hotkeys.clone(), state.hotkey_tx.clone());
     }
@@ -890,7 +888,6 @@ pub fn run() {
     let has_key_on_boot = initial_config.has_api_key();
     let initial_set = HotkeySet {
         dictation: ParsedHotkey::parse(&initial_config.hotkey),
-        default_transform: ParsedHotkey::parse(&initial_config.default_transform_hotkey),
         transform_bindings: Vec::new(),
     };
     let hotkey_mutex = Arc::new(Mutex::new(initial_set));
@@ -1219,31 +1216,6 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                     let wav = result.wav;
                     tauri::async_runtime::spawn(async move {
                         process_pipeline(handle_for_task, cfg, wav, meta, duration_ms).await;
-                    });
-                }
-                HotkeyEvent::DefaultTransformTriggered => {
-                    let state = handle.state::<AppState>();
-                    let cfg = state.config.lock().clone();
-                    if !cfg.has_api_key() {
-                        emit_status(
-                            &handle,
-                            "error",
-                            Some("Set your Groq API key in Settings first.".into()),
-                        );
-                        notify(&handle, "Bulbul", "Set your Groq API key in Settings first.");
-                        show_settings(&handle);
-                        continue;
-                    }
-                    let transform = match db::get_default_transform(&state.db) {
-                        Ok(t) => Some(t),
-                        Err(e) => {
-                            tracing::warn!("no default transform: {e:#}");
-                            None
-                        }
-                    };
-                    let handle_for_task = handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        transform_pipeline(handle_for_task, cfg, transform).await;
                     });
                 }
                 HotkeyEvent::TransformTriggered(transform_id) => {
