@@ -2,9 +2,20 @@ use crate::config::{CleanupMode, Config};
 use anyhow::{anyhow, Context, Result};
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const BASE_URL: &str = "https://api.groq.com/openai/v1";
+
+/// One reqwest Client for the whole app lifetime — reusing TCP+TLS sessions
+/// across STT, cleanup, transform and validate calls. Doesn't change what we
+/// send to Groq (request count, prompt size, token billing are all identical
+/// — Groq accounts per-request, not per-connection). It just skips the
+/// handshake bytes on every dictation after the first.
+fn shared_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
 
 /// Hard cap on attempts (1 initial + 3 retries) before giving up on a
 /// rate-limited or transiently-failing Groq request.
@@ -138,7 +149,7 @@ pub async fn transcribe(
     if !cfg.has_api_key() {
         return Err(anyhow!("Groq API key not set"));
     }
-    let client = reqwest::Client::new();
+    let client = shared_client();
     let url = format!("{BASE_URL}/audio/transcriptions");
     // Rebuilt per attempt: a multipart Form is consumed on send, so retries
     // need a fresh body (the wav bytes are cloned each time).
@@ -257,7 +268,7 @@ pub async fn cleanup(
         temperature: 0.2,
     };
 
-    let client = reqwest::Client::new();
+    let client = shared_client();
     let url = format!("{BASE_URL}/chat/completions");
     let make = || {
         client
@@ -308,7 +319,7 @@ pub async fn execute_transform(
         temperature: 0.3,
     };
 
-    let client = reqwest::Client::new();
+    let client = shared_client();
     let url = format!("{BASE_URL}/chat/completions");
     let make = || {
         client
@@ -375,7 +386,7 @@ pub async fn generate_voice_profile(
         temperature: 0.4,
     };
 
-    let client = reqwest::Client::new();
+    let client = shared_client();
     let url = format!("{BASE_URL}/chat/completions");
     let make = || {
         client
@@ -409,7 +420,7 @@ pub async fn generate_voice_profile(
 
 /// Cheap call to confirm the API key works. Returns Ok(()) if Groq accepts it.
 pub async fn validate_key(api_key: &str) -> Result<()> {
-    let client = reqwest::Client::new();
+    let client = shared_client();
     let resp = client
         .get(format!("{BASE_URL}/models"))
         .bearer_auth(api_key)

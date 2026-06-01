@@ -3,7 +3,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use parking_lot::Mutex;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Captures audio from the system default input device.
 /// Each call to start() resolves the default device fresh, so users can
@@ -146,9 +146,20 @@ impl Recorder {
             );
         }
 
+        // Resample to 16 kHz — Whisper's internal rate, so we're not throwing
+        // away anything by doing it locally with a proper anti-alias filter
+        // instead of uploading the full-rate WAV and letting Whisper downsample
+        // on its end. Cuts the upload payload to ~1/3 on a 48 kHz mic. Mics
+        // with other native rates pass through unchanged.
+        let (final_samples, out_rate) = if self.sample_rate == 48000 {
+            (decimate_48k_to_16k(&normalized), 16000u32)
+        } else {
+            (normalized, self.sample_rate)
+        };
+
         let spec = hound::WavSpec {
             channels: 1,
-            sample_rate: self.sample_rate,
+            sample_rate: out_rate,
             bits_per_sample: 16,
             sample_format: hound::SampleFormat::Int,
         };
@@ -156,7 +167,7 @@ impl Recorder {
         let mut buf = Cursor::new(Vec::<u8>::new());
         {
             let mut writer = hound::WavWriter::new(&mut buf, spec).context("creating WAV writer")?;
-            for s in normalized {
+            for s in final_samples {
                 writer.write_sample(s)?;
             }
             writer.finalize()?;
@@ -226,4 +237,66 @@ fn normalize_peak(mut samples: Vec<i16>, target_dbfs: f32, max_gain: f32) -> (Ve
         *s = v as i16;
     }
     (samples, gain)
+}
+
+/// 48 kHz → 16 kHz decimate-by-3 with a Hamming-windowed sinc anti-alias
+/// filter (33 taps, cutoff ~8 kHz). Speech sits below 8 kHz so nothing
+/// useful is dropped; the upload becomes 3× smaller, which is the whole
+/// point. Whisper resamples to 16 kHz internally anyway — we're just doing
+/// the conversion locally so we don't pay upload time on bytes Whisper
+/// would discard.
+fn decimate_48k_to_16k(input: &[i16]) -> Vec<i16> {
+    let coeffs = lp_coefficients_48_to_16();
+    let n_taps = coeffs.len();
+    let center = n_taps / 2; // integer; coefficients are symmetric
+    let out_len = input.len() / 3;
+    let mut output = Vec::with_capacity(out_len);
+    for k in 0..out_len {
+        let center_in = (k * 3 + center) as isize;
+        let mut sum = 0.0f32;
+        for j in 0..n_taps {
+            let idx = center_in + j as isize - center as isize;
+            if idx >= 0 && (idx as usize) < input.len() {
+                sum += input[idx as usize] as f32 * coeffs[j];
+            }
+        }
+        let v = sum.clamp(i16::MIN as f32, i16::MAX as f32);
+        output.push(v as i16);
+    }
+    output
+}
+
+/// Cached low-pass FIR coefficients for the 48 → 16 kHz decimator above.
+/// Computed once on first dictation, reused forever. 33-tap Hamming-windowed
+/// sinc at fc = 1/6 of the input rate (i.e. 8 kHz at 48 kHz input), with
+/// DC gain normalised to 1.0.
+fn lp_coefficients_48_to_16() -> &'static [f32; 33] {
+    static COEFFS: OnceLock<[f32; 33]> = OnceLock::new();
+    COEFFS.get_or_init(|| {
+        const N: usize = 33;
+        const FC: f32 = 1.0 / 6.0;
+        let center = (N as f32 - 1.0) / 2.0;
+        let mut c = [0.0f32; N];
+        let mut sum = 0.0f32;
+        for i in 0..N {
+            let x = i as f32 - center;
+            let sinc = if x.abs() < f32::EPSILON {
+                2.0 * FC
+            } else {
+                (2.0 * std::f32::consts::PI * FC * x).sin() / (std::f32::consts::PI * x)
+            };
+            let w = 0.54
+                - 0.46
+                    * (2.0 * std::f32::consts::PI * i as f32 / (N as f32 - 1.0)).cos();
+            c[i] = sinc * w;
+            sum += c[i];
+        }
+        // Normalise DC gain to 1.0 so the resampled signal keeps the same
+        // amplitude as the input — important because AGC has already set
+        // the peak to TARGET_PEAK_DBFS and we don't want to undo that.
+        for x in c.iter_mut() {
+            *x /= sum;
+        }
+        c
+    })
 }
