@@ -112,12 +112,11 @@ pub struct Config {
 }
 
 fn default_polish_hotkey() -> String {
-    // Mirrors default_hotkey() with P appended — so on a fresh install the
-    // user only learns one combo (their dictation hotkey) and the polish
-    // hotkey is its muscle-memory-aware cousin. If they change dictation
-    // later, save_config (in lib.rs) re-derives this automatically as long
-    // as polish still equals dictation_modifiers + P.
-    "Ctrl+Win+P".to_string()
+    // Shift+Alt+P. Chosen to NOT share modifiers with the typical
+    // hold-to-talk dictation chord (which uses Win) — so the
+    // modifier-chord watcher and this RegisterHotKey combo never race.
+    // Also avoids Ctrl+Shift+P, which is the VSCode command palette.
+    "Shift+Alt+P".to_string()
 }
 
 fn default_hotkey() -> String {

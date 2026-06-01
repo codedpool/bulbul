@@ -15,11 +15,10 @@ const FIRE_COOLDOWN_MS: u128 = 700;
 /// How often the release poller checks the dictation hotkey's key state.
 const RELEASE_POLL_MS: u64 = 25;
 /// How long both modifiers of a modifier-only chord (e.g. Ctrl+Win) must
-/// be held before we treat it as a dictation request. Long enough that the
-/// user has time to add a third key (P for polish dictation) and have the
-/// RegisterHotKey plugin fire that 3-key combo instead — the watcher will
-/// see the extension key during arming and back off.
-const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 200;
+/// be held before we treat it as a dictation request. Short enough to feel
+/// snappy, long enough that brushing both keys for unrelated reasons
+/// (Ctrl+Win+arrow to switch desktop, etc.) doesn't fire dictation.
+const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 80;
 
 #[derive(Clone, Debug)]
 pub enum HotkeyEvent {
@@ -219,17 +218,9 @@ fn required_mods_held(need: &ParsedHotkey, state: (bool, bool, bool, bool)) -> b
 /// modifiers have been held for MODIFIER_CHORD_DEBOUNCE_MS, and
 /// DictationReleased the instant either is released. Stops when `alive`
 /// is set to false (settings change → re_register swaps in a new watcher).
-///
-/// `extension_vk` is the polish hotkey's non-modifier key (e.g. P). When
-/// the user holds the same modifier chord plus that key, RegisterHotKey
-/// will fire the polish 3-key combo via the plugin — so the chord watcher
-/// must back off and not steal the chord for dictation. Detect by checking
-/// the extension key's state during the arming window; if it's pressed,
-/// go straight back to Idle.
 fn spawn_modifier_chord_watcher(
     tx: Sender<HotkeyEvent>,
     hotkey: ParsedHotkey,
-    extension_vk: Option<i32>,
     alive: Arc<AtomicBool>,
 ) {
     thread::spawn(move || {
@@ -264,16 +255,6 @@ fn spawn_modifier_chord_watcher(
                 State::Arming(start) => {
                     if !held {
                         // Released before the debounce — treat as noise.
-                        state = State::Idle;
-                    } else if extension_vk.map_or(false, is_key_down) {
-                        // Chord plus the polish hotkey's key — RegisterHotKey
-                        // will fire polish via the plugin. Back off and cool
-                        // down so we don't immediately re-arm while the user
-                        // is mid-polish.
-                        tracing::debug!(
-                            "modifier-chord: extension key held, deferring to polish"
-                        );
-                        last_fire = Some(Instant::now());
                         state = State::Idle;
                     } else if start.elapsed().as_millis()
                         >= MODIFIER_CHORD_DEBOUNCE_MS as u128
@@ -407,31 +388,13 @@ fn re_register(
     // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
     // plugin's RegisterHotKey backend can't represent these, so we run a
     // background polling thread that watches the modifier state directly.
-    // If the polish hotkey shares the same modifier chord (e.g. polish =
-    // Ctrl+Win+P), pass its non-modifier key so the watcher backs off
-    // when that key is also held — letting the RegisterHotKey plugin
-    // fire the 3-key combo for polish instead of stealing the chord.
     if snapshot.dictation.is_modifier_chord() {
-        let extension_vk = if is_polish_extension_of_dictation(
-            &snapshot.polish_dictation,
-            &snapshot.dictation,
-        ) {
-            snapshot.polish_dictation.key.as_deref().and_then(key_name_to_vk)
-        } else {
-            None
-        };
         let alive = Arc::new(AtomicBool::new(true));
         *modifier_chord_alive_slot().lock() = Some(alive.clone());
-        spawn_modifier_chord_watcher(
-            tx.clone(),
-            snapshot.dictation.clone(),
-            extension_vk,
-            alive,
-        );
+        spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone(), alive);
         tracing::info!(
-            "registered dictation (modifier-chord watcher): {:?} (extension_vk={:?})",
-            snapshot.dictation,
-            extension_vk
+            "registered dictation (modifier-chord watcher): {:?}",
+            snapshot.dictation
         );
     }
     // Dictation, branch B: regular combo with a non-modifier key
@@ -627,38 +590,6 @@ fn derive_slot_number(h: &ParsedHotkey) -> Option<u8> {
     } else {
         None
     }
-}
-
-/// Build the canonical "polish dictation" combo from a dictation hotkey:
-/// same modifier set, with `P` as the non-modifier key. Used as both the
-/// default polish_hotkey on fresh installs and the auto-track value when
-/// the user changes their dictation hotkey while polish was still the
-/// derived combo.
-pub fn derive_polish_combo(dictation: &ParsedHotkey) -> String {
-    let mut p = dictation.clone();
-    p.key = Some("P".to_string());
-    format_combo(&p)
-}
-
-/// True when polish shares dictation's modifier set and has any non-modifier
-/// key — the case where the modifier-chord watcher would steal the
-/// RegisterHotKey 3-key combo unless it watches for that key.
-fn is_polish_extension_of_dictation(polish: &ParsedHotkey, dictation: &ParsedHotkey) -> bool {
-    polish.key.is_some()
-        && polish.ctrl == dictation.ctrl
-        && polish.shift == dictation.shift
-        && polish.alt == dictation.alt
-        && polish.meta == dictation.meta
-}
-
-/// True if `polish` is exactly the modifier set of `dictation` with key P
-/// — i.e. the user hasn't customised it away from the auto-derived form.
-pub fn is_auto_derived_polish_for(polish: &ParsedHotkey, dictation: &ParsedHotkey) -> bool {
-    polish.ctrl == dictation.ctrl
-        && polish.shift == dictation.shift
-        && polish.alt == dictation.alt
-        && polish.meta == dictation.meta
-        && polish.key.as_deref() == Some("P")
 }
 
 fn format_combo(h: &ParsedHotkey) -> String {

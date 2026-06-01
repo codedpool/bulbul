@@ -329,7 +329,7 @@ fn get_config(state: tauri::State<'_, AppState>) -> Config {
 
 #[tauri::command]
 fn save_config(
-    mut new_cfg: Config,
+    new_cfg: Config,
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -342,25 +342,6 @@ fn save_config(
             cfg.theme.clone(),
         )
     };
-    // Auto-track polish hotkey to dictation modifiers + P. Triggers only
-    // when (a) the previous polish was exactly the auto-derived form
-    // (user hadn't customised it away), (b) the caller didn't separately
-    // touch polish in this save, and (c) dictation actually changed. So
-    // changing dictation in Settings carries the polish hotkey with it,
-    // but an explicit polish edit anywhere stops the auto-track for good.
-    if new_cfg.hotkey != prev_hotkey && new_cfg.polish_hotkey == prev_pol {
-        let prev_dict_parsed = hotkey::ParsedHotkey::parse(&prev_hotkey);
-        let prev_pol_parsed = hotkey::ParsedHotkey::parse(&prev_pol);
-        if hotkey::is_auto_derived_polish_for(&prev_pol_parsed, &prev_dict_parsed) {
-            let next_dict_parsed = hotkey::ParsedHotkey::parse(&new_cfg.hotkey);
-            new_cfg.polish_hotkey = hotkey::derive_polish_combo(&next_dict_parsed);
-            tracing::info!(
-                "auto-track polish_hotkey: {} → {}",
-                prev_pol,
-                new_cfg.polish_hotkey
-            );
-        }
-    }
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
     let next_has_key = new_cfg.has_api_key();
     let next_hotkey = new_cfg.hotkey.clone();
