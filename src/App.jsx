@@ -93,6 +93,7 @@ function App() {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [autostart, setAutostart] = useState(false);
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches
   );
@@ -114,6 +115,7 @@ function App() {
       if (!cfg.privacy_acknowledged) setShowPrivacy(true);
       if (!cfg.has_api_key && !cfg.groq_api_key) setSection("settings");
     });
+    invoke("get_autostart").then(setAutostart).catch(() => {});
     const un = listen("bulbul-status", (e) => setStatus(e.payload));
     const onKey = (e) => {
       if (e.key === "Escape") getCurrentWindow().hide();
@@ -128,6 +130,15 @@ function App() {
   async function updateConfig(next) {
     await invoke("save_config", { newCfg: next });
     setConfig(next);
+  }
+
+  async function toggleAutostart(next) {
+    try {
+      await invoke("set_autostart", { enabled: next });
+      setAutostart(next);
+    } catch (e) {
+      console.error("autostart toggle failed", e);
+    }
   }
 
   function setThemePref(pref) {
@@ -186,6 +197,17 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-footer">
+          <label className="sidebar-toggle-row" title="Start Bulbul automatically when Windows starts">
+            <span className="sidebar-toggle-label">Run at startup</span>
+            <span className={`toggle ${autostart ? "on" : ""}`}>
+              <input
+                type="checkbox"
+                checked={autostart}
+                onChange={(e) => toggleAutostart(e.target.checked)}
+              />
+              <span className="toggle-thumb" />
+            </span>
+          </label>
           <div className={`status status-${status.state}`}>
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
