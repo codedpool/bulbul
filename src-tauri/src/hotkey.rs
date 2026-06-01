@@ -592,6 +592,27 @@ fn derive_slot_number(h: &ParsedHotkey) -> Option<u8> {
     }
 }
 
+/// Build the canonical "polish dictation" combo from a dictation hotkey:
+/// same modifier set, with `P` as the non-modifier key. Used as both the
+/// default polish_hotkey on fresh installs and the auto-track value when
+/// the user changes their dictation hotkey while polish was still the
+/// derived combo.
+pub fn derive_polish_combo(dictation: &ParsedHotkey) -> String {
+    let mut p = dictation.clone();
+    p.key = Some("P".to_string());
+    format_combo(&p)
+}
+
+/// True if `polish` is exactly the modifier set of `dictation` with key P
+/// — i.e. the user hasn't customised it away from the auto-derived form.
+pub fn is_auto_derived_polish_for(polish: &ParsedHotkey, dictation: &ParsedHotkey) -> bool {
+    polish.ctrl == dictation.ctrl
+        && polish.shift == dictation.shift
+        && polish.alt == dictation.alt
+        && polish.meta == dictation.meta
+        && polish.key.as_deref() == Some("P")
+}
+
 fn format_combo(h: &ParsedHotkey) -> String {
     let mut parts: Vec<String> = Vec::new();
     if h.ctrl {

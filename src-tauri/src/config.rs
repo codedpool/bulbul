@@ -112,10 +112,12 @@ pub struct Config {
 }
 
 fn default_polish_hotkey() -> String {
-    // Win+Alt+P. Win as the lead modifier keeps the Alt-menu-flash that
-    // would otherwise eat the keystroke from happening. Held to record,
-    // released to transcribe with CleanupMode::Polished forced.
-    "Win+Alt+P".to_string()
+    // Mirrors default_hotkey() with P appended — so on a fresh install the
+    // user only learns one combo (their dictation hotkey) and the polish
+    // hotkey is its muscle-memory-aware cousin. If they change dictation
+    // later, save_config (in lib.rs) re-derives this automatically as long
+    // as polish still equals dictation_modifiers + P.
+    "Ctrl+Win+P".to_string()
 }
 
 fn default_hotkey() -> String {
