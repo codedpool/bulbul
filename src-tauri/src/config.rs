@@ -92,7 +92,7 @@ pub struct Config {
     #[serde(default = "default_learn_corrections")]
     pub learn_corrections: bool,
 
-    /// UI theme preference: "dark" (default) | "light" | "system".
+    /// UI theme preference: "light" (default) | "dark" | "system".
     #[serde(default = "default_theme")]
     pub theme: String,
 
@@ -138,7 +138,7 @@ fn default_language() -> String {
 fn default_style_enabled() -> bool { true }
 fn default_personalize_cleanup() -> bool { true }
 fn default_learn_corrections() -> bool { true }
-fn default_theme() -> String { "dark".to_string() }
+fn default_theme() -> String { "light".to_string() }
 fn default_style_personal() -> String { "casual".to_string() }
 fn default_style_work() -> String { "casual".to_string() }
 fn default_style_email() -> String { "formal".to_string() }

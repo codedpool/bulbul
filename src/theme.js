@@ -10,17 +10,17 @@ const STORAGE_KEY = "bulbul-theme";
 const ANIM_CLASS = "theme-anim";
 const ANIM_MS = 480;
 const mq = window.matchMedia("(prefers-color-scheme: dark)");
-let currentPref = "dark";
+let currentPref = "light";
 let listenersWired = false;
 let animTimer = null;
 
 function resolve(pref) {
   if (pref === "system") return mq.matches ? "dark" : "light";
-  return pref === "light" ? "light" : "dark";
+  return pref === "dark" ? "dark" : "light";
 }
 
 function setAttr(pref) {
-  currentPref = pref === "light" || pref === "system" ? pref : "dark";
+  currentPref = pref === "dark" || pref === "system" ? pref : "light";
   document.documentElement.setAttribute("data-theme", resolve(currentPref));
   try {
     localStorage.setItem(STORAGE_KEY, currentPref);
@@ -69,9 +69,9 @@ export function applyTheme(pref) {
  */
 export function initTheme() {
   // Synchronous prime from cache — happens before any await.
-  let cached = "dark";
+  let cached = "light";
   try {
-    cached = localStorage.getItem(STORAGE_KEY) || "dark";
+    cached = localStorage.getItem(STORAGE_KEY) || "light";
   } catch {}
   setAttr(cached);
 
@@ -79,11 +79,11 @@ export function initTheme() {
     listenersWired = true;
     if (mq.addEventListener) mq.addEventListener("change", onSystemChange);
     else if (mq.addListener) mq.addListener(onSystemChange);
-    listen("theme-changed", (e) => setAttrAnimated(e.payload || "dark")).catch(() => {});
+    listen("theme-changed", (e) => setAttrAnimated(e.payload || "light")).catch(() => {});
   }
 
   // Reconcile with the source of truth (config) in the background.
   invoke("get_config")
-    .then((cfg) => setAttr(cfg?.theme || "dark"))
+    .then((cfg) => setAttr(cfg?.theme || "light"))
     .catch(() => {});
 }

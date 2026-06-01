@@ -153,9 +153,9 @@ function App() {
 
   if (!config) return <div className="loading">Loading…</div>;
 
-  const themePref = config.theme || "dark";
+  const themePref = config.theme || "light";
   const resolvedTheme =
-    themePref === "system" ? (systemDark ? "dark" : "light") : themePref === "light" ? "light" : "dark";
+    themePref === "system" ? (systemDark ? "dark" : "light") : themePref === "dark" ? "dark" : "light";
 
   if (!config.onboarding_completed) {
     return (

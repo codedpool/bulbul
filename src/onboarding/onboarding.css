@@ -368,6 +368,30 @@
 
 .onb-video-link:hover { color: #5ec8c0; }
 
+/* ─────────── Appearance block (API key step) ─────────── */
+.onb-theme-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--fill);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.onb-theme-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.onb-theme-seg {
+  width: auto;
+  min-width: 260px;
+}
+
 /* ─────────── Hotkey step ─────────── */
 .onb-hotkey-grid {
   display: grid;
@@ -523,16 +547,6 @@
   border-radius: 4px;
 }
 
-.onb-textarea-wrap {
-  position: relative;
-  transition: box-shadow 200ms ease;
-  border-radius: 10px;
-}
-
-.onb-textarea-wrap.listening {
-  box-shadow: 0 0 0 3px rgba(94, 200, 192, 0.18);
-}
-
 .onb-textarea {
   width: 100%;
   min-height: 96px;
@@ -544,7 +558,7 @@
   font: inherit;
   font-size: 14px;
   line-height: 1.55;
-  resize: vertical;
+  resize: none;
   outline: none;
   transition: border-color 120ms ease;
   -webkit-user-select: text;
@@ -553,35 +567,6 @@
 
 .onb-textarea:focus { border-color: #5ec8c0; }
 .onb-textarea::placeholder { color: var(--text-faint); }
-
-.onb-listening-badge {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  color: #5ec8c0;
-  background: rgba(94, 200, 192, 0.10);
-  border: 1px solid rgba(94, 200, 192, 0.25);
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-weight: 500;
-}
-
-.onb-pulse {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #5ec8c0;
-  animation: onbPulse 1.4s ease-in-out infinite;
-}
-
-@keyframes onbPulse {
-  0%, 100% { opacity: 0.4; transform: scale(0.85); }
-  50% { opacity: 1; transform: scale(1.15); }
-}
 
 .onb-test-foot {
   display: flex;

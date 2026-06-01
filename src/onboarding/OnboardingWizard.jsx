@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
@@ -37,21 +36,21 @@ const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/9VDbhptCzlU";
 // pass visibly removes them — the user sees Bulbul not just transcribe but
 // clean. If they're on Raw mode every filler stays, which is also useful
 // feedback ("ah, that's what Raw mode means").
-const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test — and like, it looks great.";
+const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test, and like, it looks great.";
 
 export default function OnboardingWizard({ config, updateConfig, onComplete }) {
   const [step, setStep] = useState(0);
   const totalSteps = 4;
 
-  const themePref = config.theme || "dark";
+  const themePref = config.theme || "light";
   const resolvedTheme =
     themePref === "system"
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
         ? "dark"
         : "light"
-      : themePref === "light"
-      ? "light"
-      : "dark";
+      : themePref === "dark"
+      ? "dark"
+      : "light";
 
   function toggleTheme() {
     const next = resolvedTheme === "dark" ? "light" : "dark";
@@ -164,6 +163,12 @@ function StepWelcome({ onNext }) {
   );
 }
 
+const THEME_OPTIONS = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
+];
+
 function StepApiKey({ config, updateConfig, onBack, onNext }) {
   const [keyValue, setKeyValue] = useState(config.groq_api_key || "");
   const [keyState, setKeyState] = useState(
@@ -226,7 +231,7 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
             value={keyValue}
             onChange={(e) => { setKeyValue(e.target.value); setKeyState("idle"); setKeyError(""); }}
             onPaste={handlePaste}
-            onBlur={() => validateAndSave()}
+            onBlur={() => { if (keyState !== "valid" && keyState !== "checking") validateAndSave(); }}
             spellCheck={false}
             autoFocus
           />
@@ -284,6 +289,25 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         )}
       </div>
 
+      <div className="onb-theme-block">
+        <div className="onb-theme-label">Appearance</div>
+        <div className="segmented onb-theme-seg">
+          {THEME_OPTIONS.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              className={`segmented-btn ${(config.theme || "light") === t.value ? "selected" : ""}`}
+              onClick={() => {
+                applyTheme(t.value);
+                updateConfig({ ...config, theme: t.value });
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="onb-actions">
         <button className="onb-btn ghost" onClick={onBack}>← Back</button>
         <button
@@ -304,25 +328,12 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
     !matchPreset(config.hotkey).match ? config.hotkey : ""
   );
   const [capturing, setCapturing] = useState(false);
-  const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const textareaRef = useRef(null);
 
   const activeHotkey = selected.value === "custom"
     ? (customCombo || config.hotkey)
     : selected.value;
-
-  useEffect(() => {
-    let unlistenStatus = null;
-    (async () => {
-      unlistenStatus = await listen("bulbul-status", (e) => {
-        const s = e.payload?.state;
-        if (s === "listening") setListening(true);
-        if (s === "idle" || s === "processing") setListening(false);
-      });
-    })();
-    return () => { if (unlistenStatus) unlistenStatus(); };
-  }, []);
 
   // Keep the textarea focused so the existing Win32 SendInput inject path
   // delivers the transcript right into it after a dictation.
@@ -332,7 +343,6 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
 
   async function choose(value) {
     setTranscript("");
-    setListening(false);
     const next = HOTKEY_PRESETS.find((p) => p.value === value) || HOTKEY_PRESETS[0];
     setSelected(next);
     if (value !== "custom") {
@@ -431,27 +441,17 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
             <div className="onb-sample-line">"{SAMPLE_LINE}"</div>
           </div>
 
-          <div className={`onb-textarea-wrap ${listening ? "listening" : ""}`}>
-            <textarea
-              ref={textareaRef}
-              className="onb-textarea"
-              placeholder="Hold your hotkey, speak, and the transcript will land here…"
-              onChange={(e) => setTranscript(e.target.value)}
-              spellCheck={false}
-            />
-            {listening && (
-              <div className="onb-listening-badge">
-                <span className="onb-pulse" />
-                Listening…
-              </div>
-            )}
-          </div>
+          <textarea
+            ref={textareaRef}
+            className="onb-textarea"
+            placeholder="Hold your hotkey, speak, and the transcript will land here…"
+            onChange={(e) => setTranscript(e.target.value)}
+            spellCheck={false}
+          />
 
           <div className="onb-test-foot">
             {transcript.trim().length > 0 ? (
               <span className="onb-ok">✓ Dictation works — that's your transcript.</span>
-            ) : listening ? (
-              <span className="onb-muted">Speak the line above…</span>
             ) : (
               <span className="onb-muted">No transcript yet. Hold the keys for a moment.</span>
             )}

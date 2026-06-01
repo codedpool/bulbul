@@ -79,7 +79,7 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
 
   const hasKey = config.groq_api_key && config.groq_api_key.trim().length > 0;
   const activeMode = MODES.find((m) => m.value === config.mode) || MODES[1];
-  const activeTheme = config.theme || "dark";
+  const activeTheme = config.theme || "light";
 
   async function saveKey() {
     setKeyState("checking");
