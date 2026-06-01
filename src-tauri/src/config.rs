@@ -34,13 +34,27 @@ impl CleanupMode {
                 "Fix only obvious transcription errors. Keep every word and every disfluency."
             }
             CleanupMode::Clean => {
-                "Remove filler words (um, uh, like, you know). Fix punctuation and capitalization. Preserve meaning exactly. Do not paraphrase."
+                "Remove filler words (um, uh, like, you know). Fix punctuation and capitalization. Preserve meaning exactly. Do not paraphrase.\n\n\
+                 Bullet-list detection: if the speaker is clearly enumerating distinct items (signalled by 'first ... second ... third ...', 'one ... two ... three ...', 'and another thing ...', 'also ...', or a bare list of nouns), format the items as a markdown bullet list, one item per line, prefixed with '- '. Drop the enumerator words themselves. Do NOT bulletize ordinary prose, single-sentence answers, or examples woven into a sentence."
             }
             CleanupMode::Polished => {
-                "Rewrite into clean, natural prose. Remove self-corrections and filler. Fix flow. Keep the speaker's original intent and key facts. Return only the rewritten text."
+                "Rewrite into clean, natural prose. Remove self-corrections and filler. Fix flow. Keep the speaker's original intent and key facts. Return only the rewritten text.\n\n\
+                 Bullet-list detection: if the speaker is clearly enumerating distinct items (signalled by 'first ... second ... third ...', 'one ... two ... three ...', 'and another thing ...', 'also ...', or a bare list of nouns), format the items as a markdown bullet list, one item per line, prefixed with '- '. Drop the enumerator words themselves. Do NOT bulletize ordinary prose, single-sentence answers, or examples woven into a sentence."
             }
         }
     }
+}
+
+/// User-defined mapping from a foreground executable to a Style category.
+/// Overrides Bulbul's built-in `style_category_for_app` defaults, so a user
+/// can route e.g. "Cursor.exe" to "work" instead of "other".
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppOverride {
+    /// Executable name, with or without the .exe suffix. Matched
+    /// case-insensitively against the foreground process's image name.
+    pub exe: String,
+    /// One of "personal" | "work" | "email" | "other".
+    pub category: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -94,6 +108,12 @@ pub struct Config {
     pub style_email: String,
     #[serde(default = "default_style_other")]
     pub style_other: String,
+
+    /// User-defined exe → category overrides. Empty by default; users add
+    /// rows from the Style page when the built-in mappings don't cover an
+    /// app they care about (e.g. routing "Cursor.exe" to work).
+    #[serde(default)]
+    pub style_app_overrides: Vec<AppOverride>,
 
     #[serde(default = "default_personalize_cleanup")]
     pub personalize_cleanup: bool,
@@ -171,6 +191,81 @@ pub fn style_modifier(style: &str) -> Option<&'static str> {
     }
 }
 
+/// Map an executable name (e.g. "Code.exe") to a human-readable app name
+/// the LLM is likely to recognize from its training data. This becomes the
+/// venue hint we append to the cleanup system prompt so the model can adapt
+/// formatting conventions (markdown in Slack vs. literal punctuation in a
+/// shell vs. paragraphs in Outlook).
+///
+/// Returns the bare stem (e.g. "Foo" for "Foo.exe") when the exe isn't in
+/// the curated table — better to surface *something* and let the model use
+/// its world knowledge than to silently drop the signal.
+pub fn friendly_app_name(exe: &str) -> String {
+    let lower = exe.to_lowercase();
+    let stem = lower.trim_end_matches(".exe");
+    let mapped = match stem {
+        // Editors / IDEs
+        "code" => "VS Code",
+        "cursor" => "Cursor",
+        "windsurf" => "Windsurf",
+        "devenv" => "Visual Studio",
+        "idea64" | "idea" => "IntelliJ IDEA",
+        "pycharm64" | "pycharm" => "PyCharm",
+        "webstorm64" | "webstorm" => "WebStorm",
+        "sublime_text" => "Sublime Text",
+        // Shells / terminals
+        "windowsterminal" => "Windows Terminal",
+        "pwsh" => "PowerShell",
+        "powershell" => "Windows PowerShell",
+        "cmd" => "Command Prompt",
+        "wezterm-gui" | "wezterm" => "WezTerm",
+        "alacritty" => "Alacritty",
+        // Chat / collab
+        "slack" => "Slack",
+        "teams" | "ms-teams" => "Microsoft Teams",
+        "discord" => "Discord",
+        "whatsapp" => "WhatsApp",
+        "telegram" => "Telegram",
+        "signal" => "Signal",
+        "messenger" => "Messenger",
+        "zoom" => "Zoom",
+        // Email
+        "outlook" => "Outlook",
+        "thunderbird" => "Thunderbird",
+        "hostedgmaildesktopapp" => "Gmail",
+        // Browsers (weak signal — let the model decide)
+        "chrome" => "Google Chrome",
+        "msedge" => "Microsoft Edge",
+        "firefox" => "Firefox",
+        "brave" => "Brave",
+        "arc" => "Arc",
+        // Notes / docs
+        "notion" => "Notion",
+        "obsidian" => "Obsidian",
+        "evernote" => "Evernote",
+        "winword" => "Microsoft Word",
+        "excel" => "Microsoft Excel",
+        "powerpnt" => "Microsoft PowerPoint",
+        "onenote" => "OneNote",
+        "notepad" => "Notepad",
+        // Other
+        "linear" => "Linear",
+        "figma" => "Figma",
+        _ => "",
+    };
+    if !mapped.is_empty() {
+        return mapped.to_string();
+    }
+    // Fallback: strip the trailing .exe (case-insensitively) from the
+    // original input so we keep the user's case (e.g. "MyApp" not "myapp").
+    if let Some(idx) = exe.to_lowercase().rfind(".exe") {
+        if idx == exe.len() - 4 {
+            return exe[..idx].to_string();
+        }
+    }
+    exe.to_string()
+}
+
 /// Map an executable name (e.g. "WhatsApp.exe") to a Style category.
 /// Mirrors the Insights categorization but coarser — we only care about
 /// personal / work / email / other for Style.
@@ -204,6 +299,7 @@ impl Default for Config {
             style_work: default_style_work(),
             style_email: default_style_email(),
             style_other: default_style_other(),
+            style_app_overrides: Vec::new(),
             personalize_cleanup: default_personalize_cleanup(),
             learn_corrections: default_learn_corrections(),
             theme: default_theme(),
@@ -220,6 +316,30 @@ impl Config {
             "email" => &self.style_email,
             _ => &self.style_other,
         }
+    }
+
+    /// Resolve a foreground executable to a Style category, consulting the
+    /// user's overrides first and falling back to the built-in mapping.
+    /// Matching is case-insensitive on the stem (so "code.exe", "Code.exe"
+    /// and "Code" all hit the same override).
+    pub fn category_for_app(&self, exe: Option<&str>) -> &'static str {
+        if let Some(name) = exe {
+            let stem = name.to_lowercase();
+            let stem = stem.trim_end_matches(".exe");
+            for ov in &self.style_app_overrides {
+                let ov_stem = ov.exe.to_lowercase();
+                let ov_stem = ov_stem.trim_end_matches(".exe");
+                if !ov_stem.is_empty() && ov_stem == stem {
+                    return match ov.category.as_str() {
+                        "personal" => "personal",
+                        "work" => "work",
+                        "email" => "email",
+                        _ => "other",
+                    };
+                }
+            }
+        }
+        style_category_for_app(exe)
     }
 }
 

@@ -222,6 +222,7 @@ pub async fn cleanup(
     cfg: &Config,
     transcript: &str,
     style_extra: Option<&str>,
+    app_context: Option<&str>,
     notify: Option<&RetryNotify<'_>>,
 ) -> Result<String> {
     if matches!(cfg.mode, CleanupMode::Raw) {
@@ -234,6 +235,15 @@ pub async fn cleanup(
     let style_block = style_extra
         .map(|s| format!("\n\n{}", s))
         .unwrap_or_default();
+    // App-venue hint: tells the model where the cleaned text is going to be
+    // pasted so it can adapt formatting (markdown in Slack vs. literal
+    // punctuation in a shell vs. paragraphs in Outlook) without us having
+    // to enumerate per-app rules. Sits between style and the language
+    // critical so situational context is in scope when the model decides
+    // formatting, but the absolute language rule still has primacy.
+    let app_block = app_context
+        .map(|s| format!("\n\n{}", s))
+        .unwrap_or_default();
     // The language-preservation clause is load-bearing: without it,
     // `llama-3.1-8b-instant` happily translates Hindi (or any non-English)
     // input into English because its instruction-tuning is English-heavy
@@ -241,7 +251,7 @@ pub async fn cleanup(
     // Wording is deliberately direct — softer phrasings leak.
     let system = format!(
         "You are a voice dictation editor. The user just spoke the following text. \
-         {mode}{style}\n\n\
+         {mode}{style}{app}\n\n\
          CRITICAL: Never translate between languages. The output must be in the \
          same language as the speaker used. If the user spoke Hindi, output Hindi \
          (Devanagari script or romanized Hinglish in Latin script — either is \
@@ -251,6 +261,7 @@ pub async fn cleanup(
          Return ONLY the cleaned text. No preamble, no quotes, no commentary.",
         mode = cfg.mode.system_instruction(),
         style = style_block,
+        app = app_block,
     );
 
     let request = ChatRequest {

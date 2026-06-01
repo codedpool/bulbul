@@ -1546,7 +1546,7 @@ async fn process_pipeline(
     // instructions rather than one run-on block.
     let mut style_parts: Vec<String> = Vec::new();
     if cfg.style_enabled {
-        let category = config::style_category_for_app(meta.foreground_app.as_deref());
+        let category = cfg.category_for_app(meta.foreground_app.as_deref());
         let key = cfg.style_for_category(category);
         if let Some(m) = config::style_modifier(key) {
             style_parts.push(m.to_string());
@@ -1583,8 +1583,36 @@ async fn process_pipeline(
         Some(style_parts.join("\n\n"))
     };
 
+    // Venue hint: tell the cleanup model which app the text is being pasted
+    // into so it can adapt formatting conventions (no markdown in shells,
+    // paragraphs in email, terse in chat) without us authoring per-app rules.
+    // Gated on the same toggle as Style — flipping that off disables all
+    // per-app behavior in one switch.
+    let app_context: Option<String> = if cfg.style_enabled {
+        meta.foreground_app.as_deref().map(|exe| {
+            let name = config::friendly_app_name(exe);
+            format!(
+                "Venue: The user's cleaned text will be pasted into {name}. \
+                 Adapt formatting (markdown, code blocks, quotes, line breaks, \
+                 punctuation, greeting/sign-off) to that app's conventions. \
+                 Do not invent content the speaker did not say."
+            )
+        })
+    } else {
+        None
+    };
+    if let Some(ctx) = &app_context {
+        tracing::info!("app context: {}", ctx);
+    }
+
     let t_cleanup_start = Instant::now();
-    let cleaned = match groq::cleanup(&cfg, &transcript, style_extra.as_deref(), Some(notify_rl)).await {
+    let cleaned = match groq::cleanup(
+        &cfg,
+        &transcript,
+        style_extra.as_deref(),
+        app_context.as_deref(),
+        Some(notify_rl),
+    ).await {
         Ok(t) => t,
         Err(e) => {
             tracing::warn!("cleanup failed, falling back to raw: {e:#}");

@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 
 const CATEGORIES = [
   {
@@ -68,6 +67,10 @@ export default function StyleView({ config, updateConfig }) {
     await updateConfig({ ...config, style_enabled: next });
   }
 
+  async function setOverrides(next) {
+    await updateConfig({ ...config, style_app_overrides: next });
+  }
+
   return (
     <div className="page style-page">
       <header className="page-header dictionary-header">
@@ -127,6 +130,12 @@ export default function StyleView({ config, updateConfig }) {
           />
         ))}
       </div>
+
+      <AppOverrides
+        overrides={config.style_app_overrides || []}
+        onChange={setOverrides}
+        disabled={!config.style_enabled}
+      />
     </div>
   );
 }
@@ -147,5 +156,112 @@ function StyleCard({ style, selected, disabled, onSelect }) {
       </div>
       {selected && <div className="style-card-check" aria-hidden>✓</div>}
     </button>
+  );
+}
+
+function AppOverrides({ overrides, onChange, disabled }) {
+  const [draftExe, setDraftExe] = useState("");
+  const [draftCategory, setDraftCategory] = useState("work");
+
+  function add() {
+    const exe = draftExe.trim();
+    if (!exe) return;
+    const stem = exe.toLowerCase().replace(/\.exe$/, "");
+    const dedup = overrides.filter(
+      (o) => o.exe.toLowerCase().replace(/\.exe$/, "") !== stem,
+    );
+    onChange([...dedup, { exe, category: draftCategory }]);
+    setDraftExe("");
+  }
+
+  function remove(idx) {
+    onChange(overrides.filter((_, i) => i !== idx));
+  }
+
+  function updateRow(idx, patch) {
+    onChange(overrides.map((o, i) => (i === idx ? { ...o, ...patch } : o)));
+  }
+
+  return (
+    <section className={`style-overrides ${disabled ? "disabled" : ""}`}>
+      <header className="style-overrides-header">
+        <h3>Custom apps</h3>
+        <p className="muted small">
+          Map a specific executable to a category. Overrides Bulbul's built-in
+          mappings — useful when an app you use (e.g. Cursor, Notion, Obsidian)
+          doesn't fit the defaults.
+        </p>
+      </header>
+
+      {overrides.length > 0 && (
+        <ul className="style-overrides-list">
+          {overrides.map((ov, i) => (
+            <li key={i} className="style-override-row">
+              <input
+                type="text"
+                value={ov.exe}
+                onChange={(e) => updateRow(i, { exe: e.target.value })}
+                placeholder="App.exe"
+                disabled={disabled}
+              />
+              <select
+                value={ov.category}
+                onChange={(e) => updateRow(i, { category: e.target.value })}
+                disabled={disabled}
+              >
+                <option value="personal">Personal</option>
+                <option value="work">Work</option>
+                <option value="email">Email</option>
+                <option value="other">Other</option>
+              </select>
+              <button
+                type="button"
+                className="style-override-remove"
+                onClick={() => remove(i)}
+                disabled={disabled}
+                aria-label={`Remove ${ov.exe}`}
+                title="Remove"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="style-override-add">
+        <input
+          type="text"
+          value={draftExe}
+          onChange={(e) => setDraftExe(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="e.g. Cursor.exe"
+          disabled={disabled}
+        />
+        <select
+          value={draftCategory}
+          onChange={(e) => setDraftCategory(e.target.value)}
+          disabled={disabled}
+        >
+          <option value="personal">Personal</option>
+          <option value="work">Work</option>
+          <option value="email">Email</option>
+          <option value="other">Other</option>
+        </select>
+        <button
+          type="button"
+          className="primary"
+          onClick={add}
+          disabled={disabled || !draftExe.trim()}
+        >
+          Add
+        </button>
+      </div>
+    </section>
   );
 }
