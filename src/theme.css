@@ -118,20 +118,23 @@
   /* Crisp, defined cool borders. --border is the clean general line;
      --border-strong is the bolder card/element edge. */
   --border: #d4d8e0;
-  --border-strong: #b4bcc8;
-  --border-hover: #98a1af;
+  --border-strong: #9aa6b3;
+  --border-hover: #818c9b;
 
-  /* Cool near-black text — high, clean contrast. */
+  /* Cool near-black text — high, clean contrast. Secondary tiers (muted,
+     faint) are deliberately darker than typical light-theme greys so the
+     small UI text — Today/Yesterday labels, dictation timestamps, meta
+     rows — stays clearly legible on white cards. */
   --text: #181b21;
   --text-heading: #14171c;
   --text-2: #2a2e36;
   --text-3: #363b44;
   --text-4: #474d57;
   --text-5: #565d68;
-  --text-muted: #6b7280;
-  --text-faint: #98a0ab;
-  --text-dim: #b7bdc7;
-  --text-placeholder: #aeb4bd;
+  --text-muted: #5a6371;
+  --text-faint: #7d8693;
+  --text-dim: #aab1bc;
+  --text-placeholder: #9ea5b1;
 
   --toggle-thumb: #ffffff;
 
