@@ -1,0 +1,36 @@
+# Disable blank issues so everything goes through a template (forces minimum
+# context). The contact_links section adds the buttons users see above the
+# "Get started" issue type list — pointing them to Discussions for stuff
+# that isn't really a bug or feature request.
+blank_issues_enabled: false
+
+contact_links:
+  - name: 💬 Ask a question
+    url: https://github.com/codedpool/bulbul/discussions/categories/q-a
+    about: |
+      Not sure if it's a bug? Trying to figure out how something works? Want
+      help with your Groq key, hotkey conflict, or setup? Q&A is the place.
+
+  - name: 💡 Share an idea
+    url: https://github.com/codedpool/bulbul/discussions/categories/ideas
+    about: |
+      Early-stage idea, half-formed thought, "what if Bulbul did X"? Start
+      there. Concrete proposals graduate to feature-request issues.
+
+  - name: 🎉 Show what you built
+    url: https://github.com/codedpool/bulbul/discussions/categories/show-and-tell
+    about: |
+      Built a cool transform? A workflow you use Bulbul for daily? A fork?
+      Show and Tell.
+
+  - name: 📣 Announcements
+    url: https://github.com/codedpool/bulbul/discussions/categories/announcements
+    about: |
+      Releases, deprecations, breaking changes get posted here. Subscribe
+      if you want a heads-up.
+
+  - name: 🔒 Security issue
+    url: mailto:devshooked@gmail.com
+    about: |
+      For anything that looks like a credential leak, injection vector, or
+      malicious-update path — please email instead of opening a public issue.

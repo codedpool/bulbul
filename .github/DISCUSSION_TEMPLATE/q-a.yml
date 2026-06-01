@@ -1,0 +1,43 @@
+title: "[Q&A] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before posting: did a quick search in [existing discussions](https://github.com/codedpool/bulbul/discussions) and [closed issues](https://github.com/codedpool/bulbul/issues?q=is%3Aissue) turn up your question? If yes, link the previous answer instead of re-asking.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: |
+        Describe the goal first, the technical question second. "I want to
+        dictate into a remote desktop session, and Bulbul's text doesn't
+        arrive" gets a better answer than "does Bulbul work with RDP".
+      placeholder: |
+        I'd like to use Bulbul while connected to a remote Windows machine
+        via RDP. Audio is on my local machine, the apps I'm typing into are
+        on the remote. What's the right way to set this up?
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried so far?
+      description: |
+        Even a "nothing yet, wanted to ask first" is useful. If you've tried
+        things, list them — saves answerers suggesting them again.
+
+  - type: input
+    id: bulbul-version
+    attributes:
+      label: Bulbul version
+      description: Visible in the dashboard sidebar (bottom-left).
+      placeholder: "v1.0.0"
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"

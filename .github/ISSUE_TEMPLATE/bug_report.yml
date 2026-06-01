@@ -1,0 +1,118 @@
+name: Bug report
+description: Something in Bulbul is broken or doesn't behave as documented.
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        Before you continue: make sure your Bulbul version is the latest from
+        the [releases page](https://github.com/codedpool/bulbul/releases/latest).
+        Auto-update runs every 6h, so if you've had the app open for a while
+        you're probably already on it — the version shows in the sidebar.
+
+  - type: input
+    id: bulbul-version
+    attributes:
+      label: Bulbul version
+      description: Visible in the dashboard sidebar (bottom-left), e.g. "v1.0.0".
+      placeholder: "v1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: |
+        Run `winver` to get the exact number (e.g. "Windows 11 24H2").
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug. Skip the "obviously this is bad" — just say what you saw.
+      placeholder: |
+        I held my hotkey to dictate "test", but the overlay never appeared and
+        nothing typed. Tray icon stayed normal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: One sentence is fine.
+      placeholder: "The overlay to show 'Listening', then the text 'test' to type into Notepad on release."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Numbered list. The clearer this is, the faster the fix.
+        If it's intermittent, say "happens roughly N out of M times".
+      placeholder: |
+        1. Open Notepad, click into the document so it has focus
+        2. Hold Ctrl+Win
+        3. Speak "test"
+        4. Release
+
+        Expected: "test" typed in Notepad.
+        Actual: nothing happens.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Bulbul logs to the dev console only by default. If you can reproduce
+        the bug, run `npm run tauri dev` from a clone of the repo, reproduce
+        once, and paste the last ~30 lines from the terminal. If that's too
+        much hassle, leave this blank.
+      render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drop images here. Especially useful for UI bugs.
+
+  - type: dropdown
+    id: affected-pipeline
+    attributes:
+      label: Which pipeline stage seems affected?
+      description: Best guess is fine.
+      multiple: true
+      options:
+        - "Recording (mic capture, hotkey detection)"
+        - "Transcription (Groq Whisper)"
+        - "Cleanup (Groq Llama)"
+        - "Dictionary / snippets / transforms"
+        - "Text injection (the typed result)"
+        - "UI / overlay / dashboard"
+        - "Onboarding wizard"
+        - "Auto-update"
+        - "Tray / system integration"
+        - "Don't know"
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I'm on the [latest Bulbul release](https://github.com/codedpool/bulbul/releases/latest).
+          required: true
+        - label: I've searched [existing issues](https://github.com/codedpool/bulbul/issues) and this isn't already filed.
+          required: true
+        - label: I'm not pasting my Groq API key, dictation transcripts, or anything else I'd rather keep private.
+          required: true

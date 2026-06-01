@@ -1,7 +1,144 @@
-# Tauri + React
+# Bulbul
 
-This template should help get you started developing with Tauri and React in Vite.
+**Free, open-source Windows voice dictation. Hold a hotkey, talk anywhere, watch the text appear.**
 
-## Recommended IDE Setup
+Bulbul is a local-first dictation app powered by [Groq](https://groq.com). Bring your own API key — there are no servers, no subscriptions, no usage caps beyond Groq's own free tier.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+> Built as a privacy-respecting alternative to commercial dictation apps for people who'd rather own their stack.
+
+---
+
+## Get started in 60 seconds
+
+1. **Download the latest installer** → [Releases](https://github.com/codedpool/bulbul/releases/latest) → `Bulbul_x.y.z_x64-setup.exe`
+2. **Run it** — Windows SmartScreen will warn you the first time (see [SmartScreen FAQ](docs/SMARTSCREEN.md))
+3. **Open Bulbul** → paste your free [Groq API key](https://console.groq.com/keys) → pick a hotkey
+4. **Hold the hotkey anywhere on Windows. Speak. Release. Done.**
+
+The transcript types itself into whatever app has focus — your browser, VS Code, Word, a terminal, Slack, Cursor, anywhere.
+
+---
+
+## Why Bulbul
+
+| | Bulbul | commercial dictation apps |
+|---|---|---|
+| **Cost** | Free + your Groq key | Subscription |
+| **Open source** | Yes (MIT) | No |
+| **Where your audio goes** | Groq's API, with your key | Vendor's servers |
+| **Source of truth for your data** | Your machine | Vendor |
+| **Latency** | ~600ms typical | similar |
+| **Custom hotkeys** | Any combo, including modifier-only chords | Limited |
+| **Dictionary / snippets / transforms** | Yes, all local | Some, gated by tier |
+
+---
+
+## What's in the box
+
+- **Two-step pipeline**: Whisper Large v3 Turbo (STT) → Llama 3.1 8B (cleanup) — both via Groq, both fast.
+- **Cleanup modes**: Raw (just fix obvious errors), Clean (remove fillers, fix punctuation — default), Polished (rewrite for clarity).
+- **Polish hotkey**: a second hold-to-talk shortcut that forces Polished mode regardless of your global setting. Default `Shift+Alt+P`.
+- **Modifier-only hotkeys**: hold `Ctrl+Win` or `Alt+Win` — modifier-only. No letter needed.
+- **Per-app style**: pick a tone (Formal / Casual / Very Casual) per app category. The cleanup model adapts.
+- **Venue-aware**: Bulbul tells the cleanup model which app you're dictating into ("Windows Terminal" vs. "Outlook") so output formatting fits.
+- **Bullet-list detection**: enumerate items aloud, get a markdown bullet list out.
+- **Dictionary**: word substitutions (e.g. "groq" → "Groq") that fire after cleanup.
+- **Snippets**: triggers that expand (e.g. "my email" → real email address).
+- **Transforms**: per-text rewrites — Polish, Make Formal, Translate, Bulletize, or your own custom prompts. Bind to `Alt+1` through `Alt+9`.
+- **Insights**: dictation history, voice profile, peak times, most-used words.
+- **Scratchpad**: a standalone notes window with transforms applied to selections.
+- **Auto-update**: signed releases. The app silently downloads new versions in the background and applies on next quit.
+
+---
+
+## Privacy posture
+
+- **Your audio is sent to Groq** — that's how transcription works. Audio is processed under Groq's privacy policy ([review it before dictating sensitive content](https://groq.com/privacy-policy)).
+- **No Bulbul-owned server.** There is no backend storing your transcripts, hotkeys, or dictionary.
+- **All your dictation history lives locally** in `%APPDATA%\Bulbul\bulbul.db` (SQLite). Delete it anytime; back it up if you care.
+- **Anonymous usage stats** (counts, durations, error categories) ship to a Supabase endpoint by default so the maintainer can see what's used and what breaks. **Never** your transcripts, audio, dictionary, or which app you're typing into. Off-toggle in **Settings → Privacy**.
+
+---
+
+## Requirements
+
+- **Windows 10 or 11** (x64)
+- A **free Groq API key** — sign up at [console.groq.com](https://console.groq.com)
+- An internet connection (Groq is cloud-hosted)
+- A microphone
+
+macOS and Linux are not currently supported.
+
+---
+
+## How it works under the hood
+
+```text
+   ┌──────────────┐  hold hotkey   ┌──────────┐    audio    ┌────────────┐
+   │  Anywhere    │ ─────────────▶│  Bulbul  │ ──────────▶│   Groq     │
+   │  on Windows  │                │ overlay  │             │  Whisper   │
+   └──────────────┘ ◀── inject text└────┬─────┘ ◀── text  ──┴────────────┘
+                                         │
+                                         ▼
+                                   ┌──────────┐    text     ┌────────────┐
+                                   │  Cleanup │ ──────────▶│   Groq     │
+                                   │  module  │             │  Llama 3.1 │
+                                   └────┬─────┘ ◀── cleaned─┴────────────┘
+                                         │
+                                         ▼ apply dictionary + snippets
+                                    inject via Win32 SendInput
+```
+
+The whole loop runs in 400–900ms on a decent connection. Groq is fast.
+
+---
+
+## Build from source
+
+```bash
+# Prerequisites: Node 18+, Rust stable, Microsoft C++ Build Tools
+git clone https://github.com/codedpool/bulbul.git
+cd bulbul
+npm install
+npm run tauri dev     # dev build with hot reload
+npm run tauri build   # production installer in src-tauri/target/release/bundle/
+```
+
+---
+
+## Auto-update
+
+Once you're on v1.0.0 or later, Bulbul checks GitHub Releases every 6 hours, downloads new versions in the background, and shows a small banner inviting you to restart. Quitting from the tray installs immediately. Every update is signed with the maintainer's [minisign](https://jedisct1.github.io/minisign/) key — installers that don't match the embedded public key are rejected.
+
+If you forked Bulbul and ship your own builds, generate your own key with `npx tauri signer generate` and replace the `pubkey` in `src-tauri/tauri.conf.json`.
+
+---
+
+## Roadmap
+
+- [ ] **Click-to-talk overlay** — mouse-driven entry point (X / waveform / ✓) alongside the hotkey
+- [ ] **macOS port**
+- [ ] **Per-app dictionary scoping** — substitutions that only fire in certain apps
+- [ ] **Bullet-list detection refinement** — fewer false positives
+
+See [CHANGELOG.md](CHANGELOG.md) for shipped versions.
+
+---
+
+## Contributing
+
+Bulbul is a solo project, but contributions are welcome. Open an issue first to discuss anything bigger than a small fix.
+
+---
+
+## License
+
+[MIT](LICENSE) — do whatever you want, just don't blame me.
+
+---
+
+## Thanks
+
+- [Groq](https://groq.com) for the absurdly fast inference API
+- [Tauri](https://tauri.app) for making native Windows apps feel light
+- [commercial dictation apps](https://example.ai) for proving the UX pattern

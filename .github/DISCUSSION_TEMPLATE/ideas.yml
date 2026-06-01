@@ -1,0 +1,54 @@
+title: "[Idea] "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas live here while they're still half-formed. No commitment to
+        build anything — this is the place to think out loud and see if
+        others want the same thing.
+
+        Once an idea is concrete enough that someone could build it, the
+        thread maintainer (or anyone) can promote it to a [feature-request issue](https://github.com/codedpool/bulbul/issues/new?template=feature_request.yml).
+
+  - type: textarea
+    id: pain
+    attributes:
+      label: What's the pain?
+      description: |
+        Start with the friction you hit, not the solution. "I wish there
+        was X" is fine, but "X would help with Y" gets more useful replies.
+      placeholder: |
+        When I dictate quick notes for myself, I often want to inject the
+        current date or time as part of the transcript. Right now I either
+        say it aloud (and it gets cleaned weirdly) or stop the dictation
+        and type it manually.
+    validations:
+      required: true
+
+  - type: textarea
+    id: rough-idea
+    attributes:
+      label: Rough shape of the idea
+      description: |
+        Optional. Don't over-design it — half a paragraph is plenty.
+      placeholder: |
+        Snippets but with placeholders that resolve at expansion time, like
+        `{date}` or `{time}`. Maybe `{clipboard}` too.
+
+  - type: textarea
+    id: existing-workaround
+    attributes:
+      label: How are you working around it today?
+      description: Sometimes the workaround turns out to be the simplest "feature".
+
+  - type: dropdown
+    id: who-benefits
+    attributes:
+      label: Who benefits?
+      multiple: true
+      options:
+        - "Just me — niche use case"
+        - "People with my workflow"
+        - "Most users would notice"
+        - "Critical — blocking my use of Bulbul"

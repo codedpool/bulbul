@@ -1,0 +1,94 @@
+name: Feature request
+description: Suggest a new feature, a UX improvement, or a behavior change.
+title: "[feature] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening a feature request, consider posting in
+        [Discussions → Ideas](https://github.com/codedpool/bulbul/discussions/categories/ideas)
+        first. That's the right place for early-stage shape-finding ("would
+        this even be useful?", "is there a simpler version of this?"). Once
+        the idea is concrete enough that someone could go build it, it
+        graduates to an issue.
+
+        Open this issue if you're sure about what you want — or if you've
+        already discussed it and it's time to track the work.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: |
+        Start with the user pain. "I want feature X" gets less traction than
+        "Currently when I try to do Y, I have to Z. It would help to ...".
+      placeholder: |
+        When I dictate into a terminal, things like "git add all" come out as
+        literal text instead of "git add .". I have to manually type the
+        common shell commands every time.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed solution
+      description: |
+        How would you like Bulbul to behave instead? Sketch the UX if it
+        helps. Implementation details are optional — focus on what the user
+        experiences.
+      placeholder: |
+        Per-app dictionary substitutions. In Settings → Dictionary, each
+        entry can optionally be scoped to a specific app (e.g. only fire
+        when the foreground app is Windows Terminal). Substitutions then
+        run before injection, only for that app.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: |
+        What did you try? What's the workaround today? Was there a different
+        design that didn't quite fit?
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: What part of Bulbul would this touch?
+      multiple: true
+      options:
+        - "Dictation pipeline (recording / transcription / cleanup / injection)"
+        - "Hotkey / shortcut system"
+        - "Dashboard UI"
+        - "Overlay (the bottom-screen pill)"
+        - "Tray / Windows integration"
+        - "Settings / configuration"
+        - "Dictionary / snippets / transforms"
+        - "Onboarding"
+        - "Auto-update / distribution"
+        - "Don't know"
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: How big is this?
+      description: Best guess from the outside is fine.
+      options:
+        - "Tiny — a one-line config or copy change"
+        - "Small — a few hours, no new abstractions"
+        - "Medium — a new view / new pipeline stage / new hotkey type"
+        - "Big — multi-component, schema or API changes"
+        - "Don't know"
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I've searched [existing issues](https://github.com/codedpool/bulbul/issues) and [Discussions](https://github.com/codedpool/bulbul/discussions), and this isn't a duplicate.
+          required: true
+        - label: I understand this is a solo-maintained project and "no" or "not yet" is a reasonable answer.
+          required: true

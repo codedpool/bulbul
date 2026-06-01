@@ -1,0 +1,48 @@
+title: "[Show] "
+labels: ["show-and-tell"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Built a custom transform you find useful? Set Bulbul up in an
+        unusual way? Forked it for your own ends? Made a workflow that
+        chains it with another tool? Show off here.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you build / set up?
+      description: One paragraph. Imagine you're describing it to someone who already knows Bulbul.
+      placeholder: |
+        A "Slack-style" custom transform that converts my dictation into
+        snappy first-person Slack messages — third-person reflections become
+        first-person, run-on sentences get split, emojis are sprinkled
+        where it makes sense.
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: How does it work?
+      description: |
+        Settings exported? Transform prompts? Snippets? Bash scripts that
+        glue Bulbul to other tools? Paste the relevant bits here.
+      placeholder: |
+        Transform name: "Slackify"
+        Prompt: "Rewrite this into a casual Slack message in first person..."
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / demo
+      description: Optional but appreciated.
+
+  - type: dropdown
+    id: license
+    attributes:
+      label: Can others use this?
+      options:
+        - "Yes, anyone can take it"
+        - "Take the idea, not my prompt verbatim"
+        - "It's for me — sharing for inspiration"
