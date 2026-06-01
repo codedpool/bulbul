@@ -326,8 +326,18 @@ function Toggle({ label, hint, checked, onChange }) {
   );
 }
 
+const MOD_ORDER = ["Ctrl", "Shift", "Alt", "Win"];
+
+// Canonicalise modifier order so the chips read Ctrl → Shift → Alt → Win →
+// <key> regardless of how the combo was stored. "Win+Alt+P" and "Alt+Win+P"
+// are the same combo to Windows; this just keeps the display consistent.
 function formatHotkey(s) {
-  return (s || "").split("+").map((p) => p.trim()).filter(Boolean);
+  const parts = (s || "").split("+").map((p) => p.trim()).filter(Boolean);
+  const mods = parts
+    .filter((p) => MOD_ORDER.includes(p))
+    .sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
+  const keys = parts.filter((p) => !MOD_ORDER.includes(p));
+  return [...mods, ...keys];
 }
 
 function domKeyToName(code) {

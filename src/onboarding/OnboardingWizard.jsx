@@ -540,9 +540,19 @@ function matchPreset(hotkey) {
   return preset ? { ...preset, match: true } : { ...HOTKEY_PRESETS.find((p) => p.value === "custom"), match: false };
 }
 
+const MOD_ORDER = ["Ctrl", "Shift", "Alt", "Win"];
+
+// Canonicalise modifier order for display (Ctrl → Shift → Alt → Win → key).
+// Same string the backend would have produced via hotkey.rs::format_combo,
+// independent of how the combo happens to be stored in config.
 function formatComboForDisplay(combo) {
   if (!combo) return "—";
-  return combo.replaceAll("+", " + ");
+  const parts = combo.split("+").map((p) => p.trim()).filter(Boolean);
+  const mods = parts
+    .filter((p) => MOD_ORDER.includes(p))
+    .sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
+  const keys = parts.filter((p) => !MOD_ORDER.includes(p));
+  return [...mods, ...keys].join(" + ");
 }
 
 function domKeyToName(code) {
