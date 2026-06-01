@@ -42,17 +42,12 @@ const LANGUAGES = [
   { code: "el", label: "Greek" },
 ];
 
-export default function SettingsView({ config, updateConfig }) {
+export default function SettingsView({ config, updateConfig, autostart, onAutostartChange }) {
   const [draftKey, setDraftKey] = useState(config.groq_api_key || "");
   const [keyState, setKeyState] = useState("idle");
   const [keyError, setKeyError] = useState("");
   const [recordingHotkeyFor, setRecordingHotkeyFor] = useState(null);
   const [updateState, setUpdateState] = useState({ state: "idle", message: "" });
-  const [autostart, setAutostart] = useState(false);
-
-  useEffect(() => {
-    invoke("get_autostart").then(setAutostart).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (!recordingHotkeyFor) return;
@@ -96,15 +91,6 @@ export default function SettingsView({ config, updateConfig }) {
     } catch (e) {
       setKeyState("invalid");
       setKeyError(String(e));
-    }
-  }
-
-  async function toggleAutostart(next) {
-    try {
-      await invoke("set_autostart", { enabled: next });
-      setAutostart(next);
-    } catch (e) {
-      console.error("autostart toggle failed", e);
     }
   }
 
@@ -240,7 +226,7 @@ export default function SettingsView({ config, updateConfig }) {
             label="Start Bulbul with Windows"
             hint="Boots silently in the tray on login."
             checked={autostart}
-            onChange={toggleAutostart}
+            onChange={onAutostartChange}
           />
           <Toggle
             label="Open this window when Bulbul starts"

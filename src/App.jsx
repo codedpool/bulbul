@@ -219,7 +219,12 @@ function App() {
       <main className="content">
         {section === "home" && <HomeView />}
         {section === "settings" && (
-          <SettingsView config={config} updateConfig={updateConfig} />
+          <SettingsView
+            config={config}
+            updateConfig={updateConfig}
+            autostart={autostart}
+            onAutostartChange={toggleAutostart}
+          />
         )}
         {section === "dictionary" && <DictionaryView />}
         {section === "insights" && <InsightsView />}
