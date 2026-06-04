@@ -116,13 +116,15 @@ export default function ScratchpadView() {
       setSaveState("idle");
       dirtyRef.current = false;
     } catch (e) {
-      alert(String(e));
+      setErrorMsg(String(e));
     }
   }
 
   // Note pending confirmation for deletion. Holds the id (or null when no
   // delete is in flight) and drives the ConfirmDialog visibility.
   const [pendingDelete, setPendingDelete] = useState(null);
+  // Error string for the themed alert (save/delete failures). null = closed.
+  const [errorMsg, setErrorMsg] = useState(null);
 
   function removeNote(id) {
     setPendingDelete(id);
@@ -141,7 +143,7 @@ export default function ScratchpadView() {
         else { setActiveId(null); setTitle(""); setBody(""); }
       }
     } catch (e) {
-      alert(String(e));
+      setErrorMsg(String(e));
     }
   }
 
@@ -313,6 +315,13 @@ export default function ScratchpadView() {
         danger
         onConfirm={confirmDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+      <ConfirmDialog
+        open={errorMsg !== null}
+        title="Something went wrong"
+        message={errorMsg}
+        cancelLabel={null}
+        onConfirm={() => setErrorMsg(null)}
       />
     </div>
   );

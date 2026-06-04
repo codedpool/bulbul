@@ -110,11 +110,12 @@ export default function ScratchpadWindow() {
       setSaveState("idle");
       dirtyRef.current = false;
     } catch (e) {
-      alert(String(e));
+      setErrorMsg(String(e));
     }
   }
 
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   function removeNote(id) {
     setPendingDelete(id);
@@ -133,7 +134,7 @@ export default function ScratchpadWindow() {
         else { setActiveId(null); setTitle(""); setBody(""); }
       }
     } catch (e) {
-      alert(String(e));
+      setErrorMsg(String(e));
     }
   }
 
@@ -318,6 +319,13 @@ export default function ScratchpadWindow() {
         danger
         onConfirm={confirmDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+      <ConfirmDialog
+        open={errorMsg !== null}
+        title="Something went wrong"
+        message={errorMsg}
+        cancelLabel={null}
+        onConfirm={() => setErrorMsg(null)}
       />
     </div>
   );

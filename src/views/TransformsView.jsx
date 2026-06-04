@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import FeatureHero from "../components/FeatureHero.jsx";
+import ConfirmDialog from "../components/ConfirmDialog.jsx";
 
 const TRANSFORMS_HERO_SAMPLES = [
   { trigger: "Polish", expansion: "Fix grammar, tighten flow, keep meaning." },
@@ -54,8 +55,18 @@ export default function TransformsView() {
     await load();
   }
 
-  async function remove(id) {
-    if (!confirm("Delete this transform?")) return;
+  // Dialog state: each pending confirmation drives a themed ConfirmDialog.
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
+  function remove(id) {
+    setPendingDeleteId(id);
+  }
+
+  async function confirmDelete() {
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
+    if (id == null) return;
     await invoke("delete_transform", { id });
     if (editing?.id === id) setEditing(null);
     await load();
@@ -66,8 +77,12 @@ export default function TransformsView() {
     await load();
   }
 
-  async function resetAll() {
-    if (!confirm("Reset to default transforms? This deletes any custom ones.")) return;
+  function resetAll() {
+    setConfirmingReset(true);
+  }
+
+  async function confirmReset() {
+    setConfirmingReset(false);
     await invoke("reset_transforms");
     setEditing(null);
     await load();
@@ -129,6 +144,25 @@ export default function TransformsView() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        title="Delete this transform?"
+        message="This can't be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDeleteId(null)}
+      />
+      <ConfirmDialog
+        open={confirmingReset}
+        title="Reset to default transforms?"
+        message="This deletes any custom transforms you've added. Defaults will be restored."
+        confirmLabel="Reset"
+        danger
+        onConfirm={confirmReset}
+        onCancel={() => setConfirmingReset(false)}
+      />
     </div>
   );
 }
