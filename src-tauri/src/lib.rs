@@ -547,11 +547,28 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
 /// Mark the first-run wizard as finished and persist. Called whether the
 /// user completed all the steps or chose "Skip for now" — both should
 /// stop the wizard from re-appearing on the next launch.
+///
+/// Side effect: enables "Start Bulbul with Windows" by default for fresh
+/// installs. A dictation app you have to remember to launch every morning
+/// is one a friend tries twice and forgets — the value compounds when
+/// it's just always there in the tray. The user can flip it off any time
+/// in Settings → Startup (or Sidebar → Open at startup), and existing
+/// installs that already finished onboarding aren't touched.
 #[tauri::command]
-fn complete_onboarding(state: tauri::State<'_, AppState>) -> Result<(), String> {
+fn complete_onboarding(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     let mut cfg = state.config.lock();
     cfg.onboarding_completed = true;
     config::save(&cfg).map_err(|e| format!("{e:#}"))?;
+    drop(cfg); // release the lock before the autostart write, in case it blocks
+    if let Err(e) = app.autolaunch().enable() {
+        // Best-effort. Common reasons it can fail: corporate-locked
+        // registry, antivirus interception. We don't fail onboarding for
+        // it — the user can always toggle it from Settings.
+        tracing::warn!("could not enable autostart on onboarding completion: {e:#}");
+    }
     Ok(())
 }
 

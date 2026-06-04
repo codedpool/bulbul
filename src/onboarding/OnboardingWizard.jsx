@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
@@ -40,7 +41,7 @@ const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test, and like, it loo
 
 export default function OnboardingWizard({ config, updateConfig, onComplete }) {
   const [step, setStep] = useState(0);
-  const totalSteps = 4;
+  const totalSteps = 5;
 
   const themePref = config.theme || "light";
   const resolvedTheme =
@@ -121,7 +122,7 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
           />
         )}
         {step === 2 && (
-          <StepHotkey
+          <StepLanguage
             config={config}
             updateConfig={updateConfig}
             onBack={() => setStep(1)}
@@ -129,6 +130,14 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
           />
         )}
         {step === 3 && (
+          <StepHotkey
+            config={config}
+            updateConfig={updateConfig}
+            onBack={() => setStep(2)}
+            onNext={() => setStep(4)}
+          />
+        )}
+        {step === 4 && (
           <StepDone
             onFinish={finish}
             hotkey={config.hotkey}
@@ -329,6 +338,241 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
   );
 }
 
+// Languages exposed under "Another language" — same set as the Settings
+// dropdown minus the buckets we already surface as primary radios (English,
+// Hindi/Hinglish) and minus "auto" (its own radio). Alphabetised by display
+// label so users can scan to the one they want.
+const OTHER_LANGUAGES = [
+  { code: "ar", label: "Arabic" },
+  { code: "zh", label: "Chinese" },
+  { code: "nl", label: "Dutch" },
+  { code: "fi", label: "Finnish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "el", label: "Greek" },
+  { code: "he", label: "Hebrew" },
+  { code: "id", label: "Indonesian" },
+  { code: "it", label: "Italian" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "pl", label: "Polish" },
+  { code: "pt", label: "Portuguese" },
+  { code: "ru", label: "Russian" },
+  { code: "es", label: "Spanish" },
+  { code: "sv", label: "Swedish" },
+  { code: "th", label: "Thai" },
+  { code: "tr", label: "Turkish" },
+  { code: "uk", label: "Ukrainian" },
+  { code: "vi", label: "Vietnamese" },
+];
+const OTHER_LANGUAGE_CODES = OTHER_LANGUAGES.map((l) => l.code);
+
+// Map BCP-47 system locale to a wizard "bucket" so we can pre-select a
+// sensible default. Pakistani/Indian Urdu speakers also get suggested
+// Hindi/Hinglish: in practice they want Devanagari output for code-switched
+// Hindustani, and they can flip to Arabic-script Urdu via "Another language"
+// if they really want it. English-locale users get English.
+function detectDefaultLanguage() {
+  const tag = (navigator.language || "en").toLowerCase();
+  const primary = tag.split("-")[0];
+  if (primary === "hi" || primary === "ur") return { bucket: "hindi", otherCode: "" };
+  if (primary === "en") return { bucket: "english", otherCode: "" };
+  if (OTHER_LANGUAGE_CODES.includes(primary)) return { bucket: "other", otherCode: primary };
+  return { bucket: "auto", otherCode: "" };
+}
+
+function codeFromPick(bucket, otherCode) {
+  if (bucket === "english") return "en";
+  if (bucket === "hindi") return "hi";
+  if (bucket === "other") return otherCode || "es";
+  return "auto";
+}
+
+function bucketFromCode(code) {
+  if (code === "en") return "english";
+  if (code === "hi") return "hindi";
+  if (code === "auto" || !code) return null;
+  return "other";
+}
+
+function StepLanguage({ config, updateConfig, onBack, onNext }) {
+  const detected = useRef(detectDefaultLanguage()).current;
+  const initialBucket =
+    bucketFromCode(config.language) ?? detected.bucket;
+  const initialOther =
+    config.language && bucketFromCode(config.language) === "other"
+      ? config.language
+      : detected.otherCode || "es";
+  const [pick, setPick] = useState(initialBucket);
+  const [other, setOther] = useState(initialOther);
+
+  // Sync config to match the initial pick on mount. For fresh installs this
+  // commits the locale-suggested default so users who just click Continue
+  // still get a sensible language. For returning visits it's a no-op.
+  useEffect(() => {
+    const code = codeFromPick(initialBucket, initialOther);
+    if (code !== config.language) {
+      updateConfig({ ...config, language: code });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function choose(nextBucket, nextOther) {
+    setPick(nextBucket);
+    if (nextOther !== undefined) setOther(nextOther);
+    const code = codeFromPick(nextBucket, nextOther ?? other);
+    updateConfig({ ...config, language: code });
+  }
+
+  return (
+    <div className="onb-page-inner">
+      <header className="onb-step-head">
+        <h2>What language do you dictate in?</h2>
+        <p className="onb-sub">
+          Pick the one you use most. Mixing English in is fine — Bulbul handles that for any choice.
+        </p>
+      </header>
+
+      <div className="onb-lang-list">
+        <LangRow
+          checked={pick === "english"}
+          onClick={() => choose("english")}
+          label="English"
+          detail="Best for purely English dictation."
+          suggested={detected.bucket === "english"}
+        />
+        <LangRow
+          checked={pick === "hindi"}
+          onClick={() => choose("hindi")}
+          label="Hindi / Hinglish"
+          detail="Handles pure Hindi (Devanagari) and code-switched Hinglish. English-only sentences still come out in Latin."
+          suggested={detected.bucket === "hindi"}
+        />
+        <LangRow
+          checked={pick === "other"}
+          onClick={() => choose("other")}
+          label="Another language"
+          detail={pick === "other" ? null : "Pick from the full list."}
+          suggested={detected.bucket === "other"}
+        >
+          {pick === "other" && (
+            <LanguageCombo
+              value={other}
+              options={OTHER_LANGUAGES}
+              onChange={(code) => choose("other", code)}
+            />
+          )}
+        </LangRow>
+        <LangRow
+          checked={pick === "auto"}
+          onClick={() => choose("auto")}
+          label="Auto-detect"
+          detail="English-leaning. Avoid if you dictate in Hindi — it occasionally outputs Urdu/Arabic script for the same audio."
+          suggested={detected.bucket === "auto"}
+        />
+      </div>
+
+      <div className="onb-actions">
+        <button className="onb-btn ghost" onClick={onBack}>← Back</button>
+        <button className="onb-btn primary" onClick={onNext}>Continue →</button>
+      </div>
+    </div>
+  );
+}
+
+// Custom themed combobox for the "Another language" sub-picker. We use this
+// instead of a native <select> because the OS-rendered dropdown ignores our
+// theme tokens (background, border, text colour), and on Windows it pops up
+// stretched across the whole viewport with no scroll cap — both jarring next
+// to the rest of the wizard.
+function LanguageCombo({ value, options, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  // Close when clicking anywhere outside, or pressing Escape. Mousedown
+  // (not click) so we close before any click handler on outside content runs.
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const selected = options.find((o) => o.code === value) || options[0];
+
+  return (
+    <div className="onb-combo" ref={rootRef}>
+      <button
+        type="button"
+        className={`onb-combo-trigger ${open ? "open" : ""}`}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((v) => !v); }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span className="onb-combo-value">{selected.label}</span>
+        <ComboChevron />
+      </button>
+      {open && (
+        <div className="onb-combo-list" role="listbox">
+          {options.map((o) => (
+            <button
+              key={o.code}
+              type="button"
+              role="option"
+              aria-selected={o.code === value}
+              className={`onb-combo-item ${o.code === value ? "selected" : ""}`}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onChange(o.code);
+                setOpen(false);
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComboChevron() {
+  return (
+    <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden>
+      <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function LangRow({ checked, onClick, label, detail, suggested, children }) {
+  return (
+    <label className={`onb-hotkey-row ${checked ? "selected" : ""}`}>
+      <input
+        type="radio"
+        name="onb-language"
+        checked={checked}
+        onChange={onClick}
+      />
+      <div className="onb-hotkey-meta">
+        <div className="onb-hotkey-label">
+          {label}
+          {suggested && <span className="onb-lang-suggested">Suggested for your system</span>}
+        </div>
+        {detail && <div className="onb-hotkey-detail">{detail}</div>}
+        {children}
+      </div>
+    </label>
+  );
+}
+
 function StepHotkey({ config, updateConfig, onBack, onNext }) {
   const [selected, setSelected] = useState(matchPreset(config.hotkey));
   const [customCombo, setCustomCombo] = useState(
@@ -336,11 +580,67 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
   );
   const [capturing, setCapturing] = useState(false);
   const [transcript, setTranscript] = useState("");
+  // Visual state machine for the press-and-hold demo. Driven by the
+  // bulbul-status events the Rust orchestrator emits — same machinery
+  // that drives the production overlay, so the wizard's feedback matches
+  // the real app exactly.
+  //   idle      → "Hold the keys to start" (default)
+  //   listening → mic pulsing + waveform animation ("keep holding")
+  //   processing→ spinner ("transcribing...")
+  //   done      → green check, brief pulse, auto-reset to idle
+  //   too_short → amber warning, "released too early"
+  //   silent    → muted, "no speech detected — try speaking louder"
+  //   error     → red, surfaces the message
+  const [hotkeyState, setHotkeyState] = useState("idle");
+  const [errorMsg, setErrorMsg] = useState("");
   const textareaRef = useRef(null);
 
   const activeHotkey = selected.value === "custom"
     ? (customCombo || config.hotkey)
     : selected.value;
+
+  // Subscribe to the same status events the production overlay uses. The
+  // wizard window may not have focus when the user holds their hotkey
+  // (intentional — chord hotkeys fire globally), so we can't rely on
+  // browser keydown events.
+  useEffect(() => {
+    const un = listen("bulbul-status", (e) => {
+      const { state, message } = e.payload || {};
+      if (state === "listening") {
+        setHotkeyState("listening");
+      } else if (state === "processing" || state === "injecting") {
+        setHotkeyState("processing");
+      } else if (state === "done") {
+        setHotkeyState("done");
+      } else if (state === "error") {
+        setHotkeyState("error");
+        setErrorMsg(message || "");
+      } else if (state === "idle") {
+        // Idle with a message means the pipeline rejected the take. The
+        // message text tells us why so we can pick the right coaching.
+        if (message && /too short/i.test(message)) {
+          setHotkeyState("too_short");
+        } else if (message && /(silence|no speech)/i.test(message)) {
+          setHotkeyState("silent");
+        } else {
+          setHotkeyState("idle");
+        }
+      }
+    });
+    return () => { un.then((f) => f()); };
+  }, []);
+
+  // Auto-reset to idle a beat after a terminal state so the next attempt
+  // starts clean. "done" gets a longer dwell so the celebration lands;
+  // failure states reset faster so the user can re-try quickly.
+  useEffect(() => {
+    if (hotkeyState === "idle" || hotkeyState === "listening" || hotkeyState === "processing") {
+      return;
+    }
+    const dwell = hotkeyState === "done" ? 2200 : 3000;
+    const t = setTimeout(() => setHotkeyState("idle"), dwell);
+    return () => clearTimeout(t);
+  }, [hotkeyState]);
 
   // Keep the textarea focused so the existing Win32 SendInput inject path
   // delivers the transcript right into it after a dictation.
@@ -448,6 +748,12 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
             <div className="onb-sample-line">"{SAMPLE_LINE}"</div>
           </div>
 
+          <HoldIndicator
+            state={hotkeyState}
+            hotkey={formatComboForDisplay(activeHotkey)}
+            errorMsg={errorMsg}
+          />
+
           <textarea
             ref={textareaRef}
             className="onb-textarea"
@@ -457,10 +763,8 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
           />
 
           <div className="onb-test-foot">
-            {transcript.trim().length > 0 ? (
+            {transcript.trim().length > 0 && (
               <span className="onb-ok">✓ Dictation works — that's your transcript.</span>
-            ) : (
-              <span className="onb-muted">No transcript yet. Hold the keys for a moment.</span>
             )}
             <button className="onb-link" type="button" onClick={clearTest}>Clear and try again</button>
           </div>
@@ -520,6 +824,111 @@ function StepDone({ onFinish, hotkey, telemetryEnabled, onToggleTelemetry }) {
         <button className="onb-btn primary" onClick={onFinish}>Open Bulbul →</button>
       </div>
     </div>
+  );
+}
+
+/// Animated press-and-hold feedback for the wizard's hotkey test. Five
+/// visual states; each combines an icon, a primary line, and a coaching
+/// subline. Driven by the bulbul-status event stream (see the useEffect
+/// in StepHotkey), so the UI mirrors what the production app does.
+function HoldIndicator({ state, hotkey, errorMsg }) {
+  const isListening = state === "listening";
+  const isProcessing = state === "processing";
+  const isDone = state === "done";
+  const isTooShort = state === "too_short";
+  const isSilent = state === "silent";
+  const isError = state === "error";
+
+  let title;
+  let subtitle;
+  switch (state) {
+    case "listening":
+      title = "Listening — keep holding";
+      subtitle = "Release when you finish reading the sentence.";
+      break;
+    case "processing":
+      title = "Transcribing…";
+      subtitle = "One quick round-trip to Groq, then your text lands below.";
+      break;
+    case "done":
+      title = "Got it!";
+      subtitle = "Your transcript is in the box below. Try once more if you like.";
+      break;
+    case "too_short":
+      title = "Released too early";
+      subtitle = `Hold ${hotkey} for at least half a second before releasing. The clip was too short to transcribe.`;
+      break;
+    case "silent":
+      title = "Couldn't hear you";
+      subtitle = "Try speaking a bit louder, or check your mic is on the right input.";
+      break;
+    case "error":
+      title = "Something went wrong";
+      subtitle = errorMsg || "Look at the dashboard's overlay for details, or try again.";
+      break;
+    case "idle":
+    default:
+      title = `Hold ${hotkey} to start`;
+      subtitle = "We'll show you what's happening as you press, hold, and release.";
+      break;
+  }
+
+  return (
+    <div className={`onb-hold-indicator state-${state}`} role="status" aria-live="polite">
+      <div className="onb-hold-visual">
+        {isListening && (
+          <div className="onb-hold-mic">
+            <MicIcon active />
+            <div className="onb-hold-pulse" aria-hidden />
+            <div className="onb-hold-waveform" aria-hidden>
+              <span /><span /><span /><span /><span />
+            </div>
+          </div>
+        )}
+        {isProcessing && (
+          <div className="onb-hold-spinner" aria-hidden />
+        )}
+        {isDone && (
+          <div className="onb-hold-check" aria-hidden>✓</div>
+        )}
+        {(isTooShort || isSilent) && (
+          <div className="onb-hold-warn" aria-hidden>!</div>
+        )}
+        {isError && (
+          <div className="onb-hold-error" aria-hidden>✕</div>
+        )}
+        {state === "idle" && (
+          <div className="onb-hold-mic idle">
+            <MicIcon />
+          </div>
+        )}
+      </div>
+      <div className="onb-hold-meta">
+        <div className="onb-hold-title">{title}</div>
+        <div className="onb-hold-sub">{subtitle}</div>
+      </div>
+    </div>
+  );
+}
+
+function MicIcon({ active }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="22"
+      height="22"
+      fill="none"
+      stroke={active ? "currentColor" : "currentColor"}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="9" y="2" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <line x1="12" y1="18" x2="12" y2="22" />
+      <line x1="8" y1="22" x2="16" y2="22" />
+    </svg>
   );
 }
 

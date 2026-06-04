@@ -176,7 +176,7 @@ fn default_language() -> String {
     "auto".to_string()
 }
 fn default_style_enabled() -> bool { true }
-fn default_personalize_cleanup() -> bool { true }
+fn default_personalize_cleanup() -> bool { false }
 fn default_learn_corrections() -> bool { true }
 fn default_theme() -> String { "light".to_string() }
 fn default_telemetry_enabled() -> bool { true }

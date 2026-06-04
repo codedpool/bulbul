@@ -16,9 +16,9 @@ const THEMES = [
 ];
 
 const LANGUAGES = [
-  { code: "auto", label: "Auto-detect" },
+  { code: "auto", label: "Auto-detect (English-leaning)" },
   { code: "en", label: "English" },
-  { code: "hi", label: "Hindi" },
+  { code: "hi", label: "Hindi / Hinglish" },
   { code: "es", label: "Spanish" },
   { code: "fr", label: "French" },
   { code: "de", label: "German" },
@@ -197,7 +197,10 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
           </div>
         </Card>
 
-        <Card title="Language" sub="Auto-detect is fine; a specific pick is slightly faster.">
+        <Card
+          title="Language"
+          sub="Pick a specific language if you dictate in anything other than English — auto-detect is solid for English but occasionally flips Hindi audio to Urdu script. Hindi/Hinglish handles mixed English+Hindi automatically."
+        >
           <select
             className="select-input"
             value={config.language || "auto"}
