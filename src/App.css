@@ -529,6 +529,44 @@ body, html, #root {
   gap: 20px;
   padding: 16px 20px;
   border-top: 1px solid var(--fill);
+  align-items: flex-start;
+}
+
+.dictation-copy {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease,
+    border-color 120ms ease, background 120ms ease;
+}
+
+.dictation-row:hover .dictation-copy {
+  opacity: 1;
+}
+
+.dictation-copy:hover {
+  background: var(--fill);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* Locked-in state for ~1.2s after a successful copy so the user sees
+   confirmation without needing a toast. */
+.dictation-copy.copied {
+  opacity: 1;
+  color: #2f8c84;
+  background: rgba(94, 200, 192, 0.12);
+  border-color: rgba(94, 200, 192, 0.35);
 }
 
 .dictation-row:first-child {

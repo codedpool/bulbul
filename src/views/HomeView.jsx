@@ -107,17 +107,7 @@ export default function HomeView() {
                 <div className="day-label">{day}</div>
                 <div className="day-card">
                   {items.map((d) => (
-                    <div key={d.id} className="dictation-row">
-                      <div className="dictation-time">{formatTime(d.ts)}</div>
-                      <div className="dictation-body">
-                        <div className="dictation-text">{d.cleaned_text}</div>
-                        <div className="dictation-meta">
-                          {d.foreground_app && <span className="badge">{stripExe(d.foreground_app)}</span>}
-                          <span className="badge muted-badge">{d.mode}</span>
-                          <span className="badge muted-badge">{d.word_count}w</span>
-                        </div>
-                      </div>
-                    </div>
+                    <DictationRow key={d.id} d={d} />
                   ))}
                 </div>
               </div>
@@ -135,6 +125,63 @@ export default function HomeView() {
         )}
       </section>
     </div>
+  );
+}
+
+function DictationRow({ d }) {
+  // Idle → copied → idle. The copied state is purely cosmetic (icon
+  // swaps to a check, button stays highlighted) so the user sees the
+  // copy succeeded without needing a toast.
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(d.cleaned_text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (e) {
+      console.error("copy failed", e);
+    }
+  }
+
+  return (
+    <div className="dictation-row">
+      <div className="dictation-time">{formatTime(d.ts)}</div>
+      <div className="dictation-body">
+        <div className="dictation-text">{d.cleaned_text}</div>
+        <div className="dictation-meta">
+          {d.foreground_app && <span className="badge">{stripExe(d.foreground_app)}</span>}
+          <span className="badge muted-badge">{d.mode}</span>
+          <span className="badge muted-badge">{d.word_count}w</span>
+        </div>
+      </div>
+      <button
+        type="button"
+        className={`dictation-copy ${copied ? "copied" : ""}`}
+        onClick={copy}
+        aria-label={copied ? "Copied" : "Copy text"}
+        title={copied ? "Copied" : "Copy text"}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </button>
+    </div>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
   );
 }
 
