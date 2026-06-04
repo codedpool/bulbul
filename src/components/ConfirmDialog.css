@@ -1,0 +1,106 @@
+/* Self-contained styles for ConfirmDialog so the component works in both
+   the main app window (which loads App.css) and the standalone scratchpad
+   pop-out window (which doesn't). Uses theme variables that are defined
+   globally in theme.css, so light/dark themes follow automatically. */
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  animation: confirm-fade 120ms ease;
+}
+
+@keyframes confirm-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.confirm-card {
+  background: var(--surface-2, #ffffff);
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.16));
+  border-radius: 12px;
+  padding: 22px 24px 20px;
+  max-width: 420px;
+  width: calc(100% - 48px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+  color: var(--text, #1a1a1a);
+  animation: confirm-pop 140ms cubic-bezier(0.2, 0.8, 0.3, 1.2);
+}
+
+@keyframes confirm-pop {
+  from { transform: scale(0.96); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.confirm-card h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.confirm-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted, rgba(0, 0, 0, 0.6));
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.confirm-actions button {
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.16));
+  border-radius: 7px;
+  padding: 8px 18px;
+  min-width: 88px;
+  background: var(--fill, #f4f4f4);
+  color: var(--text, #1a1a1a);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.confirm-actions button:hover {
+  background: var(--fill-hover, #ececec);
+  border-color: var(--text-muted, rgba(0, 0, 0, 0.32));
+}
+
+.confirm-actions button:focus-visible {
+  outline: 2px solid #5ec8c0;
+  outline-offset: 1px;
+}
+
+.confirm-actions button.primary {
+  background: #5ec8c0;
+  border-color: #5ec8c0;
+  color: #0c2724;
+}
+
+.confirm-actions button.primary:hover {
+  background: #4eb6ae;
+  border-color: #4eb6ae;
+}
+
+.confirm-actions button.danger {
+  background: #c45656;
+  border-color: #c45656;
+  color: #ffffff;
+}
+
+.confirm-actions button.danger:hover {
+  background: #b54848;
+  border-color: #b54848;
+}

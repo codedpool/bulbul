@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import ConfirmDialog from "./components/ConfirmDialog.jsx";
 import "./ScratchpadWindow.css";
 
 const AUTOSAVE_DELAY_MS = 600;
@@ -113,8 +114,16 @@ export default function ScratchpadWindow() {
     }
   }
 
-  async function removeNote(id) {
-    if (!confirm("Delete this note?")) return;
+  const [pendingDelete, setPendingDelete] = useState(null);
+
+  function removeNote(id) {
+    setPendingDelete(id);
+  }
+
+  async function confirmDelete() {
+    const id = pendingDelete;
+    setPendingDelete(null);
+    if (id == null) return;
     try {
       await invoke("delete_note", { id });
       const next = notes.filter((n) => n.id !== id);
@@ -300,6 +309,16 @@ export default function ScratchpadWindow() {
           )}
         </main>
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete this note?"
+        message="This can't be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

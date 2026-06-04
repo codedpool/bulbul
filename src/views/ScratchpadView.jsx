@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import FeatureHero from "../components/FeatureHero.jsx";
+import ConfirmDialog from "../components/ConfirmDialog.jsx";
 
 const AUTOSAVE_DELAY_MS = 600;
 
@@ -119,8 +120,18 @@ export default function ScratchpadView() {
     }
   }
 
-  async function removeNote(id) {
-    if (!confirm("Delete this note?")) return;
+  // Note pending confirmation for deletion. Holds the id (or null when no
+  // delete is in flight) and drives the ConfirmDialog visibility.
+  const [pendingDelete, setPendingDelete] = useState(null);
+
+  function removeNote(id) {
+    setPendingDelete(id);
+  }
+
+  async function confirmDelete() {
+    const id = pendingDelete;
+    setPendingDelete(null);
+    if (id == null) return;
     try {
       await invoke("delete_note", { id });
       const next = notes.filter((n) => n.id !== id);
@@ -293,6 +304,16 @@ export default function ScratchpadView() {
           )}
         </main>
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete this note?"
+        message="This can't be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

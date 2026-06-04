@@ -1822,6 +1822,17 @@ button.small {
   opacity: 1;
 }
 
+/* Snippet rows use .snippet-row, not .dict-row, so the hover rule above
+   doesn't match — leaving the edit/delete buttons invisible. Keep them
+   muted at rest (discoverable) and prominent on hover. */
+.snippet-row .dict-row-actions {
+  opacity: 0.55;
+}
+
+.snippet-row:hover .dict-row-actions {
+  opacity: 1;
+}
+
 .icon-btn {
   background: transparent;
   border: 1px solid transparent;
