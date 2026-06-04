@@ -1,0 +1,123 @@
+/* Self-contained styles for the themed Combobox. Uses global theme tokens
+   from theme.css so light/dark modes follow automatically. */
+
+.combobox {
+  position: relative;
+  display: inline-block;
+}
+
+.combobox.disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.combobox-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  background: var(--field, #f4f4f4);
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.16));
+  border-radius: 7px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text, #1a1a1a);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.combobox-trigger:hover:not(:disabled),
+.combobox-trigger.open {
+  border-color: #5ec8c0;
+}
+
+.combobox-trigger:focus-visible {
+  outline: 2px solid #5ec8c0;
+  outline-offset: 1px;
+  border-color: #5ec8c0;
+}
+
+.combobox-trigger svg {
+  color: var(--text-muted, rgba(0, 0, 0, 0.55));
+  flex-shrink: 0;
+  transition: transform 140ms ease;
+}
+
+.combobox-trigger.open svg {
+  transform: rotate(180deg);
+}
+
+.combobox-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.combobox-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: var(--field, #ffffff);
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.16));
+  border-radius: 7px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  max-height: 240px; /* keep in sync with LIST_MAX_HEIGHT in Combobox.jsx */
+  overflow-y: auto;
+}
+
+/* Upward variant — applied when the JS detects there isn't enough room
+   below the trigger. Drop-shadow flips so it falls away from the
+   trigger (visually consistent with the downward case). */
+.combobox-list.up {
+  top: auto;
+  bottom: calc(100% + 4px);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.combobox-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text, #1a1a1a);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 80ms ease;
+}
+
+.combobox-item:hover {
+  background: var(--fill, #ececec);
+}
+
+.combobox-item.selected {
+  background: rgba(94, 200, 192, 0.12);
+  color: #2f8c84;
+  font-weight: 500;
+}
+
+/* Scrollbar — match the rest of the app's chrome rather than the OS default. */
+.combobox-list::-webkit-scrollbar {
+  width: 8px;
+}
+.combobox-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.combobox-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong, rgba(0, 0, 0, 0.18));
+  border-radius: 4px;
+}
+.combobox-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint, rgba(0, 0, 0, 0.32));
+}

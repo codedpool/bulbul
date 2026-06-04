@@ -1,4 +1,12 @@
 import { useState } from "react";
+import Combobox from "../components/Combobox.jsx";
+
+const APP_CATEGORY_OPTIONS = [
+  { code: "personal", label: "Personal" },
+  { code: "work", label: "Work" },
+  { code: "email", label: "Email" },
+  { code: "other", label: "Other" },
+];
 
 const CATEGORIES = [
   {
@@ -204,16 +212,14 @@ function AppOverrides({ overrides, onChange, disabled }) {
                 placeholder="App.exe"
                 disabled={disabled}
               />
-              <select
+              <Combobox
                 value={ov.category}
-                onChange={(e) => updateRow(i, { category: e.target.value })}
+                options={APP_CATEGORY_OPTIONS}
+                onChange={(code) => updateRow(i, { category: code })}
                 disabled={disabled}
-              >
-                <option value="personal">Personal</option>
-                <option value="work">Work</option>
-                <option value="email">Email</option>
-                <option value="other">Other</option>
-              </select>
+                width={140}
+                ariaLabel={`Category for ${ov.exe}`}
+              />
               <button
                 type="button"
                 className="style-override-remove"
@@ -243,16 +249,14 @@ function AppOverrides({ overrides, onChange, disabled }) {
           placeholder="e.g. Cursor.exe"
           disabled={disabled}
         />
-        <select
+        <Combobox
           value={draftCategory}
-          onChange={(e) => setDraftCategory(e.target.value)}
+          options={APP_CATEGORY_OPTIONS}
+          onChange={(code) => setDraftCategory(code)}
           disabled={disabled}
-        >
-          <option value="personal">Personal</option>
-          <option value="work">Work</option>
-          <option value="email">Email</option>
-          <option value="other">Other</option>
-        </select>
+          width={140}
+          ariaLabel="Category for new app"
+        />
         <button
           type="button"
           className="primary"

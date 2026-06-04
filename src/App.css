@@ -2538,22 +2538,25 @@ button.small {
 }
 
 .style-override-row input,
-.style-override-row select,
-.style-override-add input,
-.style-override-add select {
+.style-override-add input {
   width: 100%;
   padding: 8px 10px;
+  font: inherit;
   font-size: 13px;
   background: var(--bg);
   color: var(--text-1);
   border: 1px solid var(--fill-active);
   border-radius: 8px;
+  transition: border-color 120ms ease;
+}
+
+.style-override-row input:hover:not(:disabled),
+.style-override-add input:hover:not(:disabled) {
+  border-color: var(--text-muted);
 }
 
 .style-override-row input:focus,
-.style-override-row select:focus,
-.style-override-add input:focus,
-.style-override-add select:focus {
+.style-override-add input:focus {
   outline: none;
   border-color: #5ec8c0;
 }
