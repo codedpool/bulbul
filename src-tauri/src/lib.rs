@@ -1100,6 +1100,20 @@ pub fn run() {
     let hotkey_rx_for_setup = Mutex::new(Some(hotkey_rx));
 
     tauri::Builder::default()
+        // Single-instance MUST be the first plugin registered. When a second
+        // Bulbul launch is attempted, this callback fires inside the already-
+        // running process and the new process exits immediately — before it
+        // can touch the global hotkey, the modifier-chord watcher, the
+        // shared SQLite db, the tray, or the config file. Focusing the
+        // existing main window gives the user visible feedback so the
+        // double-launch doesn't feel like nothing happened.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

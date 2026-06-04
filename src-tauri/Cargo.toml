@@ -21,6 +21,10 @@ tauri-plugin-autostart = "2"
 # OS-level RegisterHotKey, used because rdev's low-level hook is suppressed
 # when Bulbul's own webview has focus.
 tauri-plugin-global-shortcut = "2"
+# Ensures only one Bulbul process can run at a time. Without this, two
+# instances both watch the modifier-chord keyboard state, both fire on
+# the same hotkey press, and writes to the shared SQLite + config race.
+tauri-plugin-single-instance = "2"
 
 # Local persistence (activity log + V2 data)
 rusqlite = { version = "0.31", features = ["bundled"] }
