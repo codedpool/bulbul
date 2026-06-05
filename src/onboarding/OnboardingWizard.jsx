@@ -887,7 +887,7 @@ function StepDone({ onFinish, hotkey, telemetryEnabled, onToggleTelemetry }) {
       <div className="onb-tour-grid">
         <div className="onb-tour-card">
           <div className="onb-tour-title">Transform selections</div>
-          <p>Select text anywhere and press <code>Alt + 1…5</code> to polish, formalize, or rephrase it in place.</p>
+          <p>Select text anywhere and press <code>Alt + 1…6</code> to polish, formalize, or rephrase it in place.</p>
         </div>
         <div className="onb-tour-card">
           <div className="onb-tour-title">Stays out of your way</div>

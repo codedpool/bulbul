@@ -90,6 +90,10 @@ const SECTIONS = [
 
 function App() {
   const [section, setSection] = useState("home");
+  // Settings now lives as a modal popup over the rest of the app, not
+  // a routed page. The sidebar's Settings button toggles this; the
+  // modal owns its own internal category sidebar + content pane.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [config, setConfig] = useState(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
@@ -116,7 +120,7 @@ function App() {
     invoke("get_config").then((cfg) => {
       setConfig(cfg);
       if (!cfg.privacy_acknowledged) setShowPrivacy(true);
-      if (!cfg.has_api_key && !cfg.groq_api_key) setSection("settings");
+      if (!cfg.has_api_key && !cfg.groq_api_key) setSettingsOpen(true);
     });
     invoke("get_autostart").then(setAutostart).catch(() => {});
     // Mode-B auto-update: the Rust watcher emits this event after it
@@ -220,17 +224,23 @@ function App() {
           <div className="brand-text">bulbul</div>
         </div>
         <nav className="nav">
-          {SECTIONS.map((s) => (
+          {SECTIONS.map((s) => {
+            // Settings is a modal popup, not a routed page — clicking it
+            // opens the overlay instead of swapping the main content.
+            const isSettings = s.id === "settings";
+            const isActive = isSettings ? settingsOpen : section === s.id;
+            return (
             <button
               key={s.id}
-              className={`nav-item ${section === s.id ? "active" : ""} ${s.working ? "" : "pending"}`}
-              onClick={() => setSection(s.id)}
+              className={`nav-item ${isActive ? "active" : ""} ${s.working ? "" : "pending"}`}
+              onClick={() => (isSettings ? setSettingsOpen(true) : setSection(s.id))}
             >
               <span className="nav-icon">{ICONS[s.id]}</span>
               <span className="nav-label">{s.label}</span>
               {!s.working && <span className="nav-tag">soon</span>}
             </button>
-          ))}
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
           <label
@@ -286,24 +296,24 @@ function App() {
           </div>
         )}
         {section === "home" && <HomeView displayName={config.display_name} />}
-        {section === "settings" && (
-          <SettingsView
-            config={config}
-            updateConfig={updateConfig}
-            autostart={autostart}
-            onAutostartChange={toggleAutostart}
-            onHideTrayChange={toggleHideTray}
-          />
-        )}
         {section === "dictionary" && <DictionaryView />}
         {section === "insights" && <InsightsView />}
         {section === "snippets" && <SnippetsView />}
         {section === "transforms" && <TransformsView />}
         {section === "style" && <StyleView config={config} updateConfig={updateConfig} />}
         {section === "scratchpad" && <ScratchpadView />}
-        {!["home", "settings", "dictionary", "insights", "snippets", "transforms", "style", "scratchpad"].includes(section) && <ComingSoon id={section} />}
+        {!["home", "dictionary", "insights", "snippets", "transforms", "style", "scratchpad"].includes(section) && <ComingSoon id={section} />}
       </main>
     </div>
+    <SettingsView
+      open={settingsOpen}
+      onClose={() => setSettingsOpen(false)}
+      config={config}
+      updateConfig={updateConfig}
+      autostart={autostart}
+      onAutostartChange={toggleAutostart}
+      onHideTrayChange={toggleHideTray}
+    />
     <TooltipProvider />
     </>
   );

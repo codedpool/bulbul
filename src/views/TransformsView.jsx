@@ -94,7 +94,7 @@ export default function TransformsView() {
         <div>
           <h1>Transforms</h1>
           <p className="muted small">
-            Apply an AI transform to selected text — Bulbul rewrites, cleans up, or restructures it in place. Press <kbd>Alt+1</kbd>…<kbd>Alt+5</kbd> to run a transform on the current selection. The transform marked default is the one used elsewhere in the app.
+            Select text anywhere, press Alt+1 through Alt+6, and Bulbul rewrites it — polish, retone, or restructure. The one marked default is what Bulbul uses everywhere else.
           </p>
         </div>
         <div className="header-actions">

@@ -792,6 +792,276 @@ kbd {
   column-gap: 14px;
 }
 
+/* ─────────── Settings popup ───────────
+   Settings now overlays the whole app as a modal instead of being a
+   routed page. Backdrop dims the rest, the modal box has its own
+   internal sidebar (categories) and content pane. */
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: settings-fade 130ms ease;
+}
+
+@keyframes settings-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.settings-modal {
+  width: min(800px, 100%);
+  height: min(540px, 100%);
+  max-height: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: settings-pop 160ms cubic-bezier(0.18, 0.89, 0.32, 1.05);
+}
+
+@keyframes settings-pop {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.settings-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 12px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.settings-modal-title {
+  font-family: ui-serif, Georgia, serif;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--text);
+}
+
+.settings-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  /* Zero padding overrides the global `button` rule (padding: 10px 16px).
+     Without this, box-sizing: border-box leaves the 32px square with no
+     content area and the SVG is squished to invisibility. */
+  padding: 0;
+  background: var(--fill);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  /* Full text color (not muted) so the × reads cleanly in both modes —
+     muted was washing out against the surface-1 header background. */
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.settings-modal-close:hover {
+  background: #c42b1c;
+  border-color: #c42b1c;
+  color: #ffffff;
+}
+
+.settings-modal-close:active {
+  background: #a52415;
+  border-color: #a52415;
+}
+
+.settings-modal-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-modal-nav {
+  width: 168px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  background: var(--bg-sunken);
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.settings-nav-item:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.settings-nav-item.active {
+  background: rgba(94, 200, 192, 0.14);
+  color: #5ec8c0;
+  font-weight: 500;
+}
+
+.settings-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.settings-nav-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-modal-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Row inside a pane: title + hint on the left, control on the right. */
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 0;
+}
+
+.setting-row + .setting-row {
+  border-top: 1px solid var(--border);
+}
+
+/* Wider controls (API key, hotkey display) want full width — flip to
+   a stacked layout where the control sits under the hint. */
+.setting-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.setting-row-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-row-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.setting-row-hint {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.setting-row-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.setting-row-stack .setting-row-control {
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+/* API key field + Save button row inside the Account pane. */
+.settings-key-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.settings-key-row input {
+  flex: 1;
+  background: var(--field);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  outline: none;
+}
+
+.settings-key-row input:focus { border-color: #5ec8c0; }
+
+.settings-text-input {
+  width: 200px;
+  background: var(--field);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.settings-text-input:hover { border-color: var(--text-muted); }
+.settings-text-input:focus { border-color: #5ec8c0; }
+
+.settings-note {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  background: var(--fill);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  line-height: 1.5;
+}
+
+.settings-note kbd {
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
 .settings-card {
   background: var(--surface);
   border: 1px solid var(--border-strong);
