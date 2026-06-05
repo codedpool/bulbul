@@ -286,7 +286,7 @@ function App() {
             </button>
           </div>
         )}
-        {section === "home" && <HomeView />}
+        {section === "home" && <HomeView displayName={config.display_name} />}
         {section === "settings" && (
           <SettingsView
             config={config}

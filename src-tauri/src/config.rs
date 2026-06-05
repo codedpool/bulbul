@@ -95,6 +95,17 @@ pub struct Config {
     #[serde(default = "default_open_dashboard")]
     pub open_dashboard_on_launch: bool,
 
+    /// User's preferred first name / display name. Optional. Stays
+    /// local — never sent to any backend. Used for:
+    ///   - "Welcome back, X" greeting on the Home page
+    ///   - Sign-offs in Compose-style transforms (replaces the
+    ///     [Your Name] placeholder the model would otherwise emit)
+    ///   - Personal touch in other surfaces over time
+    /// Empty string means "no name set", in which case sign-offs omit
+    /// the name line entirely rather than using a placeholder.
+    #[serde(default = "default_display_name")]
+    pub display_name: String,
+
     /// When true, the system-tray icon is hidden. The app keeps running
     /// in the background and the hotkey still works; the dashboard is
     /// reached by re-launching Bulbul (single-instance focuses the
@@ -179,6 +190,9 @@ fn default_privacy_ack() -> bool {
 }
 fn default_open_dashboard() -> bool {
     true
+}
+fn default_display_name() -> String {
+    String::new()
 }
 fn default_hide_tray() -> bool {
     false
@@ -315,6 +329,7 @@ impl Default for Config {
             min_recording_seconds: default_min_seconds(),
             privacy_acknowledged: default_privacy_ack(),
             open_dashboard_on_launch: default_open_dashboard(),
+            display_name: default_display_name(),
             hide_tray: default_hide_tray(),
             language: default_language(),
             style_enabled: default_style_enabled(),

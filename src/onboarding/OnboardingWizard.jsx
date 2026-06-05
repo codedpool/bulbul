@@ -112,7 +112,13 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
       </header>
 
       <main className="onb-page" key={step}>
-        {step === 0 && <StepWelcome onNext={() => setStep(1)} />}
+        {step === 0 && (
+          <StepWelcome
+            config={config}
+            updateConfig={updateConfig}
+            onNext={() => setStep(1)}
+          />
+        )}
         {step === 1 && (
           <StepApiKey
             config={config}
@@ -150,7 +156,20 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
   );
 }
 
-function StepWelcome({ onNext }) {
+function StepWelcome({ config, updateConfig, onNext }) {
+  // Local draft so typing doesn't write to disk per keystroke. Commit
+  // on blur or on Continue. Pre-populated when the user has filled
+  // this before and is revisiting the wizard.
+  const [name, setName] = useState(config?.display_name || "");
+
+  function commitAndNext() {
+    const trimmed = name.trim();
+    if (trimmed !== (config?.display_name || "")) {
+      updateConfig({ ...config, display_name: trimmed });
+    }
+    onNext();
+  }
+
   return (
     <div className="onb-page-inner onb-welcome">
       <img src={bulbulMark} alt="" className="onb-hero-mark" aria-hidden />
@@ -172,8 +191,35 @@ function StepWelcome({ onNext }) {
           <p>API key, hotkey, done. You'll be dictating before your coffee's cold.</p>
         </div>
       </div>
+
+      <div className="onb-name-block">
+        <label htmlFor="onb-name-input" className="onb-name-label">
+          What should I call you? <span className="muted small">(optional, stays on your machine)</span>
+        </label>
+        <input
+          id="onb-name-input"
+          type="text"
+          className="onb-name-input"
+          placeholder="First name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitAndNext();
+            }
+          }}
+          spellCheck={false}
+          autoComplete="off"
+          maxLength={48}
+        />
+        <p className="muted small onb-name-hint">
+          Used to sign your Compose drafts and greet you on the home page. Never sent anywhere — Bulbul keeps it in your local config.
+        </p>
+      </div>
+
       <div className="onb-actions onb-actions-center">
-        <button className="onb-btn primary" onClick={onNext}>Get started →</button>
+        <button className="onb-btn primary" onClick={commitAndNext}>Get started →</button>
       </div>
     </div>
   );

@@ -5,7 +5,7 @@ import FeatureHero from "../components/FeatureHero.jsx";
 
 const PAGE_SIZE = 50;
 
-export default function HomeView() {
+export default function HomeView({ displayName }) {
   const [stats, setStats] = useState(null);
   const [recent, setRecent] = useState([]);
   const [hasMore, setHasMore] = useState(true);
@@ -61,7 +61,9 @@ export default function HomeView() {
   return (
     <div className="page home">
       <header className="page-header">
-        <h1>Welcome back</h1>
+        <h1>
+          Welcome back{displayName && displayName.trim() ? `, ${displayName.trim()}` : ""}
+        </h1>
         <p className="muted small">Your dictation activity, all local. No data leaves your machine except to Groq.</p>
       </header>
 

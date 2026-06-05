@@ -219,6 +219,26 @@ export default function SettingsView({
         </Card>
 
         <Card title="Personalization" sub="Adapt to how you write.">
+          <div className="row settings-name-row">
+            <label htmlFor="settings-display-name" className="settings-name-label">
+              <span className="settings-name-title">Your name</span>
+              <span className="muted small">
+                Used to greet you on the home page and sign Compose drafts. Stays on your machine — never sent anywhere.
+              </span>
+            </label>
+            <input
+              id="settings-display-name"
+              type="text"
+              className="settings-name-input"
+              value={config.display_name || ""}
+              placeholder="First name"
+              maxLength={48}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => updateConfig({ ...config, display_name: e.target.value })}
+              onBlur={(e) => updateConfig({ ...config, display_name: e.target.value.trim() })}
+            />
+          </div>
           <Toggle
             label="Personalize cleanup from past dictations"
             hint="Show the model recent examples from the same app. Adds ~150 tokens per dictation."

@@ -354,12 +354,32 @@ pub async fn execute_transform(
         return Ok(String::new());
     }
 
+    // Append a small user-context block to whatever system prompt the
+    // caller passed. Transforms like Compose use this to sign letters
+    // with the user's actual name instead of "[Your Name]"; transforms
+    // that don't naturally need a name (Polish, Bullet Points, etc.)
+    // ignore it. Applied at runtime (rather than baked into the stored
+    // prompt) so it benefits every transform — built-ins, customised
+    // copies of the defaults, and user-created ones — without requiring
+    // a "Reset to defaults" round-trip.
+    let name = cfg.display_name.trim();
+    let user_context = if name.is_empty() {
+        "\n\nUser context: the user has not provided a name. If the task naturally calls for a name (e.g. signing a letter), omit the name line entirely. Never use placeholder text like \"[Your Name]\" or \"[Name]\"."
+            .to_string()
+    } else {
+        format!(
+            "\n\nUser context: the user's display name is \"{}\". When the task naturally calls for a name (e.g. signing a letter or message), use this name. Never use placeholder text like \"[Your Name]\" or \"[Name]\".",
+            name
+        )
+    };
+    let augmented_system = format!("{}{}", system_prompt, user_context);
+
     let request = ChatRequest {
         model: cfg.chat_model.as_str(),
         messages: vec![
             ChatMessage {
                 role: "system",
-                content: system_prompt.to_string(),
+                content: augmented_system,
             },
             ChatMessage {
                 role: "user",

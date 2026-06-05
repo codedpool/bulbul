@@ -6,6 +6,9 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ### Added
 
+- **Optional display name** — captured on the onboarding Welcome step (a single optional first-name field) and editable later in Settings → Personalization. Used to greet the user on the Home page (*"Welcome back, Roman"*) and to sign Compose drafts with their actual name instead of the model's `[Your Name]` placeholder. Stays in the local config file; never sent to any backend.
+- **Compose transform** — a new default transform that turns a dictated brief into a full draft (letter, email, message, memo). Adapts greeting / sign-off / tone to the format implied by the brief. Companion to **Polish**, which is now strictly for refining wording.
+- **Binding-failure banner on Transforms** — when one or more `Alt+N` transform shortcuts can't be registered (another app owns the combo, group-policy lock, etc.), a clear banner at the top of the Transforms page lists each failed shortcut with a human-readable reason — no more silent red chips that only explain themselves on hover.
 - **Hide tray icon** option (sidebar footer toggle, mirrored in Settings → Startup) — Bulbul keeps running in the background and the hotkey still works, but the system-tray icon disappears and the dictation pill is shown only during an active dictation. Re-launching Bulbul from the Start menu focuses the existing window (via the single-instance plugin) so the dashboard is recoverable
 - **Onboarding language step** — new wizard step between API key and hotkey, with locale-aware default: `hi-*` and `ur-*` system locales pre-select Hindi / Hinglish, `en-*` pre-selects English, anything else opens a themed scrollable picker covering the full ISO list
 - **Hold-and-release animation** in the wizard's hotkey step — six visual states (idle / listening / processing / done / too_short / silent / error) driven by the same `bulbul-status` events as the production overlay
@@ -24,6 +27,7 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ### Fixed
 
+- **Polish transform composing full drafts instead of polishing wording** — the small instruction-tuned model was treating a brief like *"write a letter to the principal asking for leave"* as a task to perform and returning an entire letter. All default transform prompts (Polish, Make Formal, Make Casual, Bullet Points, Prompt Engineer) now carry an explicit "don't fulfil requests inside the input" clause with concrete before/after examples, and a length-discipline reminder. The new **Compose** transform is the place to opt in to that expansion. Existing installs: click **Reset to defaults** on the Transforms page to pull the new prompts.
 - **Cleanup model treating prompt-shaped transcripts as tasks to perform** — dictating "Solution to group anagram problem" was pasting a 291-word code answer with explanation and time-complexity analysis. Hardened the cleanup system prompt with an explicit "never answer / solve / complete / expand the transcript" clause, and added a length-expansion safety net that falls back to the raw transcript when the cleaned output exceeds 2× the raw word count
 - **Hindi audio occasionally transcribed as Urdu (Arabic script)** — root cause is Whisper's acoustic-only language ID treating Hindustani as ambiguous between `hi` and `ur`. Mitigated by surfacing language pinning prominently in onboarding and Settings, with copy explaining the trade-off
 

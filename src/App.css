@@ -928,6 +928,50 @@ kbd {
   border-top: 1px solid var(--border);
 }
 
+/* Inline name editor in Settings → Personalization. Same vertical
+   rhythm as .toggle-row so adjacent rows look like a uniform stack. */
+.settings-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+}
+
+.settings-name-row + .toggle-row {
+  border-top: 1px solid var(--border);
+}
+
+.settings-name-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-name-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-name-input {
+  flex-shrink: 0;
+  width: 180px;
+  background: var(--field);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.settings-name-input:hover { border-color: var(--text-muted); }
+.settings-name-input:focus { border-color: #5ec8c0; }
+
 .toggle-text { flex: 1; min-width: 0; }
 .toggle-label { font-size: 13px; font-weight: 500; }
 .toggle-hint { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
@@ -1985,6 +2029,98 @@ button.small {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Top-of-page banner shown when one or more transform Alt+N hotkeys
+   failed to register with Windows (another app already owns the combo).
+   Sits above the editor + the transform grid so the user sees it before
+   the chips. */
+.transforms-binding-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  background: rgba(220, 130, 130, 0.06);
+  border: 1px solid rgba(220, 130, 130, 0.28);
+  color: var(--text-2);
+}
+
+.transforms-binding-banner-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.transforms-binding-banner-icon {
+  flex-shrink: 0;
+  color: rgba(220, 130, 130, 0.95);
+  margin-top: 2px;
+}
+
+.transforms-binding-banner-head strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.transforms-binding-banner-head p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.transforms-binding-banner-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.transforms-binding-banner-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.transforms-binding-combo {
+  display: inline-flex;
+  align-items: center;
+  background: var(--field);
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: rgba(220, 130, 130, 0.95);
+  border: 1px solid rgba(220, 130, 130, 0.25);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.transforms-binding-name {
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.transforms-binding-reason {
+  color: var(--text-muted);
+}
+
+.transforms-binding-banner-hint {
+  margin-top: 4px;
+}
+
+.transforms-binding-banner-hint em {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text-1);
 }
 
 .transform-grid {

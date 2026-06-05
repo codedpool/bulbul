@@ -170,8 +170,56 @@
 /* ─────────── Welcome step ─────────── */
 .onb-welcome {
   align-items: flex-start;
-  gap: 26px;
-  padding-top: 6vh;
+  gap: 18px;
+  /* Tighter top padding so the optional name input + privacy hint +
+     "Get started" button all clear the fold at default window height. */
+  padding-top: 2vh;
+}
+
+/* Optional name field on the Welcome step. Sized to feel friendly,
+   not formal — small label + medium input + tiny privacy hint below. */
+.onb-name-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 460px;
+}
+
+.onb-name-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.onb-name-label .muted {
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.onb-name-input {
+  background: var(--field);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.onb-name-input:hover {
+  border-color: var(--text-muted);
+}
+
+.onb-name-input:focus {
+  border-color: #5ec8c0;
+}
+
+.onb-name-hint {
+  margin: 0;
+  line-height: 1.5;
 }
 
 .onb-hero-mark {
@@ -713,12 +761,29 @@
 /* ─────────── Done step ─────────── */
 .onb-done {
   align-items: flex-start;
-  padding-top: 6vh;
-  /* Extra bottom padding so the telemetry card's last line clears the
-     sticky Open Bulbul bar (~72px tall). Other steps have less content
-     so they don't bump into it; Done is uniquely tall. */
-  padding-bottom: 96px;
-  gap: 24px;
+  /* Tighter top padding so the check + heading + paragraph + tour cards
+     + telemetry row all fit closer to the fold at default window
+     height. Same easing pass we did on the Welcome step. */
+  padding-top: 2vh;
+  /* Bottom padding has to clear the sticky Open Bulbul bar (~72 px
+     tall) AND give the user enough scrollable room to see the last
+     line of the telemetry hint after scroll. 140 px is the smallest
+     value that survives both default and minimum window heights. */
+  padding-bottom: 140px;
+  gap: 18px;
+}
+
+/* Smaller check + tighter tour-card padding so the page is shorter
+   overall — fewer scrolls before the telemetry text is reachable. */
+.onb-done .onb-done-check {
+  width: 56px;
+  height: 56px;
+  font-size: 30px;
+}
+
+.onb-done .onb-tour-card {
+  padding: 14px 16px;
+  gap: 4px;
 }
 
 /* Done page sets align-items: flex-start so the heading + check anchor left.

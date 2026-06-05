@@ -116,6 +116,12 @@ export default function TransformsView() {
         samples={TRANSFORMS_HERO_SAMPLES}
       />
 
+      <BindingFailureBanner
+        slotStatuses={slotStatuses}
+        transforms={transforms}
+        loading={loading}
+      />
+
       {editing && (
         <TransformEditor
           initial={editing}
@@ -163,6 +169,88 @@ export default function TransformsView() {
         onConfirm={confirmReset}
         onCancel={() => setConfirmingReset(false)}
       />
+    </div>
+  );
+}
+
+// Translate Windows' raw RegisterHotKey error text into something a
+// non-technical user can act on. Falls back to the raw error if we can't
+// recognise it (better than silently swallowing).
+function humanizeBindingError(raw) {
+  if (!raw) return "another app on your computer is already using this combo";
+  const s = raw.toLowerCase();
+  if (s.includes("already") || s.includes("1409")) {
+    return "another app is already using this combo";
+  }
+  if (s.includes("access") || s.includes("denied")) {
+    return "Windows denied the registration (try restarting Bulbul as the same user)";
+  }
+  if (s.includes("not representable")) {
+    return "this combo isn't a Windows-valid shortcut";
+  }
+  return raw;
+}
+
+function BindingFailureBanner({ slotStatuses, transforms, loading }) {
+  if (loading) return null;
+  const blocked = slotStatuses.filter((s) => s && !s.registered);
+  if (blocked.length === 0) return null;
+  const transformById = new Map(transforms.map((t) => [t.id, t]));
+  return (
+    <div className="transforms-binding-banner" role="status">
+      <div className="transforms-binding-banner-head">
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+          className="transforms-binding-banner-icon"
+        >
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <div>
+          <strong>
+            {blocked.length === 1
+              ? "1 transform shortcut couldn't be claimed"
+              : `${blocked.length} transform shortcuts couldn't be claimed`}
+          </strong>
+          <p className="muted small">
+            Windows only lets one app own each global hotkey, and another
+            app on your computer registered first. The transforms below
+            still work — you can still trigger them by clicking their
+            card — the keyboard shortcut just won't fire until the
+            conflict is resolved.
+          </p>
+        </div>
+      </div>
+      <ul className="transforms-binding-banner-list">
+        {blocked.map((s) => {
+          const t = transformById.get(s.transform_id);
+          return (
+            <li key={s.transform_id}>
+              <code className="transforms-binding-combo">{s.combo}</code>
+              {t && (
+                <span className="transforms-binding-name">{t.name}</span>
+              )}
+              <span className="transforms-binding-reason">
+                — {humanizeBindingError(s.error)}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="transforms-binding-banner-hint muted small">
+        Common culprits: OBS, Steam, AutoHotkey scripts, screenshot tools,
+        and launcher apps. Close or reconfigure the offender, then click{" "}
+        <em>Reset to defaults</em> above to retry.
+      </div>
     </div>
   );
 }
