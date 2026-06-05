@@ -95,6 +95,14 @@ pub struct Config {
     #[serde(default = "default_open_dashboard")]
     pub open_dashboard_on_launch: bool,
 
+    /// When true, the system-tray icon is hidden. The app keeps running
+    /// in the background and the hotkey still works; the dashboard is
+    /// reached by re-launching Bulbul (single-instance focuses the
+    /// existing window). An in-dashboard Quit button appears in this
+    /// mode so the user isn't stranded without a way to exit.
+    #[serde(default = "default_hide_tray")]
+    pub hide_tray: bool,
+
     #[serde(default = "default_language")]
     pub language: String,
 
@@ -171,6 +179,9 @@ fn default_privacy_ack() -> bool {
 }
 fn default_open_dashboard() -> bool {
     true
+}
+fn default_hide_tray() -> bool {
+    false
 }
 fn default_language() -> String {
     "auto".to_string()
@@ -304,6 +315,7 @@ impl Default for Config {
             min_recording_seconds: default_min_seconds(),
             privacy_acknowledged: default_privacy_ack(),
             open_dashboard_on_launch: default_open_dashboard(),
+            hide_tray: default_hide_tray(),
             language: default_language(),
             style_enabled: default_style_enabled(),
             style_personal: default_style_personal(),

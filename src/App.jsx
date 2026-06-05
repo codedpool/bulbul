@@ -161,6 +161,28 @@ function App() {
     }
   }
 
+  // Show/hide the system-tray icon. The Rust side persists hide_tray
+  // into the config file and flips the live tray visibility in one
+  // call, so we mirror the value into local state on success.
+  async function toggleHideTray(hide) {
+    try {
+      await invoke("set_tray_visible", { visible: !hide });
+      setConfig((prev) => ({ ...prev, hide_tray: hide }));
+    } catch (e) {
+      console.error("hide-tray toggle failed", e);
+    }
+  }
+
+  async function quitApp() {
+    try {
+      await invoke("quit_app");
+    } catch (e) {
+      // The process is typically gone before this resolves; log on the
+      // off chance it doesn't.
+      console.error("quit failed", e);
+    }
+  }
+
   function setThemePref(pref) {
     applyTheme(pref); // instant, before the async save round-trips
     updateConfig({ ...config, theme: pref });
@@ -231,6 +253,30 @@ function App() {
               <span className="toggle-thumb" />
             </span>
           </label>
+          <label
+            className="sidebar-toggle-row"
+            title="When on, the system-tray icon disappears. Bulbul still runs in the background and the pill still appears when you dictate. Re-launch Bulbul from the Start menu to bring this dashboard back."
+          >
+            <span className="sidebar-toggle-label">Hide tray icon</span>
+            <span className={`toggle ${config.hide_tray ? "on" : ""}`}>
+              <input
+                type="checkbox"
+                checked={!!config.hide_tray}
+                onChange={(e) => toggleHideTray(e.target.checked)}
+              />
+              <span className="toggle-thumb" />
+            </span>
+          </label>
+          {config.hide_tray && (
+            <button
+              type="button"
+              className="sidebar-quit-btn"
+              onClick={quitApp}
+              title="Quit Bulbul. With the tray hidden this is the only place to exit cleanly."
+            >
+              Quit Bulbul
+            </button>
+          )}
           <div className={`status status-${status.state}`}>
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
@@ -262,6 +308,7 @@ function App() {
             updateConfig={updateConfig}
             autostart={autostart}
             onAutostartChange={toggleAutostart}
+            onHideTrayChange={toggleHideTray}
           />
         )}
         {section === "dictionary" && <DictionaryView />}

@@ -42,7 +42,13 @@ const LANGUAGES = [
   { code: "el", label: "Greek" },
 ];
 
-export default function SettingsView({ config, updateConfig, autostart, onAutostartChange }) {
+export default function SettingsView({
+  config,
+  updateConfig,
+  autostart,
+  onAutostartChange,
+  onHideTrayChange,
+}) {
   const [draftKey, setDraftKey] = useState(config.groq_api_key || "");
   const [keyState, setKeyState] = useState("idle");
   const [keyError, setKeyError] = useState("");
@@ -239,6 +245,12 @@ export default function SettingsView({ config, updateConfig, autostart, onAutost
             hint="Off = land straight in the tray."
             checked={!!config.open_dashboard_on_launch}
             onChange={(v) => updateConfig({ ...config, open_dashboard_on_launch: v })}
+          />
+          <Toggle
+            label="Hide tray icon"
+            hint="Bulbul keeps running in the background and your hotkey still works. Re-launch Bulbul from the Start menu to bring this window back. A Quit button appears in the sidebar so you can still exit cleanly."
+            checked={!!config.hide_tray}
+            onChange={(v) => onHideTrayChange?.(v)}
           />
         </Card>
 

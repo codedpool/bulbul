@@ -128,6 +128,11 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
             message: message.clone(),
         },
     );
+    // Respect the user's "hide tray icon" mode: when on, the overlay
+    // window is hidden during idle and shown only while a dictation is
+    // in flight. When off (default), the overlay stays visible across
+    // every state.
+    apply_overlay_visibility_for_state(app, state);
     // Force the overlay above Bulbul's own main window when an active state
     // begins. `always_on_top: true` was set at window creation but Windows
     // doesn't reliably honour that between same-process windows — we have
@@ -144,18 +149,30 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
         });
     }
     // After a terminal state, fall back to idle so the overlay shrinks.
+    // Re-enter emit_status (not just app.emit) so the visibility logic
+    // fires on the idle transition too.
     if matches!(state, "done" | "error") {
         let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(Duration::from_millis(1100)).await;
-            let _ = app_clone.emit(
-                "bulbul-status",
-                StatusPayload {
-                    state: "idle",
-                    message: None,
-                },
-            );
+            emit_status(&app_clone, "idle", None);
         });
+    }
+}
+
+/// Show or hide the overlay window based on the current dictation state
+/// and the user's `hide_tray` preference. When `hide_tray` is on, the
+/// overlay is hidden during `idle` so the screen is clean, and shown for
+/// every active state so the user always gets visual feedback while
+/// dictating. When `hide_tray` is off, the overlay stays visible at all
+/// times (idle just shows the small pill).
+fn apply_overlay_visibility_for_state(app: &AppHandle, state: &str) {
+    let hide_tray = app.state::<AppState>().config.lock().hide_tray;
+    let Some(overlay) = app.get_webview_window("overlay") else { return; };
+    let should_show = !hide_tray || state != "idle";
+    let result = if should_show { overlay.show() } else { overlay.hide() };
+    if let Err(e) = result {
+        tracing::warn!("overlay visibility toggle failed (state={state}): {e}");
     }
 }
 
@@ -1036,6 +1053,50 @@ fn set_autostart(enabled: bool, app: AppHandle) -> Result<(), String> {
     }
 }
 
+/// Toggle the system-tray icon at runtime. Persists `cfg.hide_tray` so
+/// the choice survives restart. We keep the tray icon allocated even
+/// when hidden — toggling `set_visible(true)` later is instant, whereas
+/// rebuilding the tray would mean re-wiring menus and event handlers.
+#[tauri::command]
+fn set_tray_visible(
+    visible: bool,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.lock();
+        cfg.hide_tray = !visible;
+        config::save(&cfg).map_err(|e| format!("{e:#}"))?;
+    }
+    if let Some(tray) = app.tray_by_id("bulbul-tray") {
+        tray.set_visible(visible).map_err(|e| format!("{e}"))?;
+    }
+    // The user expects the pill to disappear the moment they toggle
+    // "Hide tray" on. We don't track current dictation state here, so
+    // we apply idle's visibility rule — if a dictation is in flight
+    // when the user toggles, the next emit_status will re-show the
+    // overlay correctly.
+    if !visible {
+        if let Some(overlay) = app.get_webview_window("overlay") {
+            let _ = overlay.hide();
+        }
+    } else if let Some(overlay) = app.get_webview_window("overlay") {
+        // Restore the always-visible behaviour when revealing the tray
+        // again — even in idle, the pill should be back on screen.
+        let _ = overlay.show();
+    }
+    Ok(())
+}
+
+/// Quit Bulbul from the dashboard. Mirrors the tray's Quit menu item so
+/// the user has a way out when the tray is hidden. Installs a staged
+/// update on the way out (Mode-B promise).
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    install_staged_if_present(&app);
+    app.exit(0);
+}
+
 #[tauri::command]
 async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -1133,6 +1194,8 @@ pub fn run() {
             install_staged_update,
             get_autostart,
             set_autostart,
+            set_tray_visible,
+            quit_app,
             show_settings_window,
             set_overlay_height,
             get_home_stats,
@@ -1311,7 +1374,8 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
         "Bulbul — set your Groq API key in Settings"
     };
 
-    let _tray = TrayIconBuilder::with_id("bulbul-tray")
+    let initial_visible = !app.state::<AppState>().config.lock().hide_tray;
+    let tray = TrayIconBuilder::with_id("bulbul-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip(tooltip)
@@ -1360,6 +1424,13 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    // Tauri 2's TrayIconBuilder has no .visible() — apply the
+    // hide_tray preference after build. Best-effort: if the platform
+    // refuses to hide, we log and keep going (tray simply stays
+    // visible until the user retries).
+    if let Err(e) = tray.set_visible(initial_visible) {
+        tracing::warn!("could not apply initial tray visibility: {e}");
+    }
     Ok(())
 }
 
