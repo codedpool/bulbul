@@ -248,7 +248,7 @@ export default function SettingsView({
           />
           <Toggle
             label="Hide tray icon"
-            hint="Bulbul keeps running in the background and your hotkey still works. Re-launch Bulbul from the Start menu to bring this window back. A Quit button appears in the sidebar so you can still exit cleanly."
+            hint="Bulbul keeps running in the background and your hotkey still works. Re-launch Bulbul from the Start menu to bring this window back. To quit Bulbul, flip this off and use the tray's Quit menu."
             checked={!!config.hide_tray}
             onChange={(v) => onHideTrayChange?.(v)}
           />

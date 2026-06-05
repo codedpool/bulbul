@@ -1088,15 +1088,6 @@ fn set_tray_visible(
     Ok(())
 }
 
-/// Quit Bulbul from the dashboard. Mirrors the tray's Quit menu item so
-/// the user has a way out when the tray is hidden. Installs a staged
-/// update on the way out (Mode-B promise).
-#[tauri::command]
-fn quit_app(app: AppHandle) {
-    install_staged_if_present(&app);
-    app.exit(0);
-}
-
 #[tauri::command]
 async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -1195,7 +1186,6 @@ pub fn run() {
             get_autostart,
             set_autostart,
             set_tray_visible,
-            quit_app,
             show_settings_window,
             set_overlay_height,
             get_home_stats,

@@ -173,16 +173,6 @@ function App() {
     }
   }
 
-  async function quitApp() {
-    try {
-      await invoke("quit_app");
-    } catch (e) {
-      // The process is typically gone before this resolves; log on the
-      // off chance it doesn't.
-      console.error("quit failed", e);
-    }
-  }
-
   function setThemePref(pref) {
     applyTheme(pref); // instant, before the async save round-trips
     updateConfig({ ...config, theme: pref });
@@ -255,7 +245,7 @@ function App() {
           </label>
           <label
             className="sidebar-toggle-row"
-            title="When on, the system-tray icon disappears. Bulbul still runs in the background and the pill still appears when you dictate. Re-launch Bulbul from the Start menu to bring this dashboard back."
+            title="When on, the system-tray icon disappears. Bulbul still runs in the background and the pill still appears when you dictate. Re-launch Bulbul from the Start menu to bring this dashboard back. To quit Bulbul, flip this off and use the tray's Quit menu."
           >
             <span className="sidebar-toggle-label">Hide tray icon</span>
             <span className={`toggle ${config.hide_tray ? "on" : ""}`}>
@@ -267,16 +257,6 @@ function App() {
               <span className="toggle-thumb" />
             </span>
           </label>
-          {config.hide_tray && (
-            <button
-              type="button"
-              className="sidebar-quit-btn"
-              onClick={quitApp}
-              title="Quit Bulbul. With the tray hidden this is the only place to exit cleanly."
-            >
-              Quit Bulbul
-            </button>
-          )}
           <div className={`status status-${status.state}`}>
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
