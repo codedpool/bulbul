@@ -668,8 +668,8 @@
 .onb-test-pane {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 8px;
+  padding: 12px 14px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 11px;
@@ -679,7 +679,7 @@
 .onb-test-header {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .onb-test-eyebrow {
@@ -718,13 +718,101 @@
   border-radius: 4px;
 }
 
+/* ─────────── Hotkey chord display (visible keycaps) ─────────── */
+/* The row of keycaps shown above the sample line in the hotkey test
+   pane. Each cap lights up live as the user presses its key, so the
+   chord visibly assembles itself — much more guided than reading
+   "Hold Ctrl + Win" as plain text.
+
+   Heights are deliberately tight so the whole test pane (chord +
+   sample line + indicator + textarea + foot) still fits inside the
+   default wizard window without the sticky bottom bar covering the
+   textarea. */
+.onb-chord {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 14px;
+  margin: 0;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(94, 200, 192, 0.05), rgba(94, 200, 192, 0.01));
+  border: 1px dashed rgba(94, 200, 192, 0.35);
+  min-height: 54px;
+}
+
+.onb-chord-empty {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-style: italic;
+  background: var(--fill);
+  border-style: solid;
+  border-color: var(--border);
+  justify-content: flex-start;
+}
+
+.onb-chord-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.onb-chord-plus {
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--text-faint);
+  -webkit-user-select: none;
+  user-select: none;
+  margin: 0 2px;
+}
+
+.onb-keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  background: linear-gradient(180deg, var(--surface), var(--field));
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 3px;
+  border-radius: 8px;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  transition: transform 110ms ease,
+              border-color 110ms ease,
+              background 110ms ease,
+              color 110ms ease,
+              box-shadow 160ms ease;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.onb-keycap.wide { min-width: 56px; }
+.onb-keycap.extra-wide { min-width: 96px; }
+
+.onb-keycap.pressed {
+  background: linear-gradient(180deg, #5ec8c0, #4ab1a9);
+  border-color: #4ab1a9;
+  border-bottom-width: 1px;
+  color: #0a1716;
+  transform: translateY(2px);
+  box-shadow: 0 0 0 3px rgba(94, 200, 192, 0.22),
+              inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
 .onb-textarea {
   width: 100%;
-  min-height: 96px;
+  min-height: 64px;
   background: var(--field);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   color: var(--text);
   font: inherit;
   font-size: 14px;
@@ -953,14 +1041,14 @@
 .onb-hold-indicator {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
-  margin: 10px 0 12px;
-  border-radius: 12px;
+  gap: 12px;
+  padding: 8px 14px;
+  margin: 4px 0;
+  border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--fill);
   transition: background 200ms ease, border-color 200ms ease, transform 200ms ease;
-  min-height: 60px;
+  min-height: 48px;
 }
 
 .onb-hold-indicator.state-listening {
@@ -1005,22 +1093,32 @@
   100% { transform: scale(1); }
 }
 
-/* Visual column (icon + animation) */
+/* Visual column (icon + animation).
+   Column flex so the listening-state mic and waveform stack vertically
+   *inside* this box and the combined visual stays centered with the
+   title/subtitle column next to it. Earlier we positioned the waveform
+   absolutely with translateY(100%), which made it poke out below the
+   visual's layout box — the flex parent then aligned the box (not the
+   visible content) with the meta text, so the animation read as
+   "below" the text. */
 .onb-hold-visual {
   flex-shrink: 0;
-  width: 56px;
+  width: 44px;
   height: 56px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 3px;
   position: relative;
 }
 
 /* Idle / listening mic */
 .onb-hold-mic {
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1049,16 +1147,15 @@
   100% { transform: scale(1.55); opacity: 0; }
 }
 
-/* Five-bar waveform anchored under the mic during listening */
+/* Five-bar waveform — sibling of the mic inside the visual column, so
+   the (mic + waveform) stack centers against the title/subtitle text
+   next to it instead of dangling below the indicator box. */
 .onb-hold-waveform {
-  position: absolute;
-  bottom: -2px;
-  left: 50%;
-  transform: translate(-50%, 100%);
   display: flex;
   gap: 3px;
   align-items: flex-end;
-  height: 16px;
+  height: 14px;
+  flex-shrink: 0;
   pointer-events: none;
 }
 

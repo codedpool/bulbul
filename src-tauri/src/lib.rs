@@ -1540,14 +1540,28 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                             continue;
                         }
                     };
-                    // Energy gate: if the recording is essentially silence,
-                    // skip the API call entirely. Whisper hallucinates
-                    // "thank you" / "you" on silent input.
-                    const SILENCE_PEAK_DBFS: f32 = -55.0;
-                    if result.peak_dbfs < SILENCE_PEAK_DBFS {
+                    // Energy gate: drop near-silent clips before they reach
+                    // Whisper — otherwise it hallucinates "thank you" / "you" /
+                    // "thanks for watching" / Hindi-equivalent phrases that
+                    // can slip past the post-STT denylist. We require BOTH a
+                    // tolerable peak AND a tolerable RMS: peak alone misses
+                    // "quiet room with a brief click" (a single mouse click
+                    // can push peak above -55 dBFS while average energy stays
+                    // at room-tone), and RMS alone misses sustained low drones.
+                    // Real speech has both; ambient noise has only one.
+                    //
+                    // Thresholds tuned conservatively so quiet-but-real speech
+                    // still passes: normal speech is ~-25 dBFS RMS, soft
+                    // speech ~-35 dBFS, true ambient room noise ~-50 dBFS.
+                    const SILENCE_PEAK_DBFS: f32 = -50.0;
+                    const SILENCE_RMS_DBFS: f32 = -42.0;
+                    if result.peak_dbfs < SILENCE_PEAK_DBFS
+                        || result.rms_dbfs < SILENCE_RMS_DBFS
+                    {
                         tracing::info!(
-                            "discarding silent clip ({:.1} dBFS peak, {:.2}s)",
+                            "discarding silent clip (peak={:.1} dBFS, rms={:.1} dBFS, {:.2}s)",
                             result.peak_dbfs,
+                            result.rms_dbfs,
                             result.seconds
                         );
                         emit_status(&handle, "idle", Some("Silence — nothing to transcribe.".into()));

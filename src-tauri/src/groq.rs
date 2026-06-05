@@ -111,6 +111,8 @@ struct TranscriptionResponse {
 
 /// Whole-transcript matches that Whisper commonly hallucinates from silence
 /// or microphone noise. Compared after lowercasing and stripping punctuation.
+/// Single short words like "the"/"a"/"i" are also included — almost nobody
+/// dictates a single article, but Whisper emits them constantly on noise.
 const HALLUCINATION_DENYLIST: &[&str] = &[
     "",
     "you",
@@ -118,16 +120,41 @@ const HALLUCINATION_DENYLIST: &[&str] = &[
     "thank you",
     "thank you so much",
     "thanks for watching",
-    "thanks for watching!",
     "thank you for watching",
+    "thanks for watching the video",
+    "thanks for watching see you next time",
     "please subscribe",
+    "subscribe to my channel",
+    "subscribe to the channel",
+    "like and subscribe",
+    "see you in the next video",
+    "see you next time",
+    "see you next video",
+    "see you guys next time",
+    "i'll see you in the next video",
+    "i will see you in the next video",
+    "i'll see you guys next time",
     "bye",
+    "bye bye",
+    "goodbye",
     "music",
+    "music playing",
+    "soft music",
+    "applause",
+    "laughter",
+    "silence",
+    "the end",
     "okay",
     "ok",
     "uh",
     "um",
     "hmm",
+    "mhm",
+    "the",
+    "a",
+    "i",
+    "and",
+    "so",
 ];
 
 pub fn is_likely_hallucination(text: &str) -> bool {
@@ -275,8 +302,10 @@ pub async fn cleanup(
          explain it, or add ANY information the user did not literally speak. If the \
          user dictated \"solution to anagram problem\" you return \"Solution to anagram \
          problem.\" — nothing more. Your only allowed edits are punctuation, casing, \
-         removing fillers (\"um\", \"uh\", \"like\"), and minor grammar fixes. The output's \
-         word count must be very close to the input's.\n\n\
+         removing fillers (\"um\", \"uh\", \"like\", \"you know\", \"i mean\"), and minor \
+         grammar fixes. Removing fillers and disfluencies WILL shrink the word count — \
+         that is expected and correct. What you must NEVER do is ADD new words, new \
+         sentences, or new content beyond what the speaker said.\n\n\
          Return ONLY the cleaned text. No preamble, no quotes, no commentary.",
         mode = cfg.mode.system_instruction(),
         style = style_block,

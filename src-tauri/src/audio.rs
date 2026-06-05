@@ -122,10 +122,17 @@ impl Recorder {
                 .collect()
         };
 
-        // Capture the *pre-normalization* peak. The silence gate upstream
-        // must look at this, not the post-AGC value — otherwise AGC just
-        // inflates the noise floor and the gate becomes useless.
+        // Capture the *pre-normalization* peak AND RMS. The silence gate
+        // upstream must look at both pre-AGC — otherwise AGC inflates the
+        // noise floor and the gate becomes useless. We want two metrics
+        // because peak alone is fooled by a single click in an otherwise
+        // silent room (a mouse-click spike can lift peak above -55 dBFS
+        // while average energy stays at room-tone levels), and RMS alone
+        // would be fooled by a sustained drone. Speech reliably has both
+        // a high peak AND a meaningful average — only ambient noise has
+        // one without the other.
         let peak_dbfs = compute_peak_dbfs(&mono);
+        let rms_dbfs = compute_rms_dbfs(&mono);
         let seconds = if self.sample_rate == 0 {
             0.0
         } else {
@@ -175,6 +182,7 @@ impl Recorder {
         Ok(RecordingResult {
             wav: buf.into_inner(),
             peak_dbfs,
+            rms_dbfs,
             seconds,
         })
     }
@@ -192,6 +200,7 @@ impl Recorder {
 pub struct RecordingResult {
     pub wav: Vec<u8>,
     pub peak_dbfs: f32,
+    pub rms_dbfs: f32,
     pub seconds: f32,
 }
 
@@ -205,6 +214,29 @@ fn compute_peak_dbfs(samples: &[i16]) -> f32 {
         return -120.0;
     }
     20.0 * (peak as f32 / i16::MAX as f32).log10()
+}
+
+/// Average energy of the clip in dBFS. Computed in f64 because squaring
+/// i16 samples and summing across a multi-second recording can overflow
+/// f32's mantissa precision near full-scale clips. Returns -120 dBFS for
+/// truly empty or pure-zero buffers as a safe floor.
+fn compute_rms_dbfs(samples: &[i16]) -> f32 {
+    if samples.is_empty() {
+        return -120.0;
+    }
+    let scale = i16::MAX as f64;
+    let sum_sq: f64 = samples
+        .iter()
+        .map(|&s| {
+            let f = s as f64 / scale;
+            f * f
+        })
+        .sum();
+    let rms = (sum_sq / samples.len() as f64).sqrt();
+    if rms <= 0.0 {
+        return -120.0;
+    }
+    (20.0 * rms.log10()) as f32
 }
 
 /// Target the post-AGC peak just below 0 dBFS so we never clip on the

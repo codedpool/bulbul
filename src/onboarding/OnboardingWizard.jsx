@@ -626,6 +626,13 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
   );
   const [capturing, setCapturing] = useState(false);
   const [transcript, setTranscript] = useState("");
+  // Set of canonical key names ("Ctrl", "Win", "Space"…) currently held
+  // down inside the wizard window. We track this purely so we can light
+  // up the visual keycaps one-by-one as the user assembles the chord —
+  // the actual hotkey firing is still done by the OS-level global shortcut
+  // (which surfaces via the bulbul-status event below), so partial state
+  // never triggers a dictation.
+  const [pressedKeys, setPressedKeys] = useState(() => new Set());
   // Visual state machine for the press-and-hold demo. Driven by the
   // bulbul-status events the Rust orchestrator emits — same machinery
   // that drives the production overlay, so the wizard's feedback matches
@@ -693,6 +700,46 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
   useEffect(() => {
     if (textareaRef.current) textareaRef.current.focus();
   }, [selected.value]);
+
+  // Track which keys are currently held inside the wizard window so the
+  // ChordDisplay can light up each keycap as the user assembles the
+  // chord. Listening on window (capture phase) so we get the events
+  // regardless of which element has focus inside the wizard.
+  useEffect(() => {
+    const onDown = (e) => {
+      const name = keyEventToName(e);
+      if (!name) return;
+      setPressedKeys((prev) => {
+        if (prev.has(name)) return prev;
+        const next = new Set(prev);
+        next.add(name);
+        return next;
+      });
+    };
+    const onUp = (e) => {
+      const name = keyEventToName(e);
+      if (!name) return;
+      setPressedKeys((prev) => {
+        if (!prev.has(name)) return prev;
+        const next = new Set(prev);
+        next.delete(name);
+        return next;
+      });
+    };
+    // Losing focus mid-press would otherwise leave keycaps stuck "down"
+    // because the keyup never reaches us.
+    const onBlur = () => setPressedKeys(new Set());
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
+  const requiredParts = parseChordParts(activeHotkey);
 
   async function choose(value) {
     setTranscript("");
@@ -789,8 +836,9 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
           <div className="onb-test-header">
             <div className="onb-test-eyebrow">Try it now</div>
             <div className="onb-test-instructions">
-              Hold <code>{formatComboForDisplay(activeHotkey)}</code> and read this aloud:
+              Press and hold all of these keys together, then read the sample line aloud:
             </div>
+            <ChordDisplay parts={requiredParts} pressedKeys={pressedKeys} />
             <div className="onb-sample-line">"{SAMPLE_LINE}"</div>
           </div>
 
@@ -798,6 +846,8 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
             state={hotkeyState}
             hotkey={formatComboForDisplay(activeHotkey)}
             errorMsg={errorMsg}
+            requiredParts={requiredParts}
+            pressedKeys={pressedKeys}
           />
 
           <textarea
@@ -877,7 +927,13 @@ function StepDone({ onFinish, hotkey, telemetryEnabled, onToggleTelemetry }) {
 /// visual states; each combines an icon, a primary line, and a coaching
 /// subline. Driven by the bulbul-status event stream (see the useEffect
 /// in StepHotkey), so the UI mirrors what the production app does.
-function HoldIndicator({ state, hotkey, errorMsg }) {
+///
+/// While idle we ALSO look at requiredParts vs pressedKeys to coach the
+/// user through assembling the chord — e.g. "Now also hold Win" once
+/// they've pressed Ctrl. The bulbul-status "listening" event only fires
+/// once the OS-level global shortcut completes; this partial state lives
+/// purely in the wizard.
+function HoldIndicator({ state, hotkey, errorMsg, requiredParts, pressedKeys }) {
   const isListening = state === "listening";
   const isProcessing = state === "processing";
   const isDone = state === "done";
@@ -913,23 +969,41 @@ function HoldIndicator({ state, hotkey, errorMsg }) {
       subtitle = errorMsg || "Look at the dashboard's overlay for details, or try again.";
       break;
     case "idle":
-    default:
-      title = `Hold ${hotkey} to start`;
-      subtitle = "We'll show you what's happening as you press, hold, and release.";
+    default: {
+      const parts = requiredParts || [];
+      const heldSet = pressedKeys || new Set();
+      const held = parts.filter((k) => heldSet.has(k));
+      const missing = parts.filter((k) => !heldSet.has(k));
+      if (parts.length === 0) {
+        title = "Pick a hotkey on the left to test it";
+        subtitle = "Choose one of the presets, or record a custom combo.";
+      } else if (held.length === 0) {
+        title = `Hold ${hotkey} to start`;
+        subtitle = "Each key on the right lights up as you press it.";
+      } else if (missing.length > 0) {
+        title = `Now also hold ${missing.map(prettyKeyName).join(" + ")}`;
+        subtitle = `Keep ${held.map(prettyKeyName).join(" + ")} pressed.`;
+      } else {
+        title = "Holding — start speaking";
+        subtitle = "Read the sample line aloud. Release the keys when you're done.";
+      }
       break;
+    }
   }
 
   return (
     <div className={`onb-hold-indicator state-${state}`} role="status" aria-live="polite">
       <div className="onb-hold-visual">
         {isListening && (
-          <div className="onb-hold-mic">
-            <MicIcon active />
-            <div className="onb-hold-pulse" aria-hidden />
+          <>
+            <div className="onb-hold-mic">
+              <MicIcon active />
+              <div className="onb-hold-pulse" aria-hidden />
+            </div>
             <div className="onb-hold-waveform" aria-hidden>
               <span /><span /><span /><span /><span />
             </div>
-          </div>
+          </>
         )}
         {isProcessing && (
           <div className="onb-hold-spinner" aria-hidden />
@@ -1027,12 +1101,82 @@ const MOD_ORDER = ["Ctrl", "Shift", "Alt", "Win"];
 // independent of how the combo happens to be stored in config.
 function formatComboForDisplay(combo) {
   if (!combo) return "—";
+  return parseChordParts(combo).join(" + ");
+}
+
+// Split a combo string into its ordered parts (modifiers first in
+// canonical order, then the trigger key). Returns [] for empty / invalid
+// strings so callers can render an empty state cleanly.
+function parseChordParts(combo) {
+  if (!combo) return [];
   const parts = combo.split("+").map((p) => p.trim()).filter(Boolean);
   const mods = parts
     .filter((p) => MOD_ORDER.includes(p))
     .sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
   const keys = parts.filter((p) => !MOD_ORDER.includes(p));
-  return [...mods, ...keys].join(" + ");
+  return [...mods, ...keys];
+}
+
+// Map a browser keydown / keyup event to the canonical key name we use
+// in combo strings ("Ctrl", "Win", "Space", "P"…). Returns null if the
+// key isn't one we represent in any combo we'd accept.
+function keyEventToName(e) {
+  if (e.key === "Control") return "Ctrl";
+  if (e.key === "Shift") return "Shift";
+  if (e.key === "Alt") return "Alt";
+  if (e.key === "Meta" || e.key === "OS") return "Win";
+  if (!e.code) return null;
+  if (e.code === "Space") return "Space";
+  if (e.code === "Tab") return "Tab";
+  if (e.code === "Enter" || e.code === "NumpadEnter") return "Enter";
+  if (e.code === "Escape") return "Escape";
+  if (e.code === "Backspace") return "Backspace";
+  if (e.code.startsWith("Key")) return e.code.slice(3);
+  if (e.code.startsWith("Digit")) return e.code.slice(5);
+  if (/^F\d+$/.test(e.code)) return e.code;
+  return null;
+}
+
+// "Win" → "Windows key", everything else stays as-is. Used in coaching
+// text where "Now also hold Win" reads awkwardly compared to "Windows".
+function prettyKeyName(part) {
+  return part === "Win" ? "Windows" : part;
+}
+
+// Renders the active combo as a row of pressable keycaps. Each cap lights
+// up the instant its key is held inside the wizard window, so the user
+// sees the chord assembling key-by-key instead of having to read text.
+function ChordDisplay({ parts, pressedKeys }) {
+  if (!parts || parts.length === 0) {
+    return (
+      <div className="onb-chord onb-chord-empty">
+        Pick a hotkey on the left to see its keys here.
+      </div>
+    );
+  }
+  return (
+    <div className="onb-chord" role="group" aria-label="Hotkey keys">
+      {parts.map((part, i) => (
+        <span className="onb-chord-cell" key={`${part}:${i}`}>
+          {i > 0 && <span className="onb-chord-plus" aria-hidden>+</span>}
+          <KeyCap part={part} pressed={pressedKeys ? pressedKeys.has(part) : false} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function KeyCap({ part, pressed }) {
+  const wide = part.length > 1;
+  const extraWide = part === "Space";
+  return (
+    <kbd
+      className={`onb-keycap ${pressed ? "pressed" : ""} ${wide ? "wide" : ""} ${extraWide ? "extra-wide" : ""}`}
+      aria-pressed={pressed}
+    >
+      {part}
+    </kbd>
+  );
 }
 
 function domKeyToName(code) {
