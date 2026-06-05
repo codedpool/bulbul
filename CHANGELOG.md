@@ -4,6 +4,29 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Added
+
+- **Hide tray icon** option (sidebar footer toggle, mirrored in Settings → Startup) — Bulbul keeps running in the background and the hotkey still works, but the system-tray icon disappears and the dictation pill is shown only during an active dictation. Re-launching Bulbul from the Start menu focuses the existing window (via the single-instance plugin) so the dashboard is recoverable; a Quit button appears in the sidebar so the user can still exit cleanly
+- **Onboarding language step** — new wizard step between API key and hotkey, with locale-aware default: `hi-*` and `ur-*` system locales pre-select Hindi / Hinglish, `en-*` pre-selects English, anything else opens a themed scrollable picker covering the full ISO list
+- **Hold-and-release animation** in the wizard's hotkey step — six visual states (idle / listening / processing / done / too_short / silent / error) driven by the same `bulbul-status` events as the production overlay
+- **Hover-copy on Home rows** — each dictation row reveals a copy button on hover; click copies the cleaned text and locks in a teal "✓" for ~1.2 s
+- **Single-instance protection** via `tauri-plugin-single-instance` — a second launch now exits immediately and focuses the existing window instead of spawning a duplicate process that would steal the hotkey, race the SQLite db, and stack tray icons
+- **Themed in-app dialogs** — every native `window.confirm()` / `window.alert()` popup is replaced with a themed `ConfirmDialog`. Affects: delete-note (Scratchpad main view + pop-out), delete-transform, reset-to-defaults, save/delete errors. Backdrop click + Escape dismiss; destructive confirms get a red button
+- **Reusable Combobox component** — generic themed dropdown that flips upward when there isn't room below, scrolls when long, and matches light/dark mode. Custom apps category pickers in Styles now use it instead of the OS-native `<select>` whose popup couldn't be styled
+
+### Changed
+
+- **Settings → Language** clarity: "Hindi" → "Hindi / Hinglish"; "Auto-detect" → "Auto-detect (English-leaning)"; sub-text now warns that auto-detect occasionally flips Hindi audio to Urdu/Arabic script
+- **Start with Windows is enabled on wizard completion** — new installs default to autostart on; user can still toggle off in Settings (existing installs are not retroactively touched)
+- **Personalize cleanup from past dictations defaults to OFF** — users opt in once they see the value, not the other way around
+- **Snippet row edit/delete icons** are now visible at 55% opacity at rest (full on hover) — previously they were invisible because the shared `.dict-row-actions` hover selector didn't match `.snippet-row`
+- Onboarding Done page layout — sticky button bar stretches full width so "Open Bulbul" centres correctly; added bottom padding so the telemetry card no longer hides behind the sticky bar
+
+### Fixed
+
+- **Cleanup model treating prompt-shaped transcripts as tasks to perform** — dictating "Solution to group anagram problem" was pasting a 291-word code answer with explanation and time-complexity analysis. Hardened the cleanup system prompt with an explicit "never answer / solve / complete / expand the transcript" clause, and added a length-expansion safety net that falls back to the raw transcript when the cleaned output exceeds 2× the raw word count
+- **Hindi audio occasionally transcribed as Urdu (Arabic script)** — root cause is Whisper's acoustic-only language ID treating Hindustani as ambiguous between `hi` and `ur`. Mitigated by surfacing language pinning prominently in onboarding and Settings, with copy explaining the trade-off
+
 ### Planned
 
 - Click-to-talk overlay — mouse-driven entry point with X / waveform / ✓ controls, alongside the existing hold-to-talk hotkey
