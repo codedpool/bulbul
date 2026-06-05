@@ -12,7 +12,11 @@ export default function SnippetsView() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [adding, setAdding] = useState(false);
+  // null | { trigger, expansion } — null means the add-new form isn't
+  // open; an object means it is, with these initial field values. Lets
+  // the "Add new" button start blank, and lets a click on a hero
+  // example start the form pre-filled with that example.
+  const [newDraft, setNewDraft] = useState(null);
   const [editingId, setEditingId] = useState(null);
 
   useEffect(() => { load(); }, []);
@@ -30,8 +34,13 @@ export default function SnippetsView() {
 
   async function addEntry(payload) {
     await invoke("add_snippet", { trigger: payload.trigger, expansion: payload.expansion });
-    setAdding(false);
+    setNewDraft(null);
     await load();
+  }
+
+  function startNewFromSample(sample) {
+    setEditingId(null);
+    setNewDraft({ trigger: sample.trigger, expansion: sample.expansion });
   }
 
   async function saveEdit(id, payload) {
@@ -66,7 +75,7 @@ export default function SnippetsView() {
         </div>
         <button
           className="primary"
-          onClick={() => { setEditingId(null); setAdding(true); }}
+          onClick={() => { setEditingId(null); setNewDraft({ trigger: "", expansion: "" }); }}
         >
           <PlusIcon /> Add new
         </button>
@@ -76,6 +85,7 @@ export default function SnippetsView() {
         dismissKey="bulbul.snippets.hero.dismissed"
         title={<>The stuff <em>you</em> shouldn't have to re-type.</>}
         samples={SNIPPETS_HERO_SAMPLES}
+        onSampleClick={startNewFromSample}
       />
 
       <div className="dict-toolbar">
@@ -100,17 +110,21 @@ export default function SnippetsView() {
       </div>
 
       <div className="dict-entries">
-        {adding && (
+        {newDraft && (
+          // Keyed on the draft contents so clicking a different hero
+          // sample remounts the form with the new initial values.
+          // (SnippetForm reads `initial` only at mount.)
           <SnippetForm
-            initial={{ trigger: "", expansion: "" }}
+            key={`new:${newDraft.trigger}:${newDraft.expansion}`}
+            initial={newDraft}
             onSave={addEntry}
-            onCancel={() => setAdding(false)}
+            onCancel={() => setNewDraft(null)}
           />
         )}
 
         {loading ? (
           <div className="empty-state"><p className="muted">Loading…</p></div>
-        ) : filtered.length === 0 && !adding ? (
+        ) : filtered.length === 0 && !newDraft ? (
           <div className="empty-state">
             <p>{search ? "No matches." : "No snippets yet. Click \"Add new\" to save your first trigger."}</p>
             {!search && (
@@ -131,7 +145,7 @@ export default function SnippetsView() {
             <SnippetRow
               key={e.id}
               entry={e}
-              onEdit={() => { setAdding(false); setEditingId(e.id); }}
+              onEdit={() => { setNewDraft(null); setEditingId(e.id); }}
               onDelete={() => remove(e.id)}
             />
           ))

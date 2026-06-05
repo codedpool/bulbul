@@ -47,6 +47,17 @@ export default function TooltipProvider() {
       // appearing. It will be restored on mouseout.
       target.removeAttribute("title");
 
+      // Skip rendering when the title text just repeats the element's
+      // visible label — those add zero information and turn every named
+      // button into a hover-bubble. The attribute is still stripped
+      // above so the OS-native tooltip doesn't appear for these either.
+      // Icon-only buttons (no visible text) always pass this gate.
+      const visible = (target.textContent || "").trim();
+      if (visible && normalize(visible) === normalize(text)) {
+        activeTarget = target;
+        return;
+      }
+
       const rect = target.getBoundingClientRect();
       const spaceAbove = rect.top;
       const placement = spaceAbove > 50 ? "top" : "bottom";
@@ -57,7 +68,29 @@ export default function TooltipProvider() {
       activeTarget = target;
     }
 
+    function normalize(s) {
+      return s.trim().toLowerCase().replace(/\s+/g, " ");
+    }
+
+    function dismiss() {
+      if (activeTarget) teardown(activeTarget);
+      clearTimeout(showTimer);
+      setTip(null);
+      activeTarget = null;
+    }
+
     function onOver(e) {
+      // Defensive sweep: if a tooltip is active but the cursor is no
+      // longer inside its target, dismiss it. Catches the cases where
+      // mouseout was missed — fast cursor moves, the source element
+      // being unmounted by a re-render, or the cursor crossing a
+      // portal'd boundary. This is what was leaving a stale "Open at
+      // startup" tooltip floating on the Home page after the user had
+      // moved well away from the sidebar toggle.
+      if (activeTarget && !activeTarget.contains(e.target)) {
+        dismiss();
+      }
+
       const target = e.target.closest("[title]");
       if (!target || target === activeTarget) return;
       clearTimeout(showTimer);
@@ -65,23 +98,61 @@ export default function TooltipProvider() {
     }
 
     function onOut(e) {
-      const left = e.target.closest("*");
-      // Always restore the title on the element being left — covers the
-      // pre-delay case where we haven't shown a tip yet but still want
-      // the attribute back if it was stashed.
-      teardown(left);
-      if (left === activeTarget || !activeTarget) {
-        clearTimeout(showTimer);
-        setTip(null);
-        activeTarget = null;
+      // mouseout bubbles, so it fires every time the cursor crosses a
+      // child boundary inside the same title-bearing element. Without
+      // this guard, the tooltip would dismiss + re-arm every time the
+      // cursor passed over an inner SVG, span, etc., producing a
+      // flicker / "lingering ghost" effect on rich buttons.
+      if (
+        activeTarget &&
+        e.relatedTarget instanceof Node &&
+        activeTarget.contains(e.relatedTarget)
+      ) {
+        return;
       }
+
+      // Truly leaving the active target (or no active target yet).
+      // Restore its title attribute and dismiss any showing / pending
+      // tooltip.
+      if (activeTarget) {
+        teardown(activeTarget);
+      } else {
+        // Pre-show: timer pending but nothing stashed. teardown on the
+        // leaving element is a no-op unless something odd happened.
+        teardown(e.target);
+      }
+      clearTimeout(showTimer);
+      setTip(null);
+      activeTarget = null;
     }
+
+    // Any click dismisses an open tooltip immediately. This covers two
+    // cases mouseout can't: (1) the target unmounts as a result of the
+    // click (e.g., navigating to a different view) so no mouseout ever
+    // fires — without this the pill, which is portalled to <body>,
+    // would survive and float over the new view; (2) the user has
+    // clearly stopped reading the hint once they've committed to the
+    // action. Capture phase so it lands before any handler that
+    // unmounts the source element.
+    function onDown() { dismiss(); }
+
+    // Cursor left the window entirely (alt-tabbed away, dragged to the
+    // taskbar, moved off the WebView). mouseout's relatedTarget can be
+    // null in this case but isn't always reliable — mouseleave on
+    // document is.
+    function onLeave() { dismiss(); }
 
     document.addEventListener("mouseover", onOver);
     document.addEventListener("mouseout", onOut);
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("mouseleave", onLeave);
+    window.addEventListener("blur", onLeave);
     return () => {
       document.removeEventListener("mouseover", onOver);
       document.removeEventListener("mouseout", onOut);
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("mouseleave", onLeave);
+      window.removeEventListener("blur", onLeave);
       clearTimeout(showTimer);
       teardown(activeTarget);
     };

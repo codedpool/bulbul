@@ -1729,6 +1729,36 @@ kbd {
   font-size: 12px;
 }
 
+/* Clickable variant — rendered as a <button> when the hero is
+   wired up with an onSampleClick handler. Strips default button
+   chrome, adds a subtle hover state to signal "click to use as
+   a starting point". */
+.feature-hero-row-clickable {
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border-radius: 999px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: background 120ms ease;
+}
+
+.feature-hero-row-clickable:hover {
+  background: var(--fill);
+}
+
+.feature-hero-row-clickable:hover .feature-hero-trigger {
+  border-color: rgba(94, 200, 192, 0.55);
+}
+
+.feature-hero-row-clickable:focus-visible {
+  outline: 2px solid rgba(94, 200, 192, 0.5);
+  outline-offset: 2px;
+}
+
 .feature-hero-trigger {
   font-family: "Playfair Display", Georgia, "Cambria", serif;
   font-style: italic;

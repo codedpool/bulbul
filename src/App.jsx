@@ -225,7 +225,6 @@ function App() {
               key={s.id}
               className={`nav-item ${section === s.id ? "active" : ""} ${s.working ? "" : "pending"}`}
               onClick={() => setSection(s.id)}
-              title={s.working ? s.label : `${s.label} (coming soon)`}
             >
               <span className="nav-icon">{ICONS[s.id]}</span>
               <span className="nav-label">{s.label}</span>
