@@ -134,7 +134,7 @@ function UsageTab() {
           <div className="card-value-big">{Math.round(stats.wpm) || "—"}</div>
           <WpmGauge percentile={stats.wpm_percentile} />
         </div>
-        <div className="card-subtitle">Top {formatPercentile(stats.wpm_percentile)}</div>
+        <div className="card-subtitle">Last 7 days · Top {formatPercentile(stats.wpm_percentile)}</div>
       </div>
 
       <div className="insight-card card-fixes">
@@ -153,19 +153,17 @@ function UsageTab() {
       </div>
 
       <div className="insight-card card-words">
-        <div className="card-header-row">
-          <div>
-            <div className="card-label">Total words dictated</div>
-            <div className="card-value-big">{formatNumber(stats.total_words)}</div>
-          </div>
+        <div className="card-label">Total words dictated</div>
+        <div className="card-value-row">
+          <div className="card-value-big">{formatNumber(stats.total_words)}</div>
           {stats.mom_change_pct != null && (
             <div className={`mom-badge ${stats.mom_change_pct >= 0 ? "up" : "down"}`}>
-              {stats.mom_change_pct >= 0 ? "↑" : "↓"} {Math.abs(Math.round(stats.mom_change_pct))}% this month
+              {stats.mom_change_pct >= 0 ? "↑" : "↓"} {Math.abs(Math.round(stats.mom_change_pct))}%
             </div>
           )}
         </div>
         <div className="card-subtitle">
-          {formatNumber(stats.words_this_month)} this month · {formatNumber(stats.words_last_month)} last month
+          {formatNumber(stats.words_this_month)} this · {formatNumber(stats.words_last_month)} last
         </div>
       </div>
 
@@ -178,7 +176,7 @@ function UsageTab() {
           <p className="muted small">No data yet — start dictating in different apps.</p>
         ) : (
           <div className="app-bars">
-            {stats.app_usage.map((a) => (
+            {stats.app_usage.slice(0, 4).map((a) => (
               <AppBar
                 key={a.category}
                 category={a.category}
@@ -187,6 +185,11 @@ function UsageTab() {
                 isTop={a === stats.app_usage[0]}
               />
             ))}
+            {stats.app_usage.length > 4 && (
+              <div className="app-bars-more muted small">
+                + {stats.app_usage.length - 4} more {stats.app_usage.length - 4 === 1 ? "category" : "categories"}
+              </div>
+            )}
           </div>
         )}
       </div>

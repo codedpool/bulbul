@@ -737,8 +737,11 @@ pub struct HomeStats {
     pub total_words: i64,
     pub total_dictations: i64,
     pub total_fixes: i64,
-    /// Average words-per-minute over the last 7 days of dictation.
-    pub wpm_7d: f32,
+    /// Average words-per-minute over the last 7 days. Matches the
+    /// Insights tab's WPM (also 7-day) so both views report the same
+    /// number — long-run WPM would drift from "what you've been doing
+    /// lately" the moment your pace changed.
+    pub wpm: f32,
     /// Consecutive days (including today) ending with at least one dictation.
     pub day_streak: i64,
 }
@@ -755,6 +758,22 @@ pub fn home_stats(db: &Db) -> Result<HomeStats> {
         .query_row("SELECT COALESCE(SUM(fix_count), 0) FROM dictations", [], |r| r.get(0))
         .unwrap_or(0);
 
+    let wpm = compute_wpm_7d(&conn);
+
+    let day_streak = compute_streak(&conn);
+
+    Ok(HomeStats {
+        total_words,
+        total_dictations,
+        total_fixes,
+        wpm,
+        day_streak,
+    })
+}
+
+/// Words-per-minute over the trailing 7 days. Shared by both Home and
+/// Insights so they always report the same number.
+fn compute_wpm_7d(conn: &rusqlite::Connection) -> f32 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -768,21 +787,11 @@ pub fn home_stats(db: &Db) -> Result<HomeStats> {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap_or((0, 0));
-    let wpm_7d = if ms_7d > 0 {
+    if ms_7d > 0 {
         (words_7d as f64 / (ms_7d as f64 / 60_000.0)) as f32
     } else {
         0.0
-    };
-
-    let day_streak = compute_streak(&conn);
-
-    Ok(HomeStats {
-        total_words,
-        total_dictations,
-        total_fixes,
-        wpm_7d,
-        day_streak,
-    })
+    }
 }
 
 #[derive(Debug, Serialize, serde::Deserialize, Clone)]
@@ -1492,19 +1501,9 @@ pub fn usage_stats(db: &Db) -> Result<UsageStats> {
         .unwrap_or(0);
     let ai_fixes = (total_fixes - dictionary_fixes).max(0);
 
-    // WPM over all dictation duration.
-    let (words_all, ms_all): (i64, i64) = conn
-        .query_row(
-            "SELECT COALESCE(SUM(word_count), 0), COALESCE(SUM(duration_ms), 0) FROM dictations",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap_or((0, 0));
-    let wpm = if ms_all > 0 {
-        (words_all as f64 / (ms_all as f64 / 60_000.0)) as f32
-    } else {
-        0.0
-    };
+    // WPM over last 7 days. Same helper Home uses, so the two views
+    // always show the same number.
+    let wpm = compute_wpm_7d(&conn);
 
     // Month-over-month words.
     let words_this_month: i64 = conn

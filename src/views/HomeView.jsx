@@ -81,8 +81,8 @@ export default function HomeView({ displayName }) {
         />
         <StatCard
           label="Words per minute"
-          value={stats ? Math.round(stats.wpm_7d).toString() : "—"}
-          subtitle="7-day average"
+          value={stats ? Math.round(stats.wpm).toString() : "—"}
+          subtitle="Last 7 days"
         />
         <StatCard
           label="Day streak"

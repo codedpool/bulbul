@@ -369,7 +369,7 @@ body, html, #root {
 .content {
   flex: 1;
   overflow-y: auto;
-  padding: 48px 36px 40px;
+  padding: 32px 36px 28px;
 }
 
 /* ─────────── Page wrappers ─────────── */
@@ -1017,7 +1017,90 @@ kbd {
 .insights-page .page-header {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+}
+
+/* The Insights tab is the densest page in the app — 3 cards + 2 panels
+   stacked. Compact spacing here so the whole "Your Usage" tab fits in
+   the default 960×640 window without scrolling, while every other page
+   keeps its more generous defaults. */
+.insights-page {
+  gap: 16px;
+}
+
+.insights-page .page-header h1 {
+  font-size: 26px;
+}
+
+.insights-page .insights-grid {
+  gap: 10px;
+}
+
+.insights-page .insight-card,
+.insights-page .insight-panel {
+  padding: 12px 14px;
+  gap: 6px;
+}
+
+.insights-page .insight-panel {
+  gap: 8px;
+}
+
+.insights-page .card-value-big {
+  font-size: 36px;
+}
+
+.insights-page .app-bars {
+  gap: 6px;
+}
+
+.insights-page .app-bar-row {
+  column-gap: 10px;
+  row-gap: 3px;
+}
+
+/* Heatmap fills its tile dynamically: the heatmap absorbs whatever
+   vertical space the stretched panel gives it, columns split that
+   space equally, and individual cells split each column's height
+   equally. The result is square-ish cells that scale up to fill the
+   panel rather than a fixed 12-18px grid sitting in a sea of white.
+   max-width on the column keeps the cells from ballooning to 50px
+   each if the panel happens to be very wide. */
+.insights-page .heatmap {
+  flex: 1 1 0;
+  align-self: stretch;
+  display: flex;
+  gap: 3px;
+  align-items: stretch;
+  justify-content: center;
+  min-height: 0;
+}
+
+.insights-page .heatmap-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  max-width: 26px;
+}
+
+.insights-page .heatmap-cell {
+  flex: 1 1 0;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 3px;
+}
+
+.insights-page .heatmap-legend {
+  margin-top: auto;
+}
+
+.insights-page .panel-header h2 {
+  font-size: 15px;
 }
 
 .tabs {
@@ -1053,7 +1136,12 @@ kbd {
 
 .insights-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.2fr;
+  /* 6-col base so the top row is 3 equal cards (span 2 each) and the
+     bottom row is 2 equal panels (span 3 each). Default align-items is
+     stretch — every item in a row matches the tallest one, so the cards
+     in the top row and the panels in the bottom row are all the same
+     visible height. */
+  grid-template-columns: repeat(6, 1fr);
   gap: 14px;
 }
 
@@ -1062,7 +1150,20 @@ kbd {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 18px;
+  padding: 16px 18px;
+  /* Flex column so when grid stretches the item to row height the
+     content (label / value / subtitle, or header / body / legend)
+     flows top-to-bottom and any extra height becomes blank space
+     between elements rather than stretching the value font. */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.insight-panel {
+  /* Panels have a header above the body so they want slightly more
+     breathing room than the cards. */
+  gap: 12px;
 }
 
 .card-label {
@@ -1071,7 +1172,6 @@ kbd {
   letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin-bottom: 10px;
 }
 
 .card-value-big {
@@ -1092,9 +1192,13 @@ kbd {
 }
 
 .card-subtitle {
-  margin-top: 8px;
   font-size: 12px;
   color: var(--text-muted);
+  /* When the grid stretches a short card to match the tallest card in
+     the row, this auto margin pushes the subtitle to the bottom so the
+     extra height becomes blank space between the value and the
+     subtitle — looks intentional, not crammed. */
+  margin-top: auto;
 }
 
 .card-header-row {
@@ -1120,7 +1224,7 @@ kbd {
 }
 
 .card-breakdown {
-  margin-top: 12px;
+  margin-top: auto;
   padding-top: 12px;
   border-top: 1px solid var(--fill);
   display: flex;
@@ -1145,11 +1249,13 @@ kbd {
 .dot.fix-ai { background: #5ec8c0; }
 .dot.fix-dict { background: #d4a657; }
 
-.card-wpm { grid-column: span 1; }
-.card-fixes { grid-column: span 1; }
-.card-words { grid-column: span 1; }
-.panel-usage { grid-column: span 1; }
-.panel-streak { grid-column: span 2; }
+/* Top row: 3 equal-width cards (each 2/6 = one-third of the grid). */
+.card-wpm    { grid-column: span 2; }
+.card-fixes  { grid-column: span 2; }
+.card-words  { grid-column: span 2; }
+/* Bottom row: 2 equal-width panels (each 3/6 = half of the grid). */
+.panel-usage  { grid-column: span 3; }
+.panel-streak { grid-column: span 3; }
 
 .wpm-gauge {
   width: 96px;
@@ -1161,7 +1267,7 @@ kbd {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 16px;
+  /* No margin-bottom — the parent .insight-panel uses flex `gap` now. */
 }
 
 .panel-header h2 {
@@ -1173,9 +1279,22 @@ kbd {
 .app-bars {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
+/* Trailing "+ N more categories" footer when we truncate. Indented in
+   from the icon column so it lines up under the names, not under the
+   icons. */
+.app-bars-more {
+  margin-top: 4px;
+  margin-left: 40px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* Two-row layout: icon (col 1) + name above bar (col 2) + pct/count
+   stack (col 3). The icon and stats span both rows; the track sits on
+   row 2 of column 2. Nicer visual rhythm than a single-row inline. */
 .app-bar-row {
   display: grid;
   grid-template-columns: 28px 1fr 90px;
@@ -1193,6 +1312,9 @@ kbd {
   font-weight: 500;
   color: var(--text-4);
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app-bar-track {
@@ -1286,6 +1408,7 @@ kbd {
   display: flex;
   gap: 3px;
   align-items: flex-end;
+  justify-content: center;
 }
 
 .heatmap-col {
@@ -1295,9 +1418,9 @@ kbd {
 }
 
 .heatmap-cell {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
   background: var(--field);
 }
 
@@ -1315,7 +1438,11 @@ kbd {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 12px;
+  /* Pins the legend to the bottom of the streak panel when grid
+     stretches it taller than its content — the heatmap stays anchored
+     near the header where it reads naturally, and the slack falls in
+     between rather than as a band below the legend. */
+  margin-top: auto;
   justify-content: flex-end;
 }
 
