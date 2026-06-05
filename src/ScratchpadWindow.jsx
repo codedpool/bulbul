@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ConfirmDialog from "./components/ConfirmDialog.jsx";
+import TooltipProvider from "./components/TooltipProvider.jsx";
 import "./ScratchpadWindow.css";
 
 const AUTOSAVE_DELAY_MS = 600;
@@ -327,6 +328,7 @@ export default function ScratchpadWindow() {
         cancelLabel={null}
         onConfirm={() => setErrorMsg(null)}
       />
+      <TooltipProvider />
     </div>
   );
 }

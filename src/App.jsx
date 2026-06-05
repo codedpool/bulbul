@@ -12,6 +12,7 @@ import StyleView from "./views/StyleView.jsx";
 import ScratchpadView from "./views/ScratchpadView.jsx";
 import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
+import TooltipProvider from "./components/TooltipProvider.jsx";
 import { applyTheme } from "./theme.js";
 import "./App.css";
 
@@ -191,15 +192,19 @@ function App() {
 
   if (!config.onboarding_completed) {
     return (
-      <OnboardingWizard
-        config={config}
-        updateConfig={updateConfig}
-        onComplete={() => setConfig({ ...config, onboarding_completed: true })}
-      />
+      <>
+        <OnboardingWizard
+          config={config}
+          updateConfig={updateConfig}
+          onComplete={() => setConfig({ ...config, onboarding_completed: true })}
+        />
+        <TooltipProvider />
+      </>
     );
   }
 
   return (
+    <>
     <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
       <TitleBar
         sidebarOpen={sidebarOpen}
@@ -245,7 +250,7 @@ function App() {
           </label>
           <label
             className="sidebar-toggle-row"
-            title="When on, the system-tray icon disappears. Bulbul still runs in the background and the pill still appears when you dictate. Re-launch Bulbul from the Start menu to bring this dashboard back. To quit Bulbul, flip this off and use the tray's Quit menu."
+            title="When on, the system-tray icon disappears. Bulbul keeps running in the background — the pill only appears while you're dictating. Re-launch Bulbul from the Start menu to bring this dashboard back."
           >
             <span className="sidebar-toggle-label">Hide tray icon</span>
             <span className={`toggle ${config.hide_tray ? "on" : ""}`}>
@@ -300,6 +305,8 @@ function App() {
         {!["home", "settings", "dictionary", "insights", "snippets", "transforms", "style", "scratchpad"].includes(section) && <ComingSoon id={section} />}
       </main>
     </div>
+    <TooltipProvider />
+    </>
   );
 }
 

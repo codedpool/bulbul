@@ -1,0 +1,49 @@
+/* Self-contained styles for the global themed tooltip. Uses CSS theme
+   variables so light / dark / system follow automatically. Works in
+   both the main app window and the standalone scratchpad pop-out. */
+
+.app-tooltip {
+  position: fixed;
+  z-index: 99999;
+  padding: 6px 10px;
+  background: var(--surface-2, #1a1d22);
+  color: var(--text, #f4f4f4);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  max-width: 280px;
+  text-align: left;
+  white-space: normal;
+  word-wrap: break-word;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+  animation: app-tooltip-fade 110ms ease;
+}
+
+.app-tooltip {
+  --tooltip-shift-x: 0px;
+}
+
+.app-tooltip.placement-top {
+  /* y = anchor's top edge; -100% lifts the tooltip above it, then a
+     small gap so it doesn't touch the anchor. --tooltip-shift-x is
+     filled in by JS to keep the pill inside the viewport horizontally. */
+  transform: translate(calc(-50% + var(--tooltip-shift-x)), calc(-100% - 8px));
+}
+
+.app-tooltip.placement-bottom {
+  /* y = anchor's bottom edge; nudge down a little for breathing room. */
+  transform: translate(calc(-50% + var(--tooltip-shift-x)), 8px);
+}
+
+@keyframes app-tooltip-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

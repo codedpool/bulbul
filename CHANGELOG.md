@@ -6,7 +6,7 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ### Added
 
-- **Hide tray icon** option (sidebar footer toggle, mirrored in Settings → Startup) — Bulbul keeps running in the background and the hotkey still works, but the system-tray icon disappears and the dictation pill is shown only during an active dictation. Re-launching Bulbul from the Start menu focuses the existing window (via the single-instance plugin) so the dashboard is recoverable. To quit, the user flips the toggle off and uses the tray's Quit menu
+- **Hide tray icon** option (sidebar footer toggle, mirrored in Settings → Startup) — Bulbul keeps running in the background and the hotkey still works, but the system-tray icon disappears and the dictation pill is shown only during an active dictation. Re-launching Bulbul from the Start menu focuses the existing window (via the single-instance plugin) so the dashboard is recoverable
 - **Onboarding language step** — new wizard step between API key and hotkey, with locale-aware default: `hi-*` and `ur-*` system locales pre-select Hindi / Hinglish, `en-*` pre-selects English, anything else opens a themed scrollable picker covering the full ISO list
 - **Hold-and-release animation** in the wizard's hotkey step — six visual states (idle / listening / processing / done / too_short / silent / error) driven by the same `bulbul-status` events as the production overlay
 - **Hover-copy on Home rows** — each dictation row reveals a copy button on hover; click copies the cleaned text and locks in a teal "✓" for ~1.2 s
