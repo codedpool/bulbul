@@ -10,7 +10,9 @@ $ErrorActionPreference = 'Stop'
 
 # --- Config ----------------------------------------------------------------
 $ManifestUrl  = 'https://github.com/codedpool/bulbul/releases/latest/download/latest.json'
-$Platform     = 'windows-x86_64'
+# Use the NSIS-specific key explicitly. `windows-x86_64` defaults to MSI in
+# Tauri's manifest, but we want the Setup.exe so /PASSIVE flag works directly.
+$Platform     = 'windows-x86_64-nsis'
 $MinisignKey  = 'RWTLvdvsrlMNS4LQvsKO03T8kF+5jZ1s7KiyU4lKZmYPcd0+1qxm2gKt'
 $MinisignUrl  = 'https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip'
 
@@ -45,7 +47,11 @@ try {
     # --- Download installer + signature ------------------------------------
     Write-Host '  > Downloading installer...' -ForegroundColor Gray
     Invoke-WebRequest -Uri $dl.url -OutFile $setupPath -UseBasicParsing
-    Set-Content -Path $sigPath -Value $dl.signature -Encoding ASCII -NoNewline
+    # Tauri's latest.json stores the .sig file content base64-encoded.
+    # Decode before writing so minisign can read the expected multi-line format.
+    $sigText = [System.Text.Encoding]::UTF8.GetString(
+        [System.Convert]::FromBase64String($dl.signature))
+    Set-Content -Path $sigPath -Value $sigText -Encoding ASCII -NoNewline
 
     # --- Pull minisign for verification ------------------------------------
     Write-Host '  > Verifying signature...' -ForegroundColor Gray
