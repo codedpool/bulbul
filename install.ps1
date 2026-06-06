@@ -81,9 +81,40 @@ try {
         throw "Installer exited with code $($proc.ExitCode)."
     }
 
+    # --- Launch Bulbul -----------------------------------------------------
+    # Find the freshly-installed shortcut or exe so the user lands in
+    # the onboarding wizard immediately. Falls back silently if nothing
+    # is found — Start menu still works.
+    $launched = $false
+    $startMenus = @(
+        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
+        "$env:PROGRAMDATA\Microsoft\Windows\Start Menu\Programs"
+    ) | Where-Object { Test-Path $_ }
+    $shortcut = Get-ChildItem -Path $startMenus -Recurse -Filter 'Bulbul.lnk' -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+    if ($shortcut) {
+        Start-Process -FilePath $shortcut
+        $launched = $true
+    } else {
+        $exeCandidates = @(
+            "$env:LOCALAPPDATA\Programs\Bulbul\Bulbul.exe",
+            "$env:PROGRAMFILES\Bulbul\Bulbul.exe",
+            "${env:PROGRAMFILES(X86)}\Bulbul\Bulbul.exe"
+        )
+        $exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($exe) {
+            Start-Process -FilePath $exe
+            $launched = $true
+        }
+    }
+
     Write-Host ''
     Write-Host "  Bulbul $version installed." -ForegroundColor Green
-    Write-Host '  Look for it in your Start menu.' -ForegroundColor Gray
+    if ($launched) {
+        Write-Host '  Opening Bulbul...' -ForegroundColor Gray
+    } else {
+        Write-Host '  Look for it in your Start menu.' -ForegroundColor Gray
+    }
     Write-Host ''
 }
 finally {
