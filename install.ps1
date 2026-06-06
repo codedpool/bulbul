@@ -48,10 +48,10 @@ try {
     Write-Host '  > Downloading installer...' -ForegroundColor Gray
     Invoke-WebRequest -Uri $dl.url -OutFile $setupPath -UseBasicParsing
     # Tauri's latest.json stores the .sig file content base64-encoded.
-    # Decode before writing so minisign can read the expected multi-line format.
-    $sigText = [System.Text.Encoding]::UTF8.GetString(
-        [System.Convert]::FromBase64String($dl.signature))
-    Set-Content -Path $sigPath -Value $sigText -Encoding ASCII -NoNewline
+    # Decode and write the raw bytes directly. Set-Content on PowerShell 5.1
+    # would mangle LF -> CRLF, which breaks minisign's parser.
+    $sigBytes = [System.Convert]::FromBase64String($dl.signature)
+    [System.IO.File]::WriteAllBytes($sigPath, $sigBytes)
 
     # --- Pull minisign for verification ------------------------------------
     Write-Host '  > Verifying signature...' -ForegroundColor Gray
