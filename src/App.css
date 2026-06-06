@@ -1255,6 +1255,7 @@ kbd {
   border-radius: 999px;
   transition: background 160ms ease;
   flex-shrink: 0;
+  cursor: pointer;
 }
 
 .toggle input {

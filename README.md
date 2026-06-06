@@ -10,10 +10,20 @@ Bulbul is a local-first dictation app powered by [Groq](https://groq.com). Bring
 
 ## Get started in 60 seconds
 
-1. **Download the latest installer** → [Releases](https://github.com/codedpool/bulbul/releases/latest) → `Bulbul_x.y.z_x64-setup.exe`
-2. **Run it** — Windows SmartScreen will warn you the first time (see [SmartScreen FAQ](docs/SMARTSCREEN.md))
-3. **Open Bulbul** → paste your free [Groq API key](https://console.groq.com/keys) → pick a hotkey
-4. **Hold the hotkey anywhere on Windows. Speak. Release. Done.**
+**One-line install (PowerShell):**
+
+```powershell
+irm https://bulbultypes.xyz/install.ps1 | iex
+```
+
+Downloads the latest release, verifies the minisign signature against the embedded public key, installs Bulbul passively. No clicks.
+
+**Or download manually:** [Releases](https://github.com/codedpool/bulbul/releases/latest) → `Bulbul_x.y.z_x64-setup.exe` → run it. Windows SmartScreen will warn you the first time (see [SmartScreen FAQ](docs/SMARTSCREEN.md)).
+
+After install:
+
+1. **Open Bulbul** → paste your free [Groq API key](https://console.groq.com/keys) → pick a hotkey
+2. **Hold the hotkey anywhere on Windows. Speak. Release. Done.**
 
 The transcript types itself into whatever app has focus — your browser, VS Code, Word, a terminal, Slack, Cursor, anywhere.
 

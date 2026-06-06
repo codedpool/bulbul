@@ -459,6 +459,14 @@ function PanePrivacy({ config, updateConfig }) {
 }
 
 function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
+  const [copied, setCopied] = useState(false);
+  const copyEmail = async () => {
+    try {
+      await navigator.clipboard.writeText("support@bulbultypes.xyz");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {}
+  };
   return (
     <>
       <Row title="Updates" hint="Bulbul checks GitHub releases on a schedule." stack>
@@ -482,7 +490,33 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
           <button onClick={onResetSetup}>Re-run setup wizard</button>
         </div>
       </Row>
-      <p className="muted small settings-note">Bulbul v1.0.0 · MIT-licensed · made with care.</p>
+      <Row
+        title="Help & support"
+        hint="Questions, bugs, or feedback — every message is read."
+        stack
+      >
+        <div
+          className="row"
+          style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
+        >
+          <code style={{ userSelect: "text" }}>support@bulbultypes.xyz</code>
+          <button onClick={copyEmail}>
+            {copied ? "Copied" : "Copy email"}
+          </button>
+          <button onClick={() => openUrl("https://github.com/codedpool/bulbul/issues/new")}>
+            Report on GitHub
+          </button>
+          <button onClick={() => openUrl("https://bulbultypes.xyz")}>
+            Website
+          </button>
+        </div>
+      </Row>
+      <p className="muted small settings-note">
+        Bulbul v1.0.0 · MIT-licensed · made with care · <a
+          href="#"
+          onClick={(e) => { e.preventDefault(); openUrl("https://bulbultypes.xyz"); }}
+        >bulbultypes.xyz</a>
+      </p>
     </>
   );
 }
@@ -507,14 +541,14 @@ function Row({ title, hint, children, stack }) {
 function ToggleRow({ title, hint, checked, onChange }) {
   return (
     <Row title={title} hint={hint}>
-      <span className={`toggle ${checked ? "on" : ""}`}>
+      <label className={`toggle ${checked ? "on" : ""}`}>
         <input
           type="checkbox"
           checked={checked}
           onChange={(e) => onChange(e.target.checked)}
         />
         <span className="toggle-thumb" />
-      </span>
+      </label>
     </Row>
   );
 }
