@@ -53,9 +53,12 @@ try {
     $msDir = Join-Path $tempDir 'minisign'
     Invoke-WebRequest -Uri $MinisignUrl -OutFile $msZip -UseBasicParsing
     Expand-Archive -Path $msZip -DestinationPath $msDir -Force
+    # Pick the x86_64 build explicitly — the zip also contains an aarch64 build
+    # which would land first alphabetically and fail on x64 Windows.
     $msExe = Get-ChildItem -Path $msDir -Filter 'minisign.exe' -Recurse |
+             Where-Object { $_.FullName -match '[\\/]x86_64[\\/]' } |
              Select-Object -First 1 -ExpandProperty FullName
-    if (-not $msExe) { throw 'minisign.exe not found in download.' }
+    if (-not $msExe) { throw 'minisign.exe (x86_64) not found in download.' }
 
     # --- Verify ------------------------------------------------------------
     $verify = & $msExe -V -P $MinisignKey -m $setupPath -x $sigPath 2>&1
