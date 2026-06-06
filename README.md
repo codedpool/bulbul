@@ -4,8 +4,6 @@
 
 Bulbul is a local-first dictation app powered by [Groq](https://groq.com). Bring your own API key — there are no servers, no subscriptions, no usage caps beyond Groq's own free tier.
 
-> Built as a privacy-respecting alternative to commercial dictation apps for people who'd rather own their stack.
-
 ---
 
 ## Get started in 60 seconds
@@ -31,7 +29,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 
 ## Why Bulbul
 
-| | Bulbul | commercial dictation apps |
+| | Bulbul | Commercial alternatives |
 |---|---|---|
 | **Cost** | Free + your Groq key | Subscription |
 | **Open source** | Yes (MIT) | No |
@@ -48,7 +46,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 - **Two-step pipeline**: Whisper Large v3 Turbo (STT) → Llama 3.1 8B (cleanup) — both via Groq, both fast.
 - **Cleanup modes**: Raw (just fix obvious errors), Clean (remove fillers, fix punctuation — default), Polished (rewrite for clarity).
 - **Polish hotkey**: a second hold-to-talk shortcut that forces Polished mode regardless of your global setting. Default `Shift+Alt+P`.
-- **Modifier-only hotkeys**: hold `Ctrl+Win` or `Alt+Win` — modifier-only. No letter needed.
+- **Modifier-only hotkeys**: hold `Ctrl+Win` or `Alt+Win`. No letter needed.
 - **Per-app style**: pick a tone (Formal / Casual / Very Casual) per app category. The cleanup model adapts.
 - **Venue-aware**: Bulbul tells the cleanup model which app you're dictating into ("Windows Terminal" vs. "Outlook") so output formatting fits.
 - **Bullet-list detection**: enumerate items aloud, get a markdown bullet list out.
@@ -151,4 +149,3 @@ Bulbul is a solo project, but contributions are welcome. Open an issue first to 
 
 - [Groq](https://groq.com) for the absurdly fast inference API
 - [Tauri](https://tauri.app) for making native Windows apps feel light
-- [commercial dictation apps](https://example.ai) for proving the UX pattern

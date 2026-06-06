@@ -1999,7 +1999,7 @@ async fn process_pipeline(
     // End-to-end latency the user actually perceives: from hotkey release
     // (= recording stopped, process_pipeline entered) to text on screen.
     // Logged in a single line so it's easy to grep / paste into a sheet
-    // when comparing against commercial dictation apps on the same hardware.
+    // when comparing latency across hardware.
     tracing::info!(
         "perf: total={}ms stt={}ms cleanup={}ms local={}ms inject={}ms | audio_dur={}ms audio_bytes={} words={}",
         t_total_ms,

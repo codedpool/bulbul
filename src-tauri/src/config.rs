@@ -169,7 +169,7 @@ fn default_polish_hotkey() -> String {
 }
 
 fn default_hotkey() -> String {
-    // Modifier-only chord, modifier-only hold-to-talk. The keyboard
+    // Modifier-only chord, hold-to-talk. The keyboard
     // hook (see hotkey.rs::spawn_modifier_chord_watcher) detects this as
     // a dictation press once both modifiers have been held for ~80ms.
     // Existing users with a previously-saved hotkey keep theirs; this

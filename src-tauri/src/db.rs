@@ -197,7 +197,6 @@ const STOP_WORDS: &[&str] = &[
 
 const DEFAULT_DICTIONARY: &[(&str, &str)] = &[
     ("groq", "Groq"),
-    ("example", "app"),
     ("github", "GitHub"),
     ("gitlab", "GitLab"),
     ("vscode", "VS Code"),

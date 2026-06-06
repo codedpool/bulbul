@@ -43,7 +43,7 @@ The first public release. Everything below is in the box.
 
 ### Dictation
 
-- **Hold-to-talk hotkey** — modifier-only chords supported (e.g. `Ctrl+Win`, `Alt+Win`) modifier-only, plus traditional `Ctrl+Shift+Space`-type combos
+- **Hold-to-talk hotkey** — modifier-only chords supported (e.g. `Ctrl+Win`, `Alt+Win`), plus traditional `Ctrl+Shift+Space`-type combos
 - **Polish hotkey** — a second hold-to-talk shortcut that forces Polished cleanup regardless of the global mode. Default `Shift+Alt+P`
 - **Three cleanup modes** — Raw (just fix obvious errors), Clean (remove fillers, fix punctuation), Polished (rewrite for clarity)
 - **Two-step pipeline** — Whisper Large v3 Turbo for transcription, Llama 3.1 8B for cleanup, both via Groq

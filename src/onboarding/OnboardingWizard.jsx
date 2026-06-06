@@ -11,7 +11,7 @@ const HOTKEY_PRESETS = [
   {
     value: "Ctrl+Win",
     label: "Ctrl + Win",
-    detail: "Hold both keys to dictate. commercial apps' default — instant muscle memory if you're switching over.",
+    detail: "Hold both keys to dictate. Two-modifier chord — minimum reach from the home row.",
   },
   {
     value: "Alt+Win",
@@ -827,7 +827,7 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
           ))}
 
           <div className="onb-conflict-hint">
-            Already using another dictation app like commercial dictation apps on <code>Ctrl + Win</code>? Pick a different combo
+            Already using another dictation app on <code>Ctrl + Win</code>? Pick a different combo
             above and the conflict goes away.
           </div>
         </div>

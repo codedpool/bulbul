@@ -128,7 +128,7 @@ After install, Bulbul's own onboarding wizard runs on first launch (asks name + 
 Two distinct personas, both worth speaking to:
 
 1. **The power user (primary)**: Developer, writer, or knowledge worker who types for a living. Comfortable with hotkeys. Comfortable with BYOK. Values privacy, speed, and depth. Will read the technical section. Will check the GitHub repo.
-2. **The friend-of-friend (secondary)**: Less technical, has been frustrated by Windows' built-in dictation or commercial apps' pricing. Needs the install to "just work" and the value prop to be obvious in three seconds. Won't read the technical section but will install if the hero feels clean.
+2. **The friend-of-friend (secondary)**: Less technical, has been frustrated by Windows' built-in dictation or subscription pricing on commercial apps. Needs the install to "just work" and the value prop to be obvious in three seconds. Won't read the technical section but will install if the hero feels clean.
 
 The site should serve both: clean three-second pitch up top, with depth available below the fold for the first persona.
 
@@ -138,7 +138,7 @@ The site should serve both: clean three-second pitch up top, with depth availabl
 2. **Three-column "what it does"** — hold-to-talk in any app · auto-cleanup · learns your corrections.
 3. **Live demo or animated GIF** — same hotkey, three different apps, identical result. Sells the system-wide angle.
 4. **Privacy / trust section** — BYOK, local-first, signed releases, link to source. Short and direct.
-5. **Comparison** — small table vs Windows built-in / app / MacWhisper. Optional but high-conversion for the power-user persona.
+5. **Comparison** — small table vs Windows built-in / MacWhisper / commercial alternatives. Optional but high-conversion for the power-user persona.
 6. **Install** — repeat the one-liner, with GitHub Releases link as fallback.
 7. **Footer** — GitHub, current version, "signed by minisign key `RWTLvdvs...`", contact email, MIT/license badge if applicable.
 
