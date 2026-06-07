@@ -33,6 +33,11 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos as native;
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as native;
+
 /// Minimum gap between two fires of the same hotkey. Guards against
 /// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
 /// handlers; the native release-poller has its own cadence constants.

@@ -1,0 +1,85 @@
+name: Linux dev build
+
+# Rolling pre-release for the in-flight Linux port (v1.1.0). Every push
+# to v1.1-port rebuilds + replaces the `linux-dev` release with fresh
+# .AppImage + .deb + .rpm assets. The user installs via
+# `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`.
+#
+# Sibling workflow `macos-dev.yml` covers the Mac side of the same
+# branch. When the port is done and merged, drop both.
+
+on:
+  push:
+    branches:
+      - v1.1-port
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        # libwebkit2gtk-4.1-dev + libgtk-3-dev are the WebView2-equivalent
+        # for Tauri's Linux runtime. The rest are bundler prerequisites
+        # for .deb, .rpm, and .AppImage. Locked to ubuntu-22.04 for AppImage
+        # portability — newer Ubuntu would bake in a glibc that breaks on
+        # older distros.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Wipe previous dev release
+        # Replaces (not appends to) the linux-dev release so the user
+        # always pulls the freshest build. Sibling macos-dev release is
+        # untouched. `|| true` keeps the first run green.
+        run: gh release delete linux-dev --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + sign dev release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: linux-dev
+          releaseName: 'Bulbul Linux dev build'
+          releaseBody: |
+            Rolling Linux dev build from the `v1.1-port` branch. **Not for general use** — the port is incomplete.
+
+            ## Install (X11 or Wayland)
+
+            ```sh
+            curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh
+            ```
+
+            The script picks the right AppImage for your architecture, verifies the minisign signature, and integrates with your desktop launcher.
+
+            Three formats produced per build: `.AppImage` (universal), `.deb` (Ubuntu/Debian), `.rpm` (Fedora/openSUSE). Each push to `v1.1-port` replaces this release.
+          releaseDraft: false
+          prerelease: true
+          includeUpdaterJson: true

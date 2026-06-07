@@ -70,6 +70,11 @@ features = [
 # lands.
 # [target.'cfg(target_os = "macos")'.dependencies]
 
+# Linux: real deps land in Phase 2+ (x11rb for XGrabKey/XGetInputFocus,
+# ashpd for Wayland portals, reis for libei, atspi for accessibility).
+# Empty block kept here for the same reason as the macOS block.
+# [target.'cfg(target_os = "linux")'.dependencies]
+
 [dependencies.anyhow]
 version = "1"
 
