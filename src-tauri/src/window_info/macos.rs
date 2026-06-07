@@ -1,19 +1,39 @@
-//! macOS foreground-app detection — stub.
+//! macOS foreground-app detection via NSWorkspace.
 //!
-//! Phase 2 swaps these for NSWorkspace.sharedWorkspace.frontmostApplication
-//! (bundle ID + localized name) and uses the running app's PID as the
-//! `foreground_hwnd` analog. See `macos-port-plan.md` Phase 2.
+//! `foreground_app()` returns the frontmost app's bundle identifier
+//! (e.g. `"com.apple.Safari"`) — the closest analog to the Windows
+//! exe-basename used by the rest of the cleanup pipeline. `friendly_app_name`
+//! / `style_category_for_app` in config.rs map bundle IDs to display
+//! names + style categories (Phase 7 extends those tables).
+//!
+//! `foreground_hwnd()` returns the frontmost app's PID. The correction
+//! watcher uses it only as an equality-check sentinel ("did the user
+//! switch apps mid-correction"), so a PID is functionally equivalent
+//! to Windows' HWND in that role.
+//!
+//! Both calls are cheap (NSWorkspace is a singleton cached by the OS),
+//! so we don't bother caching ourselves.
+
+use objc2_app_kit::NSWorkspace;
 
 pub fn foreground_app() -> Option<String> {
-    None
+    // SAFETY: NSWorkspace.sharedWorkspace is documented as thread-safe and
+    // returns a valid singleton on every call. frontmostApplication can
+    // return nil (no app foregrounded — e.g. during Mission Control); we
+    // surface that as None.
+    let workspace = unsafe { NSWorkspace::sharedWorkspace() };
+    let app = unsafe { workspace.frontmostApplication() }?;
+    let bundle_id = unsafe { app.bundleIdentifier() }?;
+    Some(bundle_id.to_string())
 }
 
-/// `foreground_hwnd` semantics on Mac: a stable id for "the currently
-/// focused window" used only for equality checks (the correction watcher
-/// uses it to notice the user clicked away). PID of the frontmost app is
-/// the planned replacement; returning 0 here is "unknown / no foreground"
-/// so equality checks always look like "user switched" — safe but means
-/// the correction watcher exits early on Mac until Phase 2 lands.
 pub fn foreground_hwnd() -> isize {
-    0
+    // SAFETY: same justification as foreground_app.
+    let workspace = unsafe { NSWorkspace::sharedWorkspace() };
+    let Some(app) = (unsafe { workspace.frontmostApplication() }) else {
+        return 0;
+    };
+    // processIdentifier returns pid_t (i32). Widen to isize for cross-platform
+    // signature parity with Windows (which returns the HWND cast to isize).
+    unsafe { app.processIdentifier() as isize }
 }

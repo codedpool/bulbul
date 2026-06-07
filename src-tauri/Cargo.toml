@@ -64,16 +64,19 @@ features = [
     "Win32_System_Com",
 ]
 
-# macOS: real deps land in Phase 2+ (objc2-app-kit for NSWorkspace,
-# core-graphics for CGEvent/CGEventTap, accessibility-sys for AXUIElement).
-# Empty block kept here so the structure is obvious when the first dep
-# lands.
-# [target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
+# NSWorkspace + NSRunningApplication for foreground-app detection
+# (window_info/macos.rs). Other AppKit/Foundation classes added per
+# phase as needed (Phase 5 adds AXUIElement via accessibility-sys).
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
 
-# Linux: real deps land in Phase 2+ (x11rb for XGrabKey/XGetInputFocus,
-# ashpd for Wayland portals, reis for libei, atspi for accessibility).
-# Empty block kept here for the same reason as the macOS block.
-# [target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
+# x11rb: pure-Rust X11 binding for foreground-window discovery
+# (window_info/linux.rs). XTest feature added in Phase 3 for input
+# injection. Wayland-specific crates (ashpd, reis, atspi) added in
+# Phase 3-5 when the corresponding primitives land.
+x11rb = "0.13"
 
 [dependencies.anyhow]
 version = "1"
