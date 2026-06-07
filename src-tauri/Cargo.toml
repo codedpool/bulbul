@@ -70,13 +70,17 @@ features = [
 # phase as needed (Phase 5 adds AXUIElement via accessibility-sys).
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
+# CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs).
+# Phase 4 adds CGEventTap on top for the global-hotkey listener.
+core-graphics = "0.25"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# x11rb: pure-Rust X11 binding for foreground-window discovery
-# (window_info/linux.rs). XTest feature added in Phase 3 for input
-# injection. Wayland-specific crates (ashpd, reis, atspi) added in
-# Phase 3-5 when the corresponding primitives land.
-x11rb = "0.13"
+# x11rb: pure-Rust X11 binding.
+# - foreground-window discovery (window_info/linux.rs)
+# - XTest extension for synthetic keyboard events (inject/linux.rs)
+# Wayland-specific crates (ashpd, reis, atspi) added in Phase 3-5
+# when the corresponding primitives land.
+x11rb = { version = "0.13", features = ["xtest"] }
 
 [dependencies.anyhow]
 version = "1"
