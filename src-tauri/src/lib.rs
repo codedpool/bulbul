@@ -264,6 +264,12 @@ fn position_overlay_bottom_center(app: &AppHandle) {
 /// disabled (so satellite buttons can be clicked) and a "hovered" event is
 /// emitted to the frontend. Larger exit zone gives hysteresis so the
 /// expanded UI doesn't flicker as the cursor moves between buttons.
+///
+/// Windows-only for now — Phase 7 of the macOS port replaces the Win32
+/// GetCursorPos call with NSEvent.mouseLocation. Until then Mac gets the
+/// no-op stub below: the pill renders fine, but satellite buttons aren't
+/// reachable (cursor-driven expansion is disabled).
+#[cfg(target_os = "windows")]
 fn spawn_hover_watcher(app: AppHandle) {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -307,6 +313,11 @@ fn spawn_hover_watcher(app: AppHandle) {
             }
         }
     });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn spawn_hover_watcher(_app: AppHandle) {
+    // Phase 7: implement via NSEvent.mouseLocation. Until then no hover.
 }
 
 
@@ -391,6 +402,14 @@ fn install_staged_if_present(app: &AppHandle) {
     }
 }
 
+/// Logical y-coordinate of the bottom of the screen's work area (just
+/// above the taskbar/dock). The overlay pill anchors itself there.
+///
+/// Phase 7 will swap the Mac arm in for NSScreen.visibleFrame. Until
+/// then Mac returns None and the caller falls back to the full monitor
+/// bottom — the pill sits flush with the screen edge instead of above
+/// the dock.
+#[cfg(target_os = "windows")]
 fn work_area_bottom_logical(scale: f64) -> Option<f64> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -407,6 +426,11 @@ fn work_area_bottom_logical(scale: f64) -> Option<f64> {
     };
     res.ok()?;
     Some(rect.bottom as f64 / scale)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn work_area_bottom_logical(_scale: f64) -> Option<f64> {
+    None
 }
 
 fn notify(app: &AppHandle, title: &str, body: &str) {

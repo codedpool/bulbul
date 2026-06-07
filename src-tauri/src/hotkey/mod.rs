@@ -1,24 +1,42 @@
+//! Hotkey registration + the orchestrator-bound event channel.
+//!
+//! This module owns the platform-agnostic parts:
+//! - the parsed-hotkey/event/status types,
+//! - key-name → W3C `Code` mapping (the cross-platform global-shortcut
+//!   plugin speaks Codes),
+//! - the dictation / polish / transform-slot registration logic.
+//!
+//! Anything that has to touch raw OS APIs (querying live key state for a
+//! release poller, or polling modifier state for a modifier-only chord)
+//! lives in `windows.rs` / `macos.rs`. Those modules expose a small
+//! native-side surface (`stop_native_watchers`, `spawn_modifier_chord_watcher`,
+//! `spawn_release_poller`) which this module calls without caring about
+//! the underlying primitives.
+
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows as native;
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos as native;
+
 /// Minimum gap between two fires of the same hotkey. Guards against
-/// auto-repeat and spurious event bursts.
-const FIRE_COOLDOWN_MS: u128 = 700;
-/// How often the release poller checks the dictation hotkey's key state.
-const RELEASE_POLL_MS: u64 = 25;
-/// How long both modifiers of a modifier-only chord (e.g. Ctrl+Win) must
-/// be held before we treat it as a dictation request. Short enough to feel
-/// snappy, long enough that brushing both keys for unrelated reasons
-/// (Ctrl+Win+arrow to switch desktop, etc.) doesn't fire dictation.
-const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 80;
+/// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
+/// handlers; the native release-poller has its own cadence constants.
+pub const FIRE_COOLDOWN_MS: u128 = 700;
 
 #[derive(Clone, Debug)]
 pub enum HotkeyEvent {
@@ -56,10 +74,6 @@ impl ParsedHotkey {
             }
         }
         h
-    }
-
-    pub fn is_meaningful(&self) -> bool {
-        self.key.is_some() || self.ctrl || self.shift || self.alt || self.meta
     }
 
     /// True if this hotkey is a pure modifier chord (no non-modifier key)
@@ -107,7 +121,8 @@ fn normalize_key_name(s: &str) -> String {
 }
 
 /// Convert our internal key string ("Space", "A", "F9") to the plugin's
-/// `Code` (W3C UI Events `code` values).
+/// `Code` (W3C UI Events `code` values). The plugin is cross-platform —
+/// these mappings work on Windows + macOS + Linux.
 fn key_name_to_code(name: &str) -> Option<Code> {
     Some(match name {
         "Space" => Code::Space,
@@ -136,36 +151,6 @@ fn key_name_to_code(name: &str) -> Option<Code> {
     })
 }
 
-/// Convert our key string to a Windows virtual-key code for `GetAsyncKeyState`.
-fn key_name_to_vk(name: &str) -> Option<i32> {
-    let code: i32 = match name {
-        "Space" => 0x20,
-        "Tab" => 0x09,
-        "Return" | "Enter" => 0x0D,
-        "Backspace" => 0x08,
-        "Escape" => 0x1B,
-        // Letters: VK_<A-Z> is just ASCII upper.
-        x if x.len() == 1 && x.chars().next().unwrap().is_ascii_uppercase() => {
-            x.chars().next().unwrap() as i32
-        }
-        // Digits: VK_0..VK_9 are ASCII '0'..'9'.
-        x if x.len() == 1 && x.chars().next().unwrap().is_ascii_digit() => {
-            x.chars().next().unwrap() as i32
-        }
-        // F1..F12 = 0x70..0x7B.
-        x if x.starts_with('F') && x[1..].chars().all(|c| c.is_ascii_digit()) => {
-            let n: u8 = x[1..].parse().ok()?;
-            if (1..=12).contains(&n) {
-                0x70 + (n as i32 - 1)
-            } else {
-                return None;
-            }
-        }
-        _ => return None,
-    };
-    Some(code)
-}
-
 pub fn parsed_to_shortcut(h: &ParsedHotkey) -> Option<Shortcut> {
     let mut mods = Modifiers::empty();
     if h.ctrl {
@@ -182,154 +167,6 @@ pub fn parsed_to_shortcut(h: &ParsedHotkey) -> Option<Shortcut> {
     }
     let code = key_name_to_code(h.key.as_deref()?)?;
     Some(Shortcut::new(Some(mods), code))
-}
-
-fn is_key_down(vk: i32) -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-    unsafe { GetAsyncKeyState(vk) < 0 }
-}
-
-/// Read the currently-held state of every modifier we care about.
-/// Returns (ctrl, shift, alt, meta). VK_CONTROL/VK_SHIFT/VK_MENU are the
-/// "either left or right" virtual keys; Win has separate L/R so we OR them.
-fn modifier_state() -> (bool, bool, bool, bool) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
-    };
-    (
-        is_key_down(VK_CONTROL.0 as i32),
-        is_key_down(VK_SHIFT.0 as i32),
-        is_key_down(VK_MENU.0 as i32),
-        is_key_down(VK_LWIN.0 as i32) || is_key_down(VK_RWIN.0 as i32),
-    )
-}
-
-/// True if every required modifier in `need` is currently held.
-fn required_mods_held(need: &ParsedHotkey, state: (bool, bool, bool, bool)) -> bool {
-    let (ctrl, shift, alt, meta) = state;
-    (!need.ctrl || ctrl)
-        && (!need.shift || shift)
-        && (!need.alt || alt)
-        && (!need.meta || meta)
-}
-
-/// Long-running watcher for a modifier-only chord like Ctrl+Win. Polls
-/// modifier state every 25ms. Fires DictationPressed once both required
-/// modifiers have been held for MODIFIER_CHORD_DEBOUNCE_MS, and
-/// DictationReleased the instant either is released. Stops when `alive`
-/// is set to false (settings change → re_register swaps in a new watcher).
-fn spawn_modifier_chord_watcher(
-    tx: Sender<HotkeyEvent>,
-    hotkey: ParsedHotkey,
-    alive: Arc<AtomicBool>,
-) {
-    thread::spawn(move || {
-        // State machine: Idle → Arming(start) → Pressing.
-        // Cooldown across consecutive presses guards against accidental
-        // re-trigger when the user briefly bounces a key.
-        enum State {
-            Idle,
-            Arming(Instant),
-            Pressing,
-        }
-        let mut state = State::Idle;
-        let mut last_fire: Option<Instant> = None;
-        tracing::info!(
-            "modifier-chord watcher started for {:?}",
-            hotkey
-        );
-        while alive.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
-            let held = required_mods_held(&hotkey, modifier_state());
-            match state {
-                State::Idle => {
-                    if held {
-                        let cooled = last_fire.map_or(true, |t| {
-                            t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
-                        });
-                        if cooled {
-                            state = State::Arming(Instant::now());
-                        }
-                    }
-                }
-                State::Arming(start) => {
-                    if !held {
-                        // Released before the debounce — treat as noise.
-                        state = State::Idle;
-                    } else if start.elapsed().as_millis()
-                        >= MODIFIER_CHORD_DEBOUNCE_MS as u128
-                    {
-                        tracing::debug!(
-                            "modifier-chord dictation pressed: {:?}",
-                            hotkey
-                        );
-                        let _ = tx.send(HotkeyEvent::DictationPressed);
-                        last_fire = Some(Instant::now());
-                        state = State::Pressing;
-                    }
-                }
-                State::Pressing => {
-                    if !held {
-                        let _ = tx.send(HotkeyEvent::DictationReleased);
-                        state = State::Idle;
-                    }
-                }
-            }
-        }
-        // Stopped — if we were mid-press make sure release fires so the
-        // orchestrator doesn't get stuck holding a recording open.
-        if matches!(state, State::Pressing) {
-            let _ = tx.send(HotkeyEvent::DictationReleased);
-        }
-        tracing::info!("modifier-chord watcher exited for {:?}", hotkey);
-    });
-}
-
-/// Holds the AtomicBool that keeps the current modifier-chord watcher
-/// alive. re_register swaps in a fresh flag and signals the old one to
-/// stop, so only one watcher runs at a time.
-fn modifier_chord_alive_slot() -> &'static Mutex<Option<Arc<AtomicBool>>> {
-    static SLOT: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
-}
-
-/// Hold-to-talk release detector. RegisterHotKey only signals key-down;
-/// we poll the actual key state to detect when the user lets go. The
-/// `release_evt` parameter lets the same poller drive either the
-/// dictation pipeline or the voice-transform pipeline.
-fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey, release_evt: HotkeyEvent) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
-    };
-    let Some(main_vk) = hotkey.key.as_deref().and_then(key_name_to_vk) else {
-        return;
-    };
-    thread::spawn(move || {
-        // Safety net: regardless of polling result, never let this thread
-        // outlive a reasonable upper bound on a press. 60 seconds covers
-        // even the most generous dictation; if we hit it we fire release
-        // anyway so the orchestrator doesn't get stuck.
-        let started = Instant::now();
-        loop {
-            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
-            if started.elapsed() > Duration::from_secs(60) {
-                tracing::warn!("release poller timed out — forcing release");
-                let _ = tx.send(release_evt.clone());
-                return;
-            }
-            let main_down = is_key_down(main_vk);
-            let ctrl_ok = !hotkey.ctrl || is_key_down(VK_CONTROL.0 as i32);
-            let shift_ok = !hotkey.shift || is_key_down(VK_SHIFT.0 as i32);
-            let alt_ok = !hotkey.alt || is_key_down(VK_MENU.0 as i32);
-            let meta_ok = !hotkey.meta
-                || is_key_down(VK_LWIN.0 as i32)
-                || is_key_down(VK_RWIN.0 as i32);
-            if !(main_down && ctrl_ok && shift_ok && alt_ok && meta_ok) {
-                let _ = tx.send(release_evt.clone());
-                return;
-            }
-        }
-    });
 }
 
 /// Create the hotkey channel. Returns (tx, rx). The tx is stored in
@@ -373,33 +210,24 @@ fn re_register(
         tracing::warn!("unregister_all failed: {e:#}");
     }
 
-    // Stop any modifier-chord watcher from the previous registration. We
-    // always swap, even if the new dictation hotkey is also a modifier
-    // chord — a new watcher with the up-to-date spec gets spawned below.
-    {
-        let mut slot = modifier_chord_alive_slot().lock();
-        if let Some(prev) = slot.take() {
-            prev.store(false, Ordering::Relaxed);
-        }
-    }
+    // Stop any platform-specific watchers from the previous registration
+    // (Windows: the modifier-chord polling thread; macOS: future
+    // CGEventTap teardown). Always run, even if the new dictation hotkey
+    // is also a modifier chord — a fresh watcher with the up-to-date
+    // spec gets spawned below.
+    native::stop_native_watchers();
 
     let snapshot = set.lock().clone();
 
     // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
-    // plugin's RegisterHotKey backend can't represent these, so we run a
-    // background polling thread that watches the modifier state directly.
+    // plugin's RegisterHotKey backend can't represent these, so we hand
+    // off to the platform's native polling implementation.
     if snapshot.dictation.is_modifier_chord() {
-        let alive = Arc::new(AtomicBool::new(true));
-        *modifier_chord_alive_slot().lock() = Some(alive.clone());
-        spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone(), alive);
-        tracing::info!(
-            "registered dictation (modifier-chord watcher): {:?}",
-            snapshot.dictation
-        );
+        native::spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone());
     }
     // Dictation, branch B: regular combo with a non-modifier key
     // (Ctrl+Shift+Space etc.). Uses the global-shortcut plugin for press,
-    // and a one-shot release poller for the key-up edge.
+    // and a platform-native release poller for the key-up edge.
     else if let Some(dict_sc) = parsed_to_shortcut(&snapshot.dictation) {
         let tx_dict = tx.clone();
         let dict_parsed = snapshot.dictation.clone();
@@ -436,7 +264,7 @@ fn re_register(
             let dict_active_clone = dict_active.clone();
             thread::spawn(move || {
                 let (poll_tx, poll_rx) = mpsc::channel();
-                spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
+                native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
                     let _ = tx_release.send(evt);
                 }
@@ -489,7 +317,7 @@ fn re_register(
             let pol_active_clone = pol_active.clone();
             thread::spawn(move || {
                 let (poll_tx, poll_rx) = mpsc::channel();
-                spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
+                native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
                     let _ = tx_release.send(evt);
                 }
@@ -509,7 +337,8 @@ fn re_register(
     // Transform slot hotkeys (Alt+1..Alt+9 by default). Each one fires
     // TransformTriggered(id) on press. If registration fails (e.g. the
     // combo is owned by another app), we surface the error to the UI via
-    // the returned status vec instead of crashing.
+    // the returned status vec instead of crashing. No release polling
+    // needed — these are tap-to-trigger, not hold-to-talk.
     let mut statuses: Vec<TransformSlotStatus> = Vec::new();
     for (transform_id, hk) in &snapshot.transform_bindings {
         let slot = derive_slot_number(hk).unwrap_or(0);

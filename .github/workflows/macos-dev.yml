@@ -1,0 +1,71 @@
+name: macOS dev build
+
+# Rolling pre-release for the in-flight macOS port (v1.1.0). Every
+# push to v1.1-port rebuilds + replaces the `macos-dev` release. The
+# tester pulls via `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`,
+# so no clone/build is needed on their machine.
+#
+# Sibling workflow `linux-dev.yml` covers the Linux side of the same
+# branch. When the port is done and merged, drop both.
+
+on:
+  push:
+    branches:
+      - v1.1-port
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust toolchain (Apple Silicon + Intel)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Wipe previous dev release
+        # Replaces (not appends to) the macos-dev release so the tester
+        # always pulls the freshest build. --cleanup-tag drops the
+        # underlying git tag too; tauri-action recreates both.
+        # `|| true` keeps the first run green when no prior release exists.
+        run: gh release delete macos-dev --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + sign dev release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: macos-dev
+          releaseName: 'Bulbul macOS dev build'
+          releaseBody: |
+            Rolling dev build from the `macos-port` branch. **Not for general use** — the port is incomplete.
+
+            ## Tester install
+
+            ```sh
+            curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh
+            ```
+
+            Each push to `macos-port` replaces this release. Production builds live in tagged `vX.Y.Z` releases.
+          releaseDraft: false
+          prerelease: true
+          includeUpdaterJson: true
+          args: --target universal-apple-darwin
