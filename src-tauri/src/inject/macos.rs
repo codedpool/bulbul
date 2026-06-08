@@ -29,9 +29,9 @@ use std::thread;
 use std::time::Duration;
 
 /// Mac virtual key codes. Hard-coded for US QWERTY — covers >95% of
-/// keyboards. Phase 7 polish can add TIS-based dynamic lookup (see
-/// a reference implementation's keyCodeForCharacter for the reference implementation
-/// that handles Dvorak/AZERTY/etc).
+/// keyboards. Phase 7 polish can add TIS-based dynamic lookup
+/// (UCKeyTranslate + TISCopyCurrentKeyboardInputSource) so Dvorak /
+/// AZERTY layouts also work.
 const KEYCODE_V: u16 = 9;
 const KEYCODE_C: u16 = 8;
 
