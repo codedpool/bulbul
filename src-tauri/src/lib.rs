@@ -469,13 +469,21 @@ fn update_tray_icon(app: &AppHandle, has_key: bool) {
     let Some(tray) = app.tray_by_id("bulbul-tray") else {
         return;
     };
-    let state = app.state::<AppState>();
-    let icon = if has_key {
-        state.icons.active.to_image()
-    } else {
-        state.icons.no_key.to_image()
-    };
-    let _ = tray.set_icon(Some(icon));
+    // On Mac the tray icon is a template image set once at build time.
+    // tray.set_icon would replace the underlying NSImage and lose the
+    // template flag, so we skip the icon swap there and let the
+    // tooltip carry the missing-key state instead. Win/Linux still
+    // swap to the tinted-red variant.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let state = app.state::<AppState>();
+        let icon = if has_key {
+            state.icons.active.to_image()
+        } else {
+            state.icons.no_key.to_image()
+        };
+        let _ = tray.set_icon(Some(icon));
+    }
     let tooltip = if has_key {
         "Bulbul — hold your hotkey to dictate"
     } else {
@@ -1348,12 +1356,38 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
-            // Build icon variants from the bundled default window icon.
-            let default_icon = handle
-                .default_window_icon()
-                .expect("default window icon must be available")
-                .to_owned();
-            let active_icon = OwnedIcon::from_image(&default_icon);
+            // Build tray-icon variants. Mac uses a dedicated monochrome
+            // template asset (black silhouette on transparent) so the
+            // menu bar can recolor it for dark mode and selected
+            // states. Windows + Linux use the bundled colored icon and
+            // tint it red to flag "missing API key" state.
+            //
+            // The "no key" indicator differs by platform:
+            //   - Win/Linux: tinted-red variant of the same icon
+            //   - Mac: same template icon (state surfaced via tooltip)
+            //     since you can't tint a template — the OS overrides
+            //     the color anyway. tray.set_icon also can't preserve
+            //     the template flag mid-run, so we leave the icon
+            //     alone on Mac and let the tooltip carry state.
+            #[cfg(target_os = "macos")]
+            let active_icon = {
+                let img = tauri::image::Image::from_bytes(include_bytes!(
+                    "../icons/tray-icon@2x.png"
+                ))
+                .expect("tray-icon@2x.png failed to decode");
+                OwnedIcon::from_image(&img)
+            };
+            #[cfg(not(target_os = "macos"))]
+            let active_icon = {
+                let default_icon = handle
+                    .default_window_icon()
+                    .expect("default window icon must be available")
+                    .to_owned();
+                OwnedIcon::from_image(&default_icon)
+            };
+            #[cfg(target_os = "macos")]
+            let no_key_icon = active_icon.clone();
+            #[cfg(not(target_os = "macos"))]
             let no_key_icon = active_icon.tinted_red();
             let icons = Arc::new(IconVariants {
                 active: active_icon,
@@ -1491,11 +1525,24 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
     };
 
     let initial_visible = !app.state::<AppState>().config.lock().hide_tray;
-    let tray = TrayIconBuilder::with_id("bulbul-tray")
+    // `mut` is unused on non-Mac (the cfg-gated reassignment below
+    // compiles away). Suppress the lint rather than duplicate the
+    // whole builder chain.
+    #[allow(unused_mut)]
+    let mut tray_builder = TrayIconBuilder::with_id("bulbul-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip(tooltip)
-        .icon(initial_icon)
+        .icon(initial_icon);
+    #[cfg(target_os = "macos")]
+    {
+        // Mac: render the icon as an NSImage template so the menu bar
+        // owns the color (auto-inverts for dark mode, highlights when
+        // selected, etc). Requires the icon to be a pure-black
+        // silhouette on transparent, which tray-icon@2x.png is.
+        tray_builder = tray_builder.icon_as_template(true);
+    }
+    let tray = tray_builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "settings" => show_settings(app),
             "check_update" => {
