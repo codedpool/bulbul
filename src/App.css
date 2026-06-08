@@ -30,6 +30,20 @@ body, html, #root {
   height: 100%;
 }
 
+/* macOS: the Tauri window is borderless + transparent, so we make the
+   body see-through and let the inner shell draw a rounded background.
+   Without this the shell hits the window's flat alpha-edge and shows
+   as a sharp-cornered rectangle. */
+.platform-mac body,
+.platform-mac html,
+.platform-mac #root {
+  background: transparent;
+}
+.platform-mac .app-shell {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
 .loading {
   color: var(--text-dim);
   text-align: center;

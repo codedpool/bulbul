@@ -11,6 +11,15 @@
   font-optical-sizing: auto;
 }
 
+/* macOS: round the wizard's outer shell (the window itself is
+   borderless + transparent on Mac, so this is what the user
+   actually sees as the window edge). Win11 / GNOME / KDE already
+   round borderless windows at the compositor level. */
+.platform-mac .onb-shell {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
 .onb-shell * { box-sizing: border-box; }
 .onb-shell button,
 .onb-shell input,

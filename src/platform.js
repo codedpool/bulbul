@@ -48,3 +48,14 @@ export const META_KEY_NAME = IS_MAC
   : IS_LINUX
     ? "Super"
     : "Windows";
+
+// Tag <html> with a platform class so CSS can apply OS-specific
+// rules — Mac wants a transparent body + rounded shell corners since
+// the native window is borderless + transparent (decorations: false +
+// macOSPrivateApi: true). Windows + Linux keep the existing opaque
+// shell since their native borderless windows handle corner rounding
+// at the OS level (Win11 corner radius, GNOME/KDE compositor).
+if (typeof document !== "undefined") {
+  const cls = IS_MAC ? "platform-mac" : IS_LINUX ? "platform-linux" : "platform-windows";
+  document.documentElement.classList.add(cls);
+}

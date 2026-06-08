@@ -1247,6 +1247,37 @@ fn check_microphone_status_mac() -> String {
     "granted".to_string()
 }
 
+/// Mac-only: open a specific System Settings privacy pane via the
+/// `x-apple.systempreferences:` URL scheme. We invoke macOS's `open`
+/// CLI directly because tauri-plugin-opener's `openUrl` only permits
+/// http/https URLs by default — wiring up a capabilities exception
+/// just for one custom URL scheme is more friction than shelling out.
+///
+/// `pane` is "accessibility" or "microphone". Anything else is rejected.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn open_mac_settings_pane(pane: String) -> Result<(), String> {
+    use std::process::Command;
+    let url = match pane.as_str() {
+        "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+        // Generic fallback — opens the Privacy & Security root pane.
+        "privacy" => "x-apple.systempreferences:com.apple.preference.security",
+        other => return Err(format!("unknown settings pane: {other}")),
+    };
+    Command::new("open")
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("open: {e}"))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn open_mac_settings_pane(_pane: String) -> Result<(), String> {
+    Ok(())
+}
+
 #[tauri::command]
 async fn install_staged_update(app: AppHandle) -> Result<(), String> {
     let slot = app.state::<AppState>().staged_update.clone();
@@ -1309,6 +1340,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_accessibility_status_mac,
             check_microphone_status_mac,
+            open_mac_settings_pane,
             get_config,
             save_config,
             validate_api_key,

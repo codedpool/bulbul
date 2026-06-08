@@ -281,19 +281,16 @@ function StepPermissions({ onBack, onNext }) {
   }, []);
 
   async function openSettings(pane) {
-    const url =
-      pane === "accessibility"
-        ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-        : "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+    // Shelling out to the macOS `open` CLI on the backend is more
+    // reliable than tauri-plugin-opener's openUrl for custom URL
+    // schemes like x-apple.systempreferences: — the plugin's default
+    // capabilities only allow http/https and silently reject the rest.
     try {
-      await openUrl(url);
+      await invoke("open_mac_settings_pane", { pane });
     } catch {
-      // System Settings is always present; rare failure mode is older
-      // macOS versions where the URL scheme differs. Falls back to a
-      // generic Privacy & Security pane if available, otherwise the
-      // user opens settings manually.
+      // Last-resort generic Privacy & Security pane.
       try {
-        await openUrl("x-apple.systempreferences:com.apple.preference.security");
+        await invoke("open_mac_settings_pane", { pane: "privacy" });
       } catch {}
     }
   }
