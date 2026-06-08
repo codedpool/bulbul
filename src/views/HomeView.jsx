@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import FeatureHero from "../components/FeatureHero.jsx";
+import { OS_NOUN } from "../platform.js";
 
 const PAGE_SIZE = 50;
 
@@ -70,7 +71,7 @@ export default function HomeView({ displayName }) {
       <FeatureHero
         dismissKey="bulbul.home.hero.dismissed"
         title={<>Speak. Edit. <em>Move on.</em></>}
-        blurb="Hold your hotkey anywhere on Windows, talk, release. Bulbul transcribes, cleans up, and pastes the result right at your cursor."
+        blurb={`Hold your hotkey anywhere on ${OS_NOUN}, talk, release. Bulbul transcribes, cleans up, and pastes the result right at your cursor.`}
       />
 
       <section className="stat-cards">
@@ -100,7 +101,7 @@ export default function HomeView({ displayName }) {
         <h3>Recent activity</h3>
         {recent.length === 0 ? (
           <div className="empty-state">
-            <p>No dictations yet. Hold your hotkey anywhere in Windows and start talking.</p>
+            <p>No dictations yet. Hold your hotkey anywhere on {OS_NOUN} and start talking.</p>
           </div>
         ) : (
           <div className="timeline">

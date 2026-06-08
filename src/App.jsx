@@ -14,6 +14,7 @@ import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
 import { applyTheme } from "./theme.js";
+import { RELAUNCH_HINT } from "./platform.js";
 import "./App.css";
 
 const ICONS = {
@@ -259,7 +260,7 @@ function App() {
           </label>
           <label
             className="sidebar-toggle-row"
-            title="When on, the system-tray icon disappears. Bulbul keeps running in the background — the pill only appears while you're dictating. Re-launch Bulbul from the Start menu to bring this dashboard back."
+            title={`When on, the system-tray icon disappears. Bulbul keeps running in the background — the pill only appears while you're dictating. ${RELAUNCH_HINT}`}
           >
             <span className="sidebar-toggle-label">Hide tray icon</span>
             <span className={`toggle ${config.hide_tray ? "on" : ""}`}>

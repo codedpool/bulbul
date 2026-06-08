@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
+import { AUTOSTART_LABEL, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
 
 const MODES = [
   { value: "raw", label: "Raw", hint: "Fix obvious errors only. Keeps every word." },
@@ -288,7 +289,7 @@ function PaneGeneral({ config, updateConfig }) {
           ariaLabel="Language"
         />
       </Row>
-      <Row title="Appearance" hint="Light, dark, or follow Windows.">
+      <Row title="Appearance" hint={THEME_FOLLOW_HINT}>
         <div className="segmented">
           {THEMES.map((t) => (
             <button
@@ -426,7 +427,7 @@ function PaneStartup({ config, updateConfig, autostart, onAutostartChange, onHid
   return (
     <>
       <ToggleRow
-        title="Start Bulbul with Windows"
+        title={AUTOSTART_LABEL}
         hint="Boots silently in the tray on login."
         checked={autostart}
         onChange={onAutostartChange}
@@ -439,7 +440,7 @@ function PaneStartup({ config, updateConfig, autostart, onAutostartChange, onHid
       />
       <ToggleRow
         title="Hide tray icon"
-        hint="Bulbul keeps running in the background and your hotkey still works. The pill only appears while you're dictating. Re-launch Bulbul from the Start menu to bring this window back."
+        hint={`Bulbul keeps running in the background and your hotkey still works. The pill only appears while you're dictating. ${RELAUNCH_HINT}`}
         checked={!!config.hide_tray}
         onChange={(v) => onHideTrayChange?.(v)}
       />

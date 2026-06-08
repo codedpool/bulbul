@@ -69,6 +69,10 @@ features = [
 # (window_info/macos.rs).
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
+# objc2 runtime for class-method message sending into AVFoundation
+# (mic-permission status check) and other classes not exposed by the
+# higher-level objc2-* binding crates.
+objc2 = "0.5"
 # CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs)
 # and live key-state polling in the hotkey path (hotkey/macos.rs).
 core-graphics = "0.25"

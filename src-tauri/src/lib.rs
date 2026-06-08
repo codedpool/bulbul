@@ -1180,6 +1180,65 @@ fn check_accessibility_status_mac() -> bool {
     true
 }
 
+// Pull in AVFoundation so the AVCaptureDevice class symbol below
+// resolves at link time. Empty extern block; the actual call uses
+// objc2's class-method message send.
+#[cfg(target_os = "macos")]
+#[link(name = "AVFoundation", kind = "framework")]
+extern "C" {}
+
+/// Mac-only: query the live microphone-permission status. Returns one
+/// of "granted" | "denied" | "not_determined" | "restricted" matching
+/// AVAuthorizationStatus. Polled by the onboarding Permissions step
+/// alongside check_accessibility_status_mac so the wizard can flip the
+/// mic card to ✓ the moment the user grants access without forcing
+/// them to self-confirm via checkbox.
+///
+/// Other platforms return "granted" unconditionally — the wizard
+/// only shows this step on Mac, so non-Mac builds never see the value
+/// but the command needs to exist for the invoke_handler! list.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn check_microphone_status_mac() -> String {
+    use objc2::msg_send;
+    use objc2::runtime::AnyClass;
+    use objc2_foundation::NSString;
+
+    // SAFETY: AVCaptureDevice.authorizationStatusForMediaType: is
+    // documented as a pure-query class method, callable from any
+    // thread. AnyClass::get is also thread-safe. The NSString param
+    // outlives the message send (dropped at unsafe-block exit).
+    unsafe {
+        let cls = match AnyClass::get(c"AVCaptureDevice") {
+            Some(c) => c,
+            None => {
+                tracing::warn!(
+                    "AVCaptureDevice class not found; AVFoundation linkage may have failed"
+                );
+                return "unknown".to_string();
+            }
+        };
+        // AVMediaTypeAudio's NSString value is the FourCC "soun".
+        // Hardcoded here to avoid linking just for the constant.
+        let media_type = NSString::from_str("soun");
+        let status: i64 = msg_send![cls, authorizationStatusForMediaType: &*media_type];
+        match status {
+            0 => "not_determined",
+            1 => "restricted",
+            2 => "denied",
+            3 => "granted",
+            _ => "unknown",
+        }
+        .to_string()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn check_microphone_status_mac() -> String {
+    "granted".to_string()
+}
+
 #[tauri::command]
 async fn install_staged_update(app: AppHandle) -> Result<(), String> {
     let slot = app.state::<AppState>().staged_update.clone();
@@ -1241,6 +1300,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             check_accessibility_status_mac,
+            check_microphone_status_mac,
             get_config,
             save_config,
             validate_api_key,

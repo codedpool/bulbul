@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
 import { applyTheme } from "../theme.js";
+import { IS_MAC, META_KEY_NAME } from "../platform.js";
 import "./onboarding.css";
 
 const HOTKEY_PRESETS = [
@@ -42,7 +43,6 @@ const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test, and like, it loo
 // Mac inserts a one-time Permissions step between Welcome and the API
 // key entry. Non-Mac platforms skip it (Windows has no permission gate;
 // Linux X11 needs none, Linux Wayland prompts via portal on first use).
-const IS_MAC = /Mac/i.test(navigator.userAgent);
 const STEP_SEQUENCE = IS_MAC
   ? ["welcome", "permissions", "apiKey", "language", "hotkey", "done"]
   : ["welcome", "apiKey", "language", "hotkey", "done"];
@@ -244,24 +244,32 @@ function StepWelcome({ config, updateConfig, onNext }) {
 // other apps and read which app is focused). macOS exposes both behind
 // the same Privacy & Security pane in System Settings.
 //
-// AX status is checked programmatically via AXIsProcessTrusted — we
-// poll it every 1.5s while this step is on screen, and Continue unlocks
-// the moment the user grants. Mic doesn't have a clean status API in
-// our dep set, so the user self-confirms via checkbox. Both must be set
-// before Continue enables.
+// Both status checks are programmatic and polled every 1.5s while the
+// step is on screen:
+//   - AX:  AXIsProcessTrusted()
+//   - Mic: AVCaptureDevice.authorizationStatusForMediaType(.audio)
+// Continue unlocks the moment both flip to granted; no user
+// confirmation step needed.
 function StepPermissions({ onBack, onNext }) {
   const [axGranted, setAxGranted] = useState(false);
-  const [micConfirmed, setMicConfirmed] = useState(false);
+  const [micStatus, setMicStatus] = useState("not_determined");
+  const micGranted = micStatus === "granted";
 
   useEffect(() => {
     let cancelled = false;
     async function check() {
       try {
-        const granted = await invoke("check_accessibility_status_mac");
-        if (!cancelled) setAxGranted(!!granted);
+        const [ax, mic] = await Promise.all([
+          invoke("check_accessibility_status_mac"),
+          invoke("check_microphone_status_mac"),
+        ]);
+        if (!cancelled) {
+          setAxGranted(!!ax);
+          setMicStatus(typeof mic === "string" ? mic : "not_determined");
+        }
       } catch {
-        // Silent — the command always succeeds in practice; if it
-        // fails the user can still click Continue once mic is checked.
+        // Silent — commands rarely fail. If they do, the user can
+        // grant manually in System Settings and re-launch onboarding.
       }
     }
     check();
@@ -290,7 +298,24 @@ function StepPermissions({ onBack, onNext }) {
     }
   }
 
-  const ready = axGranted && micConfirmed;
+  const ready = axGranted && micGranted;
+
+  // Human-readable status label for the mic card. Distinguishes
+  // "not asked yet" (user hasn't opened Settings or hit the hotkey) from
+  // "explicitly denied" (different remediation: re-enable a slider
+  // they previously turned off).
+  const micStatusLabel = (() => {
+    switch (micStatus) {
+      case "granted":
+        return "Detected — ready to go.";
+      case "denied":
+        return "Microphone access is currently denied. Toggle Bulbul on in System Settings.";
+      case "restricted":
+        return "Microphone access restricted by a system policy.";
+      default:
+        return "Status updates here automatically once you grant access.";
+    }
+  })();
 
   return (
     <div className="onb-page-inner">
@@ -302,10 +327,10 @@ function StepPermissions({ onBack, onNext }) {
       </header>
 
       <div className="onb-perm-cards">
-        <article className={`onb-perm-card ${micConfirmed ? "granted" : ""}`}>
+        <article className={`onb-perm-card ${micGranted ? "granted" : ""}`}>
           <header className="onb-perm-head">
             <span className="onb-perm-status" aria-hidden>
-              {micConfirmed ? "✓" : "○"}
+              {micGranted ? "✓" : "○"}
             </span>
             <h2>Microphone</h2>
           </header>
@@ -317,14 +342,7 @@ function StepPermissions({ onBack, onNext }) {
               Open Microphone Settings
             </button>
           </div>
-          <label className="onb-perm-confirm">
-            <input
-              type="checkbox"
-              checked={micConfirmed}
-              onChange={(e) => setMicConfirmed(e.target.checked)}
-            />
-            <span>I've enabled microphone access for Bulbul</span>
-          </label>
+          <p className="onb-perm-confirm muted small">{micStatusLabel}</p>
         </article>
 
         <article className={`onb-perm-card ${axGranted ? "granted" : ""}`}>
@@ -1274,10 +1292,11 @@ function keyEventToName(e) {
   return null;
 }
 
-// "Win" → "Windows key", everything else stays as-is. Used in coaching
-// text where "Now also hold Win" reads awkwardly compared to "Windows".
+// "Win" → platform-appropriate name (Windows / Command / Super) in
+// coaching text where "Now also hold Win" reads awkwardly.
+// Everything else stays as-is.
 function prettyKeyName(part) {
-  return part === "Win" ? "Windows" : part;
+  return part === "Win" ? META_KEY_NAME : part;
 }
 
 // Renders the active combo as a row of pressable keycaps. Each cap lights
