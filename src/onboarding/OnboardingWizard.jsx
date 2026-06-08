@@ -39,9 +39,20 @@ const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/9VDbhptCzlU";
 // feedback ("ah, that's what Raw mode means").
 const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test, and like, it looks great.";
 
+// Mac inserts a one-time Permissions step between Welcome and the API
+// key entry. Non-Mac platforms skip it (Windows has no permission gate;
+// Linux X11 needs none, Linux Wayland prompts via portal on first use).
+const IS_MAC = /Mac/i.test(navigator.userAgent);
+const STEP_SEQUENCE = IS_MAC
+  ? ["welcome", "permissions", "apiKey", "language", "hotkey", "done"]
+  : ["welcome", "apiKey", "language", "hotkey", "done"];
+
 export default function OnboardingWizard({ config, updateConfig, onComplete }) {
   const [step, setStep] = useState(0);
-  const totalSteps = 5;
+  const totalSteps = STEP_SEQUENCE.length;
+  const currentStepName = STEP_SEQUENCE[step];
+  const goNext = () => setStep((s) => Math.min(s + 1, STEP_SEQUENCE.length - 1));
+  const goBack = () => setStep((s) => Math.max(s - 1, 0));
 
   const themePref = config.theme || "light";
   const resolvedTheme =
@@ -112,38 +123,41 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
       </header>
 
       <main className="onb-page" key={step}>
-        {step === 0 && (
+        {currentStepName === "welcome" && (
           <StepWelcome
             config={config}
             updateConfig={updateConfig}
-            onNext={() => setStep(1)}
+            onNext={goNext}
           />
         )}
-        {step === 1 && (
+        {currentStepName === "permissions" && (
+          <StepPermissions onBack={goBack} onNext={goNext} />
+        )}
+        {currentStepName === "apiKey" && (
           <StepApiKey
             config={config}
             updateConfig={updateConfig}
-            onBack={() => setStep(0)}
-            onNext={() => setStep(2)}
+            onBack={goBack}
+            onNext={goNext}
           />
         )}
-        {step === 2 && (
+        {currentStepName === "language" && (
           <StepLanguage
             config={config}
             updateConfig={updateConfig}
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
+            onBack={goBack}
+            onNext={goNext}
           />
         )}
-        {step === 3 && (
+        {currentStepName === "hotkey" && (
           <StepHotkey
             config={config}
             updateConfig={updateConfig}
-            onBack={() => setStep(2)}
-            onNext={() => setStep(4)}
+            onBack={goBack}
+            onNext={goNext}
           />
         )}
-        {step === 4 && (
+        {currentStepName === "done" && (
           <StepDone
             onFinish={finish}
             hotkey={config.hotkey}
@@ -220,6 +234,129 @@ function StepWelcome({ config, updateConfig, onNext }) {
 
       <div className="onb-actions onb-actions-center">
         <button className="onb-btn primary" onClick={commitAndNext}>Get started →</button>
+      </div>
+    </div>
+  );
+}
+
+// Mac-only permissions gate. Bulbul needs Microphone (to capture audio
+// from your dictation hotkey) and Accessibility (to inject text into
+// other apps and read which app is focused). macOS exposes both behind
+// the same Privacy & Security pane in System Settings.
+//
+// AX status is checked programmatically via AXIsProcessTrusted — we
+// poll it every 1.5s while this step is on screen, and Continue unlocks
+// the moment the user grants. Mic doesn't have a clean status API in
+// our dep set, so the user self-confirms via checkbox. Both must be set
+// before Continue enables.
+function StepPermissions({ onBack, onNext }) {
+  const [axGranted, setAxGranted] = useState(false);
+  const [micConfirmed, setMicConfirmed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      try {
+        const granted = await invoke("check_accessibility_status_mac");
+        if (!cancelled) setAxGranted(!!granted);
+      } catch {
+        // Silent — the command always succeeds in practice; if it
+        // fails the user can still click Continue once mic is checked.
+      }
+    }
+    check();
+    const interval = setInterval(check, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  async function openSettings(pane) {
+    const url =
+      pane === "accessibility"
+        ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        : "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+    try {
+      await openUrl(url);
+    } catch {
+      // System Settings is always present; rare failure mode is older
+      // macOS versions where the URL scheme differs. Falls back to a
+      // generic Privacy & Security pane if available, otherwise the
+      // user opens settings manually.
+      try {
+        await openUrl("x-apple.systempreferences:com.apple.preference.security");
+      } catch {}
+    }
+  }
+
+  const ready = axGranted && micConfirmed;
+
+  return (
+    <div className="onb-page-inner">
+      <header className="onb-step-head">
+        <h2>Grant macOS permissions</h2>
+        <p className="onb-sub">
+          Bulbul needs two macOS permissions to capture audio and inject text into other apps. Both grant via System Settings → Privacy &amp; Security.
+        </p>
+      </header>
+
+      <div className="onb-perm-cards">
+        <article className={`onb-perm-card ${micConfirmed ? "granted" : ""}`}>
+          <header className="onb-perm-head">
+            <span className="onb-perm-status" aria-hidden>
+              {micConfirmed ? "✓" : "○"}
+            </span>
+            <h2>Microphone</h2>
+          </header>
+          <p className="muted small">
+            Captures audio from your dictation hotkey. Without this, recording fails silently.
+          </p>
+          <div className="onb-perm-actions">
+            <button className="onb-btn" onClick={() => openSettings("microphone")}>
+              Open Microphone Settings
+            </button>
+          </div>
+          <label className="onb-perm-confirm">
+            <input
+              type="checkbox"
+              checked={micConfirmed}
+              onChange={(e) => setMicConfirmed(e.target.checked)}
+            />
+            <span>I've enabled microphone access for Bulbul</span>
+          </label>
+        </article>
+
+        <article className={`onb-perm-card ${axGranted ? "granted" : ""}`}>
+          <header className="onb-perm-head">
+            <span className="onb-perm-status" aria-hidden>
+              {axGranted ? "✓" : "○"}
+            </span>
+            <h2>Accessibility</h2>
+          </header>
+          <p className="muted small">
+            Lets Bulbul inject text into other apps and detect which app you're dictating into. Without this, paste-after-dictation does nothing.
+          </p>
+          <div className="onb-perm-actions">
+            <button className="onb-btn" onClick={() => openSettings("accessibility")}>
+              Open Accessibility Settings
+            </button>
+          </div>
+          <p className="onb-perm-confirm muted small">
+            {axGranted
+              ? "Detected — ready to go."
+              : "Status updates here automatically once you grant access."}
+          </p>
+        </article>
+      </div>
+
+      <div className="onb-actions">
+        <button className="onb-btn ghost" onClick={onBack}>
+          Back
+        </button>
+        <button className="onb-btn primary" onClick={onNext} disabled={!ready}>
+          Continue →
+        </button>
       </div>
     </div>
   );
@@ -1166,15 +1303,44 @@ function ChordDisplay({ parts, pressedKeys }) {
   );
 }
 
+// On macOS, render modifier names as their canonical glyphs so the
+// hotkey display matches what users see everywhere else on the OS
+// (⌃ ⌥ ⇧ ⌘). Trigger keys (letters, digits, Space, F-keys) keep their
+// text form on every platform. The underlying combo string stored in
+// config is unchanged — only the visual representation differs.
+const MAC_MOD_GLYPH = {
+  Ctrl: "⌃",
+  Control: "⌃",
+  Shift: "⇧",
+  Alt: "⌥",
+  Option: "⌥",
+  Win: "⌘",
+  Cmd: "⌘",
+  Meta: "⌘",
+  Super: "⌘",
+};
+
+function displayPart(part) {
+  if (IS_MAC && MAC_MOD_GLYPH[part]) {
+    return MAC_MOD_GLYPH[part];
+  }
+  return part;
+}
+
 function KeyCap({ part, pressed }) {
-  const wide = part.length > 1;
-  const extraWide = part === "Space";
+  const display = displayPart(part);
+  const isGlyph = display !== part && display.length === 1;
+  // Glyphs are single-char and look better as the narrow keycap; long
+  // text labels ("Ctrl") get the wide cap.
+  const wide = !isGlyph && display.length > 1;
+  const extraWide = display === "Space";
   return (
     <kbd
       className={`onb-keycap ${pressed ? "pressed" : ""} ${wide ? "wide" : ""} ${extraWide ? "extra-wide" : ""}`}
       aria-pressed={pressed}
+      aria-label={part}
     >
-      {part}
+      {display}
     </kbd>
   );
 }

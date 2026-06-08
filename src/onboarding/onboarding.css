@@ -1243,3 +1243,78 @@
   line-height: 1.45;
   color: var(--text-muted);
 }
+
+/* === Permissions step (macOS) ============================================== */
+
+.onb-perm-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 28px 0;
+}
+
+.onb-perm-card {
+  border: 1px solid var(--border);
+  background: var(--fill);
+  border-radius: 12px;
+  padding: 18px 20px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.onb-perm-card.granted {
+  border-color: var(--accent, #4ade80);
+  background: color-mix(in srgb, var(--accent, #4ade80) 8%, var(--fill));
+}
+
+.onb-perm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.onb-perm-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onb-perm-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg);
+}
+
+.onb-perm-card.granted .onb-perm-status {
+  border-color: var(--accent, #4ade80);
+  color: var(--accent, #4ade80);
+  background: var(--bg);
+}
+
+.onb-perm-actions {
+  margin: 10px 0 8px;
+}
+
+.onb-perm-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.onb-perm-confirm input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}

@@ -428,7 +428,30 @@ fn work_area_bottom_logical(scale: f64) -> Option<f64> {
     Some(rect.bottom as f64 / scale)
 }
 
-#[cfg(not(target_os = "windows"))]
+/// Mac: NSScreen.visibleFrame gives us the work area minus menu bar
+/// and dock. We convert from Mac's bottom-left origin to the top-down
+/// coords the overlay positioning expects.
+///
+/// MainThreadMarker::new() returns None when called off the main thread,
+/// in which case we fall back to "no work area known" and the caller
+/// uses the full monitor bottom (the overlay sits flush with the dock).
+/// position_overlay_bottom_center runs from window event handlers which
+/// are dispatched on the main thread, so the marker normally resolves.
+#[cfg(target_os = "macos")]
+fn work_area_bottom_logical(_scale: f64) -> Option<f64> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSScreen;
+    let mtm = MainThreadMarker::new()?;
+    let screen = NSScreen::mainScreen(mtm)?;
+    let frame = screen.frame();
+    let visible = screen.visibleFrame();
+    // NSScreen geometry is in points (already logical) with origin at
+    // the screen's bottom-left. The overlay code expects top-down y.
+    //   top-down(work-area-bottom) = frame.height - visible.origin.y
+    Some(frame.size.height - visible.origin.y)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn work_area_bottom_logical(_scale: f64) -> Option<f64> {
     None
 }
@@ -1139,6 +1162,24 @@ fn get_staged_update_version(state: tauri::State<'_, AppState>) -> Option<String
 ///
 /// Called both from the dashboard banner ("Install & restart") and from
 /// the tray Quit handler when an update is sitting in the slot.
+/// Mac-only: query whether Bulbul currently has Accessibility permission.
+/// Polled by the onboarding wizard's Permissions step to enable Continue
+/// once granted. On other platforms returns true unconditionally so the
+/// wizard's Mac-specific step is effectively a no-op there.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn check_accessibility_status_mac() -> bool {
+    // SAFETY: AXIsProcessTrusted is a pure-query function, safe from
+    // any thread, no preconditions.
+    unsafe { accessibility_sys::AXIsProcessTrusted() }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn check_accessibility_status_mac() -> bool {
+    true
+}
+
 #[tauri::command]
 async fn install_staged_update(app: AppHandle) -> Result<(), String> {
     let slot = app.state::<AppState>().staged_update.clone();
@@ -1199,6 +1240,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            check_accessibility_status_mac,
             get_config,
             save_config,
             validate_api_key,
