@@ -240,15 +240,17 @@ pub fn friendly_app_name(exe: &str) -> String {
     let lower = exe.to_lowercase();
     let stem = lower.trim_end_matches(".exe");
     let mapped = match stem {
-        // Editors / IDEs
+        // Editors / IDEs — Windows exe stems + Linux WM_CLASS (most overlap)
         "code" => "VS Code",
         "cursor" => "Cursor",
         "windsurf" => "Windsurf",
         "devenv" => "Visual Studio",
-        "idea64" | "idea" => "IntelliJ IDEA",
-        "pycharm64" | "pycharm" => "PyCharm",
-        "webstorm64" | "webstorm" => "WebStorm",
+        "idea64" | "idea" | "jetbrains-idea" => "IntelliJ IDEA",
+        "pycharm64" | "pycharm" | "jetbrains-pycharm" => "PyCharm",
+        "webstorm64" | "webstorm" | "jetbrains-webstorm" => "WebStorm",
         "sublime_text" => "Sublime Text",
+        "gedit" | "org.gnome.gedit" | "gnome-text-editor" => "GNOME Text Editor",
+        "kate" | "org.kde.kate" => "Kate",
         // Shells / terminals
         "windowsterminal" => "Windows Terminal",
         "pwsh" => "PowerShell",
@@ -256,24 +258,28 @@ pub fn friendly_app_name(exe: &str) -> String {
         "cmd" => "Command Prompt",
         "wezterm-gui" | "wezterm" => "WezTerm",
         "alacritty" => "Alacritty",
+        "org.gnome.terminal" | "gnome-terminal" | "gnome-terminal-server" => "GNOME Terminal",
+        "org.kde.konsole" | "konsole" => "Konsole",
+        "xterm" => "XTerm",
         // Chat / collab
         "slack" => "Slack",
         "teams" | "ms-teams" => "Microsoft Teams",
         "discord" => "Discord",
         "whatsapp" => "WhatsApp",
-        "telegram" => "Telegram",
-        "signal" => "Signal",
+        "telegram" | "telegramdesktop" => "Telegram",
+        "signal" | "signal-desktop" => "Signal",
         "messenger" => "Messenger",
         "zoom" => "Zoom",
         // Email
         "outlook" => "Outlook",
-        "thunderbird" => "Thunderbird",
+        "thunderbird" | "mozilla thunderbird" => "Thunderbird",
         "hostedgmaildesktopapp" => "Gmail",
+        "evolution" => "Evolution",
         // Browsers (weak signal — let the model decide)
-        "chrome" => "Google Chrome",
+        "chrome" | "google-chrome" => "Google Chrome",
         "msedge" => "Microsoft Edge",
-        "firefox" => "Firefox",
-        "brave" => "Brave",
+        "firefox" | "navigator" => "Firefox",
+        "brave" | "brave-browser" => "Brave",
         "arc" => "Arc",
         // Notes / docs
         "notion" => "Notion",
@@ -284,9 +290,60 @@ pub fn friendly_app_name(exe: &str) -> String {
         "powerpnt" => "Microsoft PowerPoint",
         "onenote" => "OneNote",
         "notepad" => "Notepad",
+        "libreoffice" | "libreoffice-writer" | "libreoffice-calc" => "LibreOffice",
         // Other
         "linear" => "Linear",
         "figma" => "Figma",
+        "spotify" => "Spotify",
+
+        // --- macOS bundle IDs ---
+        // Apple
+        "com.apple.safari" => "Safari",
+        "com.apple.terminal" => "Terminal",
+        "com.apple.mail" => "Mail",
+        "com.apple.messages" => "Messages",
+        "com.apple.finder" => "Finder",
+        "com.apple.notes" => "Notes",
+        "com.apple.textedit" => "TextEdit",
+        "com.apple.dt.xcode" => "Xcode",
+        "com.apple.iwork.pages" => "Pages",
+        "com.apple.iwork.numbers" => "Numbers",
+        "com.apple.iwork.keynote" => "Keynote",
+        // Microsoft on Mac
+        "com.microsoft.vscode" => "VS Code",
+        "com.microsoft.word" => "Microsoft Word",
+        "com.microsoft.excel" => "Microsoft Excel",
+        "com.microsoft.powerpoint" => "Microsoft PowerPoint",
+        "com.microsoft.outlook" => "Outlook",
+        "com.microsoft.teams" | "com.microsoft.teams2" => "Microsoft Teams",
+        "com.microsoft.edgemac" => "Microsoft Edge",
+        // Chat / collab
+        "com.tinyspeck.slackmacgap" => "Slack",
+        "com.hnc.discord" => "Discord",
+        "ru.keepcoder.telegram" | "org.telegram.desktop" => "Telegram",
+        "net.whatsapp.whatsapp" => "WhatsApp",
+        "org.whispersystems.signal-desktop" => "Signal",
+        "us.zoom.xos" => "Zoom",
+        // Browsers
+        "com.brave.browser" => "Brave",
+        "com.google.chrome" => "Google Chrome",
+        "org.mozilla.firefox" => "Firefox",
+        "company.thebrowser.browser" => "Arc",
+        // Notes / docs
+        "notion.id" | "com.notion.id" => "Notion",
+        "md.obsidian" => "Obsidian",
+        "com.evernote.evernote" => "Evernote",
+        // Dev tools / editors
+        "com.todesktop.230313mzl4w4u92" => "Cursor",
+        "com.exafunction.windsurf" => "Windsurf",
+        "com.jetbrains.intellij" => "IntelliJ IDEA",
+        "com.jetbrains.pycharm" => "PyCharm",
+        "com.sublimetext.4" | "com.sublimetext.3" => "Sublime Text",
+        // Productivity
+        "com.figma.desktop" => "Figma",
+        "com.linear-app.linear" => "Linear",
+        "com.spotify.client" => "Spotify",
+
         _ => "",
     };
     if !mapped.is_empty() {
@@ -310,9 +367,23 @@ pub fn style_category_for_app(exe: Option<&str>) -> &'static str {
     let lower = exe.to_lowercase();
     let stem = lower.trim_end_matches(".exe");
     match stem {
-        "whatsapp" | "telegram" | "signal" | "messenger" => "personal",
-        "slack" | "teams" | "discord" => "work",
-        "outlook" | "thunderbird" | "hostedgmaildesktopapp" => "email",
+        // Personal chat
+        "whatsapp" | "telegram" | "telegramdesktop" | "signal" | "signal-desktop"
+        | "messenger"
+        | "com.apple.messages"
+        | "net.whatsapp.whatsapp"
+        | "ru.keepcoder.telegram" | "org.telegram.desktop"
+        | "org.whispersystems.signal-desktop" => "personal",
+        // Work chat / collab
+        "slack" | "teams" | "ms-teams" | "discord"
+        | "com.tinyspeck.slackmacgap"
+        | "com.microsoft.teams" | "com.microsoft.teams2"
+        | "com.hnc.discord" => "work",
+        // Email
+        "outlook" | "thunderbird" | "mozilla thunderbird" | "hostedgmaildesktopapp"
+        | "evolution"
+        | "com.apple.mail"
+        | "com.microsoft.outlook" => "email",
         _ => "other",
     }
 }
