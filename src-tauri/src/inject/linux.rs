@@ -1,31 +1,42 @@
-//! Linux text injection: arboard clipboard + Ctrl+V via X11 XTest.
+//! Linux text injection.
 //!
-//! Same shape as the Windows pipeline (snapshot clipboard → write →
-//! force-release modifiers → synthesize Ctrl+V → restore clipboard),
-//! using XTestFakeInput to synthesize the keystrokes instead of
-//! SendInput.
+//! Two paths, picked at runtime:
 //!
-//! Pure-Wayland sessions (no XWayland) fall through with an error;
-//! Phase 3b will add the libei / portal-based Wayland path. Most modern
-//! Wayland desktops (GNOME, KDE, default Ubuntu) ship XWayland by
-//! default, so X11 injection covers most users in practice — only a
-//! pure-Wayland session without the X11 compatibility layer hits the
-//! gap.
+//! 1. **X11 session** (including XWayland on Wayland desktops that ship
+//!    it — GNOME, KDE, default Ubuntu): arboard for clipboard +
+//!    x11rb's XTest extension for the synthetic Ctrl+V. Force-releases
+//!    Win/Alt/Shift before the paste so a held dictation hotkey
+//!    doesn't taint the combo.
 //!
-//! Keycodes are hard-coded for US QWERTY layout — covers >95% of
-//! keyboards. Phase 7 polish can add proper keysym→keycode lookup via
-//! XKB to handle Dvorak/AZERTY/etc.
+//! 2. **Pure-Wayland session** (no X11 backend at all, or KDE Wayland
+//!    where XWayland injection is unreliable): shell out to the
+//!    standard Wayland CLI tools — `wl-copy` for the clipboard,
+//!    `wtype` / `ydotool` for the synthetic Ctrl+V keystroke. The
+//!    user must have one of the tools installed; the wrapper picks
+//!    whichever is available, in this priority order:
+//!
+//!        wtype  →  ydotool  →  fallback to X11/XWayland path
+//!
+//!    Modifier force-release isn't possible on Wayland (the security
+//!    model intentionally blocks it). Documented limitation. The
+//!    orchestrator's release-of-hotkey → transcription delay
+//!    (~300-700ms) means the user's modifiers are physically released
+//!    before paste fires in virtually all cases.
+//!
+//! No new Rust deps for the Wayland path: everything goes through
+//! `std::process::Command` invocations of binaries the user already
+//! has from their package manager.
 
 use anyhow::{anyhow, Context, Result};
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt as XprotoExt, Window, KEY_PRESS_EVENT, KEY_RELEASE_EVENT};
 use x11rb::protocol::xtest::ConnectionExt as XTestExt;
 
-// X11 protocol-level keycodes (NOT keysyms). These reflect the physical
-// key position on a 104/105-key keyboard, layout-independent for
-// modifiers; for the typing keys we assume US QWERTY.
+// --- X11 protocol-level keycodes (US QWERTY for typing keys) ---
 const KC_CONTROL_L: u8 = 37;
 const KC_SHIFT_L: u8 = 50;
 const KC_SHIFT_R: u8 = 62;
@@ -35,21 +46,240 @@ const KC_SUPER_L: u8 = 133;
 const KC_SUPER_R: u8 = 134;
 const KC_V: u8 = 55;
 const KC_C: u8 = 54;
-
-/// Modifiers we force-release before posting Ctrl+V/C. We always release
-/// Win/Alt/Shift (Bulbul's hotkey may be holding Win, and Alt/Shift would
-/// turn Ctrl+V into a different combo if any were stuck). Ctrl is left
-/// alone — we explicitly press it as part of the paste sequence.
 const MODS_TO_RELEASE: &[u8] = &[KC_SUPER_L, KC_SUPER_R, KC_ALT_L, KC_ALT_R, KC_SHIFT_L, KC_SHIFT_R];
+
+// --- ydotool uses Linux input event keycodes (uinput), not X11 keycodes ---
+const YDOTOOL_KEY_LEFTCTRL: &str = "29";
+const YDOTOOL_KEY_V: &str = "47";
+const YDOTOOL_KEY_C: &str = "46";
 
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(40);
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(250);
+
+#[derive(Clone, Copy)]
+enum Combo {
+    CtrlV,
+    CtrlC,
+}
+
+impl Combo {
+    fn x11_keycode(self) -> u8 {
+        match self {
+            Combo::CtrlV => KC_V,
+            Combo::CtrlC => KC_C,
+        }
+    }
+    fn wtype_key(self) -> &'static str {
+        // wtype takes the key name; `v` and `c` are layout-aware.
+        match self {
+            Combo::CtrlV => "v",
+            Combo::CtrlC => "c",
+        }
+    }
+    fn ydotool_key(self) -> &'static str {
+        match self {
+            Combo::CtrlV => YDOTOOL_KEY_V,
+            Combo::CtrlC => YDOTOOL_KEY_C,
+        }
+    }
+}
+
+/// True when running inside a Wayland session. The X11 path still
+/// works on most Wayland sessions via XWayland, but we prefer native
+/// Wayland tools when they're available — pure-Wayland apps can't
+/// receive XWayland-injected keystrokes.
+fn is_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+/// Cheap `which` — returns true if the binary is on PATH and
+/// executable. Cached implicitly per-call; the install state of CLI
+/// tools doesn't change often enough to warrant a memo.
+fn which(cmd: &str) -> bool {
+    Command::new("which")
+        .arg(cmd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
 pub fn inject_text(text: &str) -> Result<()> {
     if text.is_empty() {
         return Ok(());
     }
 
+    // On Wayland with at least one supported keystroke tool installed,
+    // take the native path. Otherwise fall through to X11 (which works
+    // via XWayland on Wayland sessions that have it).
+    if is_wayland() && wayland_keystroke_tool().is_some() {
+        inject_text_wayland(text)
+    } else {
+        inject_text_x11(text)
+    }
+}
+
+pub fn send_ctrl_v() -> Result<()> {
+    if is_wayland() && wayland_keystroke_tool().is_some() {
+        send_combo_wayland(Combo::CtrlV)
+    } else {
+        post_x11_combo(Combo::CtrlV)
+    }
+}
+
+pub fn send_ctrl_c() -> Result<()> {
+    if is_wayland() && wayland_keystroke_tool().is_some() {
+        send_combo_wayland(Combo::CtrlC)
+    } else {
+        post_x11_combo(Combo::CtrlC)
+    }
+}
+
+// === Wayland path =========================================================
+
+enum WaylandTool {
+    Wtype,
+    Ydotool,
+}
+
+fn wayland_keystroke_tool() -> Option<WaylandTool> {
+    if which("wtype") {
+        Some(WaylandTool::Wtype)
+    } else if which("ydotool") {
+        Some(WaylandTool::Ydotool)
+    } else {
+        None
+    }
+}
+
+fn inject_text_wayland(text: &str) -> Result<()> {
+    // Clipboard via wl-copy if available, else fall back to arboard.
+    // arboard supports Wayland but has reported timing/encoding edge
+    // cases (esp. with umlauts); wl-copy is the canonical tool.
+    let use_wl_copy = which("wl-copy") && which("wl-paste");
+
+    let previous = if use_wl_copy {
+        wl_paste_read().ok()
+    } else {
+        arboard::Clipboard::new()
+            .ok()
+            .and_then(|mut c| c.get_text().ok())
+    };
+
+    let payload = text.to_string();
+    if use_wl_copy {
+        wl_copy_write(&payload).context("wl-copy write")?;
+    } else {
+        let mut clipboard = arboard::Clipboard::new().context("opening arboard clipboard")?;
+        clipboard.set_text(payload.clone()).context("arboard write")?;
+    }
+
+    thread::sleep(CLIPBOARD_SETTLE);
+
+    send_combo_wayland(Combo::CtrlV).context("posting Ctrl+V via Wayland tool")?;
+
+    // Background restore. Only restore if the clipboard still holds
+    // our paste — same guard as the X11 path so a user-initiated
+    // mid-paste copy isn't clobbered.
+    if let Some(prev) = previous {
+        let payload_for_restore = payload.clone();
+        let use_wl_copy_for_restore = use_wl_copy;
+        thread::spawn(move || {
+            thread::sleep(CLIPBOARD_RESTORE_DELAY);
+            let current = if use_wl_copy_for_restore {
+                wl_paste_read().ok()
+            } else {
+                arboard::Clipboard::new()
+                    .ok()
+                    .and_then(|mut c| c.get_text().ok())
+            };
+            if current.as_deref() == Some(payload_for_restore.as_str()) {
+                if use_wl_copy_for_restore {
+                    let _ = wl_copy_write(&prev);
+                } else if let Ok(mut cb) = arboard::Clipboard::new() {
+                    let _ = cb.set_text(prev);
+                }
+            }
+        });
+    }
+
+    Ok(())
+}
+
+fn send_combo_wayland(combo: Combo) -> Result<()> {
+    match wayland_keystroke_tool() {
+        Some(WaylandTool::Wtype) => {
+            // wtype -M ctrl -k v   (press Ctrl modifier, tap key, release)
+            let status = Command::new("wtype")
+                .args(["-M", "ctrl", "-k", combo.wtype_key()])
+                .status()
+                .context("running wtype")?;
+            if !status.success() {
+                return Err(anyhow!("wtype exited with status {status}"));
+            }
+            Ok(())
+        }
+        Some(WaylandTool::Ydotool) => {
+            // ydotool uses uinput-level keycodes with format <code>:<state>.
+            // 1 = pressed, 0 = released.
+            let args = [
+                "key".to_string(),
+                format!("{YDOTOOL_KEY_LEFTCTRL}:1"),
+                format!("{}:1", combo.ydotool_key()),
+                format!("{}:0", combo.ydotool_key()),
+                format!("{YDOTOOL_KEY_LEFTCTRL}:0"),
+            ];
+            let status = Command::new("ydotool")
+                .args(&args)
+                .status()
+                .context("running ydotool")?;
+            if !status.success() {
+                return Err(anyhow!("ydotool exited with status {status}"));
+            }
+            Ok(())
+        }
+        None => Err(anyhow!(
+            "no Wayland keystroke tool available (install wtype or ydotool)"
+        )),
+    }
+}
+
+fn wl_copy_write(text: &str) -> Result<()> {
+    let mut child = Command::new("wl-copy")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("spawning wl-copy")?;
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("wl-copy stdin unavailable"))?;
+        stdin.write_all(text.as_bytes()).context("writing to wl-copy stdin")?;
+    }
+    let status = child.wait().context("waiting on wl-copy")?;
+    if !status.success() {
+        return Err(anyhow!("wl-copy exited with status {status}"));
+    }
+    Ok(())
+}
+
+fn wl_paste_read() -> Result<String> {
+    let output = Command::new("wl-paste")
+        .arg("--no-newline")
+        .output()
+        .context("running wl-paste")?;
+    if !output.status.success() {
+        return Err(anyhow!("wl-paste exited with status {}", output.status));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+// === X11 path =============================================================
+
+fn inject_text_x11(text: &str) -> Result<()> {
     let mut clipboard = arboard::Clipboard::new().context("opening clipboard")?;
     let previous = clipboard.get_text().ok();
 
@@ -60,15 +290,13 @@ pub fn inject_text(text: &str) -> Result<()> {
 
     thread::sleep(CLIPBOARD_SETTLE);
 
-    post_ctrl_combo(KC_V).context("posting Ctrl+V")?;
+    post_x11_combo(Combo::CtrlV).context("posting Ctrl+V")?;
 
     drop(clipboard);
     if let Some(prev) = previous {
         thread::spawn(move || {
             thread::sleep(CLIPBOARD_RESTORE_DELAY);
-            let Ok(mut cb) = arboard::Clipboard::new() else {
-                return;
-            };
+            let Ok(mut cb) = arboard::Clipboard::new() else { return };
             if let Ok(current) = cb.get_text() {
                 if current == payload {
                     let _ = cb.set_text(prev);
@@ -76,37 +304,28 @@ pub fn inject_text(text: &str) -> Result<()> {
             }
         });
     }
-
     Ok(())
 }
 
-pub fn send_ctrl_v() -> Result<()> {
-    post_ctrl_combo(KC_V)
-}
-
-pub fn send_ctrl_c() -> Result<()> {
-    post_ctrl_combo(KC_C)
-}
-
-fn post_ctrl_combo(keycode: u8) -> Result<()> {
+fn post_x11_combo(combo: Combo) -> Result<()> {
     let (conn, screen_num) = x11rb::connect(None).context("connecting to X server")?;
-    let root = conn
+    let root: Window = conn
         .setup()
         .roots
         .get(screen_num)
         .ok_or_else(|| anyhow!("no screen {screen_num} on X server"))?
         .root;
 
-    // Force-release any non-Ctrl modifiers the user might be holding from
-    // the dictation hotkey (Win/Alt/Shift). If they weren't down, the
-    // synthetic release is a no-op at the protocol level.
+    // Force-release Win/Alt/Shift (the dictation hotkey may have any of
+    // them held). Ctrl is left alone — we explicitly press it as part
+    // of the combo.
     for &mod_kc in MODS_TO_RELEASE {
         let _ = conn
             .xtest_fake_input(KEY_RELEASE_EVENT, mod_kc, 0, root, 0, 0, 0)
             .context("releasing modifier")?;
     }
 
-    // Synthesize Ctrl down, key down, key up, Ctrl up.
+    let keycode = combo.x11_keycode();
     conn.xtest_fake_input(KEY_PRESS_EVENT, KC_CONTROL_L, 0, root, 0, 0, 0)
         .context("Ctrl press")?;
     conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, root, 0, 0, 0)
@@ -116,8 +335,6 @@ fn post_ctrl_combo(keycode: u8) -> Result<()> {
     conn.xtest_fake_input(KEY_RELEASE_EVENT, KC_CONTROL_L, 0, root, 0, 0, 0)
         .context("Ctrl release")?;
 
-    // x11rb buffers requests; flush ensures they reach the server before
-    // we drop the connection at function exit.
     conn.flush().context("flushing X requests")?;
     Ok(())
 }
