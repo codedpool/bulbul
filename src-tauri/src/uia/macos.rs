@@ -89,9 +89,9 @@ impl Reader {
     pub fn read_focused(&self) -> Option<Focused> {
         // Frontmost app → PID. NSWorkspace.frontmostApplication can be
         // nil during Mission Control / system transitions.
-        let workspace = unsafe { NSWorkspace::sharedWorkspace() };
-        let app = unsafe { workspace.frontmostApplication() }?;
-        let pid = unsafe { app.processIdentifier() };
+        let workspace = NSWorkspace::sharedWorkspace();
+        let app = workspace.frontmostApplication()?;
+        let pid = app.processIdentifier();
 
         // SAFETY: AXUIElementCreateApplication is documented to return
         // a +1 reference (never null in practice, but we guard anyway).

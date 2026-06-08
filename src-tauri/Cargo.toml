@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
@@ -71,8 +71,11 @@ objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
 # objc2 runtime for class-method message sending into AVFoundation
 # (mic-permission status check) and other classes not exposed by the
-# higher-level objc2-* binding crates.
-objc2 = "0.5"
+# higher-level objc2-* binding crates. Pinned to 0.6 to match what
+# objc2-app-kit 0.3 transitively requires — a version mismatch here
+# (0.5 vs 0.6) splits the encode/runtime traits and breaks every
+# msg_send! call site at compile time.
+objc2 = "0.6"
 # CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs)
 # and live key-state polling in the hotkey path (hotkey/macos.rs).
 core-graphics = "0.25"

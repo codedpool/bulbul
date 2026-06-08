@@ -57,8 +57,10 @@ jobs:
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'ubuntu-22.04'
-        # webkit2gtk-4.1 is Tauri 2's required WebView runtime; the
-        # rest are bundler prerequisites for .deb / .rpm / .AppImage.
+        # webkit2gtk-4.1 is Tauri 2's required WebView runtime;
+        # libasound2-dev is needed by cpal (audio capture) — alsa-sys
+        # fails to build without alsa.pc on the system. The rest are
+        # bundler prerequisites for .deb / .rpm / .AppImage.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -67,6 +69,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libssl-dev \
+            libasound2-dev \
             patchelf
 
       - name: Install frontend dependencies
