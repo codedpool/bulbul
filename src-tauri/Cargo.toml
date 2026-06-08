@@ -66,13 +66,18 @@ features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # NSWorkspace + NSRunningApplication for foreground-app detection
-# (window_info/macos.rs). Other AppKit/Foundation classes added per
-# phase as needed (Phase 5 adds AXUIElement via accessibility-sys).
+# (window_info/macos.rs).
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
-# CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs).
-# Phase 4 adds CGEventTap on top for the global-hotkey listener.
+# CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs)
+# and live key-state polling in the hotkey path (hotkey/macos.rs).
 core-graphics = "0.25"
+# AXUIElement bindings for the correction-memory watcher
+# (uia/macos.rs). Also pulls in core-foundation transitively, but we
+# depend on it explicitly so the CFString::wrap_under_create_rule path
+# stays stable across point releases.
+accessibility-sys = "0.2"
+core-foundation = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # x11rb: pure-Rust X11 binding.
