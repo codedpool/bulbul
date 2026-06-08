@@ -1248,28 +1248,46 @@ fn check_microphone_status_mac() -> String {
 }
 
 /// Mac-only: open a specific System Settings privacy pane via the
-/// `x-apple.systempreferences:` URL scheme. We invoke macOS's `open`
-/// CLI directly because tauri-plugin-opener's `openUrl` only permits
-/// http/https URLs by default — wiring up a capabilities exception
-/// just for one custom URL scheme is more friction than shelling out.
+/// `x-apple.systempreferences:` URL scheme. Shells out to macOS's
+/// `open` CLI directly because tauri-plugin-opener's `openUrl` only
+/// permits http/https URLs by default.
 ///
 /// `pane` is "accessibility" or "microphone". Anything else is rejected.
+///
+/// Each pane is tried as a chain of URL candidates: modern
+/// (Ventura+ `com.apple.settings.PrivacySecurity.extension`) first,
+/// then the classic `com.apple.preference.security` anchor, then the
+/// bare Privacy & Security root. macOS's URL handler resolves the
+/// first candidate it recognises and ignores the rest — the layered
+/// chain covers Big Sur through Sequoia without per-version code.
 #[cfg(target_os = "macos")]
 #[tauri::command]
 fn open_mac_settings_pane(pane: String) -> Result<(), String> {
     use std::process::Command;
-    let url = match pane.as_str() {
-        "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-        "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-        // Generic fallback — opens the Privacy & Security root pane.
-        "privacy" => "x-apple.systempreferences:com.apple.preference.security",
+    let candidates: &[&str] = match pane.as_str() {
+        "accessibility" => &[
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.preference.security",
+        ],
+        "microphone" => &[
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            "x-apple.systempreferences:com.apple.preference.security",
+        ],
+        "privacy" => &["x-apple.systempreferences:com.apple.preference.security"],
         other => return Err(format!("unknown settings pane: {other}")),
     };
-    Command::new("open")
-        .arg(url)
-        .spawn()
-        .map_err(|e| format!("open: {e}"))?;
-    Ok(())
+
+    let mut last_err: Option<String> = None;
+    for url in candidates {
+        match Command::new("open").arg(url).status() {
+            Ok(s) if s.success() => return Ok(()),
+            Ok(s) => last_err = Some(format!("open exited with {s} for {url}")),
+            Err(e) => last_err = Some(format!("open spawn failed for {url}: {e}")),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| "no settings URL candidates".to_string()))
 }
 
 #[cfg(not(target_os = "macos"))]
