@@ -1247,47 +1247,86 @@ fn check_microphone_status_mac() -> String {
     "granted".to_string()
 }
 
-/// Mac-only: open a specific System Settings privacy pane via the
-/// `x-apple.systempreferences:` URL scheme. Shells out to macOS's
-/// `open` CLI directly because tauri-plugin-opener's `openUrl` only
-/// permits http/https URLs by default.
+/// Mac-only: open a specific System Settings privacy pane.
 ///
-/// `pane` is "accessibility" or "microphone". Anything else is rejected.
+/// `pane` is "accessibility", "microphone", or "privacy" (root).
 ///
-/// Each pane is tried as a chain of URL candidates: modern
-/// (Ventura+ `com.apple.settings.PrivacySecurity.extension`) first,
-/// then the classic `com.apple.preference.security` anchor, then the
-/// bare Privacy & Security root. macOS's URL handler resolves the
-/// first candidate it recognises and ignores the rest — the layered
-/// chain covers Big Sur through Sequoia without per-version code.
+/// Implementation note: the `x-apple.systempreferences:?Privacy_X`
+/// anchor scheme is unreliable across macOS versions — `open` always
+/// returns exit 0 once it hands the URL to System Settings, even when
+/// the anchor is ignored and the app lands on whatever pane was last
+/// open. Instead, we drive System Settings (Ventura+) / System
+/// Preferences (Big Sur–Monterey) via AppleScript's `reveal anchor`,
+/// which is the standard suite action both apps execute correctly.
+///
+/// Strategy:
+///   1. AppleScript: System Settings (Ventura+ pane id) → reveal anchor.
+///   2. On error: System Preferences (classic pane id) → reveal anchor.
+///   3. On further error: just activate whichever app exists so the
+///      user lands inside Privacy & Security and can pick the row
+///      from the sidebar.
+///   4. Ultimate fallback (osascript unusable): `open` the bare URL.
 #[cfg(target_os = "macos")]
 #[tauri::command]
 fn open_mac_settings_pane(pane: String) -> Result<(), String> {
     use std::process::Command;
-    let candidates: &[&str] = match pane.as_str() {
-        "accessibility" => &[
-            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility",
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            "x-apple.systempreferences:com.apple.preference.security",
-        ],
-        "microphone" => &[
-            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone",
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-            "x-apple.systempreferences:com.apple.preference.security",
-        ],
-        "privacy" => &["x-apple.systempreferences:com.apple.preference.security"],
+
+    let anchor = match pane.as_str() {
+        "accessibility" => Some("Privacy_Accessibility"),
+        "microphone" => Some("Privacy_Microphone"),
+        "privacy" => None,
         other => return Err(format!("unknown settings pane: {other}")),
     };
 
-    let mut last_err: Option<String> = None;
-    for url in candidates {
-        match Command::new("open").arg(url).status() {
-            Ok(s) if s.success() => return Ok(()),
-            Ok(s) => last_err = Some(format!("open exited with {s} for {url}")),
-            Err(e) => last_err = Some(format!("open spawn failed for {url}: {e}")),
+    let reveal_block = |app: &str, pane_id: &str| -> String {
+        match anchor {
+            Some(a) => format!(
+                r#"tell application "{app}"
+        activate
+        try
+            reveal anchor "{a}" of pane id "{pane_id}"
+        end try
+    end tell"#
+            ),
+            None => format!(
+                r#"tell application "{app}"
+        activate
+        try
+            reveal pane id "{pane_id}"
+        end try
+    end tell"#
+            ),
         }
+    };
+
+    let settings_block = reveal_block(
+        "System Settings",
+        "com.apple.settings.PrivacySecurity.extension",
+    );
+    let prefs_block = reveal_block("System Preferences", "com.apple.preference.security");
+
+    let script = format!(
+        r#"try
+    {settings_block}
+on error
+    try
+        {prefs_block}
+    end try
+end try"#
+    );
+
+    match Command::new("osascript").arg("-e").arg(&script).status() {
+        Ok(s) if s.success() => return Ok(()),
+        Ok(s) => eprintln!("osascript exited {s}, falling back to open URL"),
+        Err(e) => eprintln!("osascript spawn failed: {e}, falling back to open URL"),
     }
-    Err(last_err.unwrap_or_else(|| "no settings URL candidates".to_string()))
+
+    let fallback = "x-apple.systempreferences:com.apple.preference.security";
+    match Command::new("open").arg(fallback).status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("open exited {s} for {fallback}")),
+        Err(e) => Err(format!("open spawn failed for {fallback}: {e}")),
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
