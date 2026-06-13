@@ -8,7 +8,11 @@ import { applyTheme } from "../theme.js";
 import { IS_MAC, META_KEY_NAME } from "../platform.js";
 import "./onboarding.css";
 
-const HOTKEY_PRESETS = [
+// The stored hotkey VALUES are platform-independent — Bulbul's parser maps
+// "Win" to the OS meta key (Command on Mac, Super on Linux, Windows key on
+// Windows) and "Alt" to Option on Mac. Only the user-facing label + detail
+// copy needs to differ per platform so the wizard reads correctly.
+const HOTKEY_PRESETS_DESKTOP = [
   {
     value: "Ctrl+Win",
     label: "Ctrl + Win",
@@ -30,6 +34,31 @@ const HOTKEY_PRESETS = [
     detail: "Capture any combination you like.",
   },
 ];
+
+const HOTKEY_PRESETS_MAC = [
+  {
+    value: "Ctrl+Win",
+    label: "⌃ Control + ⌘ Command",
+    detail: "Hold both keys to dictate. Two-modifier chord — minimum reach from the home row.",
+  },
+  {
+    value: "Alt+Win",
+    label: "⌥ Option + ⌘ Command",
+    detail: "Same hold-to-talk feel, different fingers. Pick this if ⌃⌘ is taken by another app.",
+  },
+  {
+    value: "Ctrl+Shift+Space",
+    label: "⌃ Control + ⇧ Shift + Space",
+    detail: "Three keys, but almost never clashes with anything. The safest pick.",
+  },
+  {
+    value: "custom",
+    label: "Custom combo…",
+    detail: "Capture any combination you like.",
+  },
+];
+
+const HOTKEY_PRESETS = IS_MAC ? HOTKEY_PRESETS_MAC : HOTKEY_PRESETS_DESKTOP;
 
 const VIDEO_URL = "https://www.youtube.com/watch?v=9VDbhptCzlU";
 const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/9VDbhptCzlU";
@@ -1008,7 +1037,7 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
           ))}
 
           <div className="onb-conflict-hint">
-            Already using another dictation app on <code>Ctrl + Win</code>? Pick a different combo
+            Already using another dictation app on <code>{formatComboForDisplay("Ctrl+Win")}</code>? Pick a different combo
             above and the conflict goes away.
           </div>
         </div>
@@ -1068,7 +1097,7 @@ function StepDone({ onFinish, hotkey, telemetryEnabled, onToggleTelemetry }) {
       <div className="onb-tour-grid">
         <div className="onb-tour-card">
           <div className="onb-tour-title">Transform selections</div>
-          <p>Select text anywhere and press <code>Alt + 1…6</code> to polish, formalize, or rephrase it in place.</p>
+          <p>Select text anywhere and press <code>{displayPart("Alt")} + 1…6</code> to polish, formalize, or rephrase it in place.</p>
         </div>
         <div className="onb-tour-card">
           <div className="onb-tour-title">Stays out of your way</div>
@@ -1279,10 +1308,13 @@ const MOD_ORDER = ["Ctrl", "Shift", "Alt", "Win"];
 
 // Canonicalise modifier order for display (Ctrl → Shift → Alt → Win → key).
 // Same string the backend would have produced via hotkey.rs::format_combo,
-// independent of how the combo happens to be stored in config.
+// independent of how the combo happens to be stored in config. On Mac,
+// modifier parts are rendered as their canonical glyphs (⌃ ⌥ ⇧ ⌘) so
+// every surface showing the active hotkey matches what the rest of the
+// OS uses to describe key combinations.
 function formatComboForDisplay(combo) {
   if (!combo) return "—";
-  return parseChordParts(combo).join(" + ");
+  return parseChordParts(combo).map(displayPart).join(" + ");
 }
 
 // Split a combo string into its ordered parts (modifiers first in
