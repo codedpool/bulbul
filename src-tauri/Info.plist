@@ -4,5 +4,7 @@
 <dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>Bulbul records your voice while you hold the dictation hotkey, transcribes it, and pastes the cleaned-up text into the app you were typing in.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Bulbul sends AppleEvents to System Events so it can paste your dictated text into the app you were typing in.</string>
 </dict>
 </plist>
