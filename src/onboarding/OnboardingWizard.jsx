@@ -376,11 +376,20 @@ function StepPermissions({ onBack, onNext }) {
             <button className="onb-btn" onClick={() => openSettings("accessibility")}>
               Open Accessibility Settings
             </button>
+            {!axGranted && (
+              <button
+                className="onb-btn ghost"
+                onClick={() => invoke("relaunch_app").catch(() => {})}
+                title="macOS sometimes won't notice the new permission until Bulbul restarts"
+              >
+                Quit &amp; Relaunch
+              </button>
+            )}
           </div>
           <p className="onb-perm-confirm muted small">
             {axGranted
               ? "Detected — ready to go."
-              : "Status updates here automatically once you grant access."}
+              : "Toggle Bulbul on, then come back. If the check mark doesn't appear within a few seconds, click Quit & Relaunch — macOS sometimes needs Bulbul to restart before the new permission takes effect."}
           </p>
         </article>
       </div>

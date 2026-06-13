@@ -1188,6 +1188,18 @@ fn check_accessibility_status_mac() -> bool {
     true
 }
 
+/// Restart Bulbul cleanly. Used by the onboarding wizard's
+/// Accessibility card on Mac because macOS establishes a process's
+/// TCC trust state at launch — if Bulbul started while
+/// Accessibility was off and the user enables it in Settings
+/// afterwards, AXIsProcessTrusted() can still report false for the
+/// rest of the process's lifetime. A relaunch is the reliable way
+/// to refresh trust.
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
 // Pull in AVFoundation so the AVCaptureDevice class symbol below
 // resolves at link time. Empty extern block; the actual call uses
 // objc2's class-method message send.
@@ -1406,6 +1418,7 @@ pub fn run() {
             check_microphone_status_mac,
             request_microphone_access_mac,
             open_mac_settings_pane,
+            relaunch_app,
             get_config,
             save_config,
             validate_api_key,
