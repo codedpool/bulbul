@@ -569,11 +569,24 @@ fn save_config(
     Ok(())
 }
 
-/// Recompute the per-transform slot hotkeys (Alt+1..Alt+9 by sort order)
-/// and re-register them with the global-shortcut plugin. Call after any
-/// transform CRUD operation. Failures (e.g. another app owns the combo)
-/// are reported per-slot via AppState.transform_slot_statuses, which the
-/// frontend reads to show "unavailable" chips.
+/// Recompute the per-transform slot hotkeys and re-register them with
+/// the global-shortcut plugin. Call after any transform CRUD operation.
+///
+/// Platform defaults:
+///   - Windows / Linux : `Alt+1` … `Alt+9`
+///   - macOS           : `Cmd+1` … `Cmd+9`
+///
+/// On Mac, ⌘+digit is the conventional accelerator users expect from
+/// productivity apps; binding ⌥+digit (the cross-platform equivalent
+/// of Alt) would globally capture the Option-digit combos that the OS
+/// uses to type ¡™£¢∞§¶•ª. The trade-off is that ⌘+digit globally
+/// preempts the tab-switching shortcut that browsers and code editors
+/// use — accepted because tab-switching is rebindable per-app while
+/// the special-character outputs aren't.
+///
+/// Failures (e.g. another app owns the combo) are reported per-slot
+/// via AppState.transform_slot_statuses, which the frontend reads to
+/// show "unavailable" chips.
 fn refresh_transform_bindings(app: &AppHandle, state: &AppState) {
     let transforms = match db::list_transforms(&state.db) {
         Ok(t) => t,
@@ -589,6 +602,15 @@ fn refresh_transform_bindings(app: &AppHandle, state: &AppState) {
         .map(|(idx, t)| {
             let slot = (idx + 1) as u8;
             let key = ((b'0' + slot) as char).to_string();
+            #[cfg(target_os = "macos")]
+            let hk = ParsedHotkey {
+                ctrl: false,
+                shift: false,
+                alt: false,
+                meta: true,
+                key: Some(key),
+            };
+            #[cfg(not(target_os = "macos"))]
             let hk = ParsedHotkey {
                 ctrl: false,
                 shift: false,

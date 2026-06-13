@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
-import { AUTOSTART_LABEL, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
+import { AUTOSTART_LABEL, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
 
 const MODES = [
   { value: "raw", label: "Raw", hint: "Fix obvious errors only. Keeps every word." },
@@ -382,7 +382,7 @@ function PaneHotkeys({ config, recordingHotkeyFor, setRecordingHotkeyFor }) {
         />
       </Row>
       <p className="muted small settings-note">
-        Transform shortcuts (<kbd>Alt+1</kbd>…<kbd>Alt+6</kbd>) for rewriting selected text live on the Transforms page.
+        Transform shortcuts ({IS_MAC ? <><kbd>⌘1</kbd>…<kbd>⌘6</kbd></> : <><kbd>Alt+1</kbd>…<kbd>Alt+6</kbd></>}) for rewriting selected text live on the Transforms page.
       </p>
     </>
   );
