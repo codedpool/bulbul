@@ -1251,82 +1251,40 @@ fn check_microphone_status_mac() -> String {
 ///
 /// `pane` is "accessibility", "microphone", or "privacy" (root).
 ///
-/// Implementation note: the `x-apple.systempreferences:?Privacy_X`
-/// anchor scheme is unreliable across macOS versions — `open` always
-/// returns exit 0 once it hands the URL to System Settings, even when
-/// the anchor is ignored and the app lands on whatever pane was last
-/// open. Instead, we drive System Settings (Ventura+) / System
-/// Preferences (Big Sur–Monterey) via AppleScript's `reveal anchor`,
-/// which is the standard suite action both apps execute correctly.
-///
-/// Strategy:
-///   1. AppleScript: System Settings (Ventura+ pane id) → reveal anchor.
-///   2. On error: System Preferences (classic pane id) → reveal anchor.
-///   3. On further error: just activate whichever app exists so the
-///      user lands inside Privacy & Security and can pick the row
-///      from the sidebar.
-///   4. Ultimate fallback (osascript unusable): `open` the bare URL.
+/// Uses the classic `com.apple.preference.security` URL handler with
+/// `Privacy_X` anchors. macOS keeps this URL as a compat shim even
+/// after the Ventura rename to System Settings — it's internally
+/// routed to the current Privacy & Security pane and the anchor names
+/// are kept stable across versions, including Tahoe. The newer
+/// `com.apple.settings.PrivacySecurity.extension` pane id is less
+/// reliable: anchor resolution varies by macOS version, and since
+/// `open` always exits 0 once it hands the URL off, a silently
+/// ignored anchor can't be detected from the caller side.
 #[cfg(target_os = "macos")]
 #[tauri::command]
 fn open_mac_settings_pane(pane: String) -> Result<(), String> {
     use std::process::Command;
-
-    let anchor = match pane.as_str() {
-        "accessibility" => Some("Privacy_Accessibility"),
-        "microphone" => Some("Privacy_Microphone"),
-        "privacy" => None,
+    let url = match pane.as_str() {
+        "accessibility" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
+        "microphone" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
+        "privacy" => "x-apple.systempreferences:com.apple.preference.security",
         other => return Err(format!("unknown settings pane: {other}")),
     };
-
-    let reveal_block = |app: &str, pane_id: &str| -> String {
-        match anchor {
-            Some(a) => format!(
-                r#"tell application "{app}"
-        activate
-        try
-            reveal anchor "{a}" of pane id "{pane_id}"
-        end try
-    end tell"#
-            ),
-            None => format!(
-                r#"tell application "{app}"
-        activate
-        try
-            reveal pane id "{pane_id}"
-        end try
-    end tell"#
-            ),
-        }
-    };
-
-    let settings_block = reveal_block(
-        "System Settings",
-        "com.apple.settings.PrivacySecurity.extension",
-    );
-    let prefs_block = reveal_block("System Preferences", "com.apple.preference.security");
-
-    let script = format!(
-        r#"try
-    {settings_block}
-on error
-    try
-        {prefs_block}
-    end try
-end try"#
-    );
-
-    match Command::new("osascript").arg("-e").arg(&script).status() {
-        Ok(s) if s.success() => return Ok(()),
-        Ok(s) => eprintln!("osascript exited {s}, falling back to open URL"),
-        Err(e) => eprintln!("osascript spawn failed: {e}, falling back to open URL"),
-    }
-
-    let fallback = "x-apple.systempreferences:com.apple.preference.security";
-    match Command::new("open").arg(fallback).status() {
-        Ok(s) if s.success() => Ok(()),
-        Ok(s) => Err(format!("open exited {s} for {fallback}")),
-        Err(e) => Err(format!("open spawn failed for {fallback}: {e}")),
-    }
+    Command::new("open")
+        .arg(url)
+        .status()
+        .map_err(|e| format!("open spawn failed for {url}: {e}"))
+        .and_then(|s| {
+            if s.success() {
+                Ok(())
+            } else {
+                Err(format!("open exited {s} for {url}"))
+            }
+        })
 }
 
 #[cfg(not(target_os = "macos"))]
