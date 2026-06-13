@@ -1,14 +1,8 @@
 use anyhow::{Context, Result};
 use std::thread;
 use std::time::Duration;
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_C, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
-};
 
-/// Inject text into the focused application via clipboard + Ctrl+V.
-/// This is more reliable than per-character SendInput across web apps,
-/// autocomplete-aware editors (VS Code, Notion), and rich-text fields.
+/// Inject text into the focused application via clipboard + paste shortcut.
 pub fn inject_text(text: &str) -> Result<()> {
     if text.is_empty() {
         return Ok(());
@@ -26,14 +20,9 @@ pub fn inject_text(text: &str) -> Result<()> {
     // Give the OS a moment to settle the clipboard content before pasting.
     thread::sleep(Duration::from_millis(40));
 
-    send_ctrl_v().context("sending Ctrl+V")?;
+    send_paste().context("sending paste shortcut")?;
 
-    // Restore previous clipboard contents in the background so the caller
-    // (and the perf log) don't block on the 150ms settle window. Safety
-    // guard: only restore if the clipboard still holds *our* paste — that
-    // way a user who copied something new in the meantime (or a second
-    // dictation that fired before we finished) wins. We never overwrite
-    // user-initiated clipboard content.
+    // Restore previous clipboard contents in the background.
     drop(clipboard);
     if let Some(prev) = previous {
         thread::spawn(move || {
@@ -45,10 +34,7 @@ pub fn inject_text(text: &str) -> Result<()> {
                 Ok(current) if current == payload => {
                     let _ = cb.set_text(prev);
                 }
-                _ => {
-                    // Clipboard was touched by user or another flow — leave
-                    // their content alone.
-                }
+                _ => {}
             }
         });
     }
@@ -56,16 +42,37 @@ pub fn inject_text(text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Simulate the OS-appropriate paste shortcut (Ctrl+V on Windows, Cmd+V on macOS).
 pub fn send_ctrl_v() -> Result<()> {
-    send_ctrl_combo(VK_V)
+    send_paste()
 }
 
-/// Simulate Ctrl+C so the OS copies the current selection into the clipboard.
+/// Simulate the OS-appropriate copy shortcut (Ctrl+C on Windows, Cmd+C on macOS).
 pub fn send_ctrl_c() -> Result<()> {
-    send_ctrl_combo(VK_C)
+    send_copy()
 }
 
-fn send_ctrl_combo(vk: VIRTUAL_KEY) -> Result<()> {
+// ──────────────────────────────────────────────────────────────────────────────
+// Windows implementation
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+fn send_paste() -> Result<()> {
+    send_ctrl_combo_win(windows::Win32::UI::Input::KeyboardAndMouse::VK_V)
+}
+
+#[cfg(target_os = "windows")]
+fn send_copy() -> Result<()> {
+    send_ctrl_combo_win(windows::Win32::UI::Input::KeyboardAndMouse::VK_C)
+}
+
+#[cfg(target_os = "windows")]
+fn send_ctrl_combo_win(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) -> Result<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+
     // Force-release any modifier keys the user is still holding from the
     // hotkey that triggered us (e.g. Win+Alt+1). Without this, the OS sees
     // Win+Alt+Ctrl+C and the foreground app doesn't interpret that as copy.
@@ -89,7 +96,14 @@ fn send_ctrl_combo(vk: VIRTUAL_KEY) -> Result<()> {
     Ok(())
 }
 
-fn key_input(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
+#[cfg(target_os = "windows")]
+fn key_input(
+    vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
+    key_up: bool,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    };
     let flags: KEYBD_EVENT_FLAGS = if key_up {
         KEYEVENTF_KEYUP
     } else {
@@ -107,4 +121,49 @@ fn key_input(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
             },
         },
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// macOS implementation
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+fn send_paste() -> Result<()> {
+    run_osascript("tell application \"System Events\" to keystroke \"v\" using command down")
+}
+
+#[cfg(target_os = "macos")]
+fn send_copy() -> Result<()> {
+    run_osascript("tell application \"System Events\" to keystroke \"c\" using command down")
+}
+
+#[cfg(target_os = "macos")]
+fn run_osascript(script: &str) -> Result<()> {
+    use std::process::Command;
+    let status = Command::new("osascript")
+        .args(["-e", script])
+        .status()
+        .context("failed to spawn osascript")?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("osascript exited with status {status}"));
+    }
+    Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Other Unix / Linux fallback (compile-time stub — not functional)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn send_paste() -> Result<()> {
+    Err(anyhow::anyhow!(
+        "inject_text not implemented for this platform"
+    ))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn send_copy() -> Result<()> {
+    Err(anyhow::anyhow!(
+        "send_copy not implemented for this platform"
+    ))
 }

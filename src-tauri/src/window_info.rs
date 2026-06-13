@@ -1,11 +1,19 @@
+// ──────────────────────────────────────────────────────────────────────────────
+// Windows implementation
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
 use windows::Win32::Foundation::CloseHandle;
+#[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+#[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
 /// Return the executable name (without path) of the foreground window's
 /// process, e.g. "Code.exe", "slack.exe". Returns None on any failure.
+#[cfg(target_os = "windows")]
 pub fn foreground_app() -> Option<String> {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -36,9 +44,53 @@ pub fn foreground_app() -> Option<String> {
 }
 
 /// Raw handle of the current foreground window, as an `isize` for cheap
-/// equality checks. The correction watcher uses this to notice when the user
-/// clicks away from the field they just dictated into (= they're done
-/// editing). Returns 0 when there is no foreground window.
+/// equality checks. Returns 0 when there is no foreground window.
+#[cfg(target_os = "windows")]
 pub fn foreground_hwnd() -> isize {
     unsafe { GetForegroundWindow().0 as isize }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// macOS implementation
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Return the name of the frontmost application (e.g. "Code", "Slack").
+/// Uses `osascript` to query the System Events process list.
+#[cfg(target_os = "macos")]
+pub fn foreground_app() -> Option<String> {
+    use std::process::Command;
+    let output = Command::new("osascript")
+        .args([
+            "-e",
+            "tell application \"System Events\" to get name of first process where it is frontmost",
+        ])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Not meaningful on macOS — returns 0 (used only for change-detection equality checks).
+#[cfg(target_os = "macos")]
+pub fn foreground_hwnd() -> isize {
+    0
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Fallback (other Unix / Linux)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub fn foreground_app() -> Option<String> {
+    None
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub fn foreground_hwnd() -> isize {
+    0
 }

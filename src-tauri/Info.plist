@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Bulbul records your voice to transcribe it via Groq Whisper.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Bulbul uses AppleEvents to paste transcribed text into other applications.</string>
+</dict>
+</plist>

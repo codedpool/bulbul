@@ -264,6 +264,7 @@ fn position_overlay_bottom_center(app: &AppHandle) {
 /// disabled (so satellite buttons can be clicked) and a "hovered" event is
 /// emitted to the frontend. Larger exit zone gives hysteresis so the
 /// expanded UI doesn't flicker as the cursor moves between buttons.
+#[cfg(target_os = "windows")]
 fn spawn_hover_watcher(app: AppHandle) {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -308,6 +309,11 @@ fn spawn_hover_watcher(app: AppHandle) {
         }
     });
 }
+
+/// On non-Windows platforms the hover-expand feature is not yet implemented.
+/// The overlay always stays in its default non-hovered state.
+#[cfg(not(target_os = "windows"))]
+fn spawn_hover_watcher(_app: AppHandle) {}
 
 
 /// Background loop that polls GitHub Releases for newer Bulbul versions
@@ -391,6 +397,7 @@ fn install_staged_if_present(app: &AppHandle) {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn work_area_bottom_logical(scale: f64) -> Option<f64> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -407,6 +414,13 @@ fn work_area_bottom_logical(scale: f64) -> Option<f64> {
     };
     res.ok()?;
     Some(rect.bottom as f64 / scale)
+}
+
+/// On non-Windows platforms we cannot query the work area, so callers fall
+/// back to the full monitor height (via `.unwrap_or(logical_h)`).
+#[cfg(not(target_os = "windows"))]
+fn work_area_bottom_logical(_scale: f64) -> Option<f64> {
+    None
 }
 
 fn notify(app: &AppHandle, title: &str, body: &str) {
@@ -514,11 +528,16 @@ fn save_config(
     Ok(())
 }
 
-/// Recompute the per-transform slot hotkeys (Alt+1..Alt+9 by sort order)
-/// and re-register them with the global-shortcut plugin. Call after any
-/// transform CRUD operation. Failures (e.g. another app owns the combo)
-/// are reported per-slot via AppState.transform_slot_statuses, which the
-/// frontend reads to show "unavailable" chips.
+/// Recompute the per-transform slot hotkeys and re-register them with the
+/// global-shortcut plugin. Call after any transform CRUD operation.
+///
+/// Platform defaults:
+///   - Windows / Linux : `Alt+1` … `Alt+9`
+///   - macOS           : `Cmd+1` … `Cmd+9`
+///
+/// Failures (e.g. another app owns the combo) are reported per-slot via
+/// AppState.transform_slot_statuses, which the frontend reads to show
+/// "unavailable" chips.
 fn refresh_transform_bindings(app: &AppHandle, state: &AppState) {
     let transforms = match db::list_transforms(&state.db) {
         Ok(t) => t,
@@ -534,6 +553,17 @@ fn refresh_transform_bindings(app: &AppHandle, state: &AppState) {
         .map(|(idx, t)| {
             let slot = (idx + 1) as u8;
             let key = ((b'0' + slot) as char).to_string();
+            // On macOS, Cmd+1–9 is the conventional accelerator; on Windows/Linux
+            // Alt+1–9 is used (Cmd/Super conflicts with common OS shortcuts there).
+            #[cfg(target_os = "macos")]
+            let hk = ParsedHotkey {
+                ctrl: false,
+                shift: false,
+                alt: false,
+                meta: true, // Cmd
+                key: Some(key),
+            };
+            #[cfg(not(target_os = "macos"))]
             let hk = ParsedHotkey {
                 ctrl: false,
                 shift: false,
