@@ -115,28 +115,60 @@ fn key_name_to_code(name: &str) -> Option<Code> {
         "Return" | "Enter" => Code::Enter,
         "Backspace" => Code::Backspace,
         "Escape" => Code::Escape,
-        "A" => Code::KeyA, "B" => Code::KeyB, "C" => Code::KeyC,
-        "D" => Code::KeyD, "E" => Code::KeyE, "F" => Code::KeyF,
-        "G" => Code::KeyG, "H" => Code::KeyH, "I" => Code::KeyI,
-        "J" => Code::KeyJ, "K" => Code::KeyK, "L" => Code::KeyL,
-        "M" => Code::KeyM, "N" => Code::KeyN, "O" => Code::KeyO,
-        "P" => Code::KeyP, "Q" => Code::KeyQ, "R" => Code::KeyR,
-        "S" => Code::KeyS, "T" => Code::KeyT, "U" => Code::KeyU,
-        "V" => Code::KeyV, "W" => Code::KeyW, "X" => Code::KeyX,
-        "Y" => Code::KeyY, "Z" => Code::KeyZ,
-        "0" => Code::Digit0, "1" => Code::Digit1, "2" => Code::Digit2,
-        "3" => Code::Digit3, "4" => Code::Digit4, "5" => Code::Digit5,
-        "6" => Code::Digit6, "7" => Code::Digit7, "8" => Code::Digit8,
+        "A" => Code::KeyA,
+        "B" => Code::KeyB,
+        "C" => Code::KeyC,
+        "D" => Code::KeyD,
+        "E" => Code::KeyE,
+        "F" => Code::KeyF,
+        "G" => Code::KeyG,
+        "H" => Code::KeyH,
+        "I" => Code::KeyI,
+        "J" => Code::KeyJ,
+        "K" => Code::KeyK,
+        "L" => Code::KeyL,
+        "M" => Code::KeyM,
+        "N" => Code::KeyN,
+        "O" => Code::KeyO,
+        "P" => Code::KeyP,
+        "Q" => Code::KeyQ,
+        "R" => Code::KeyR,
+        "S" => Code::KeyS,
+        "T" => Code::KeyT,
+        "U" => Code::KeyU,
+        "V" => Code::KeyV,
+        "W" => Code::KeyW,
+        "X" => Code::KeyX,
+        "Y" => Code::KeyY,
+        "Z" => Code::KeyZ,
+        "0" => Code::Digit0,
+        "1" => Code::Digit1,
+        "2" => Code::Digit2,
+        "3" => Code::Digit3,
+        "4" => Code::Digit4,
+        "5" => Code::Digit5,
+        "6" => Code::Digit6,
+        "7" => Code::Digit7,
+        "8" => Code::Digit8,
         "9" => Code::Digit9,
-        "F1" => Code::F1, "F2" => Code::F2, "F3" => Code::F3,
-        "F4" => Code::F4, "F5" => Code::F5, "F6" => Code::F6,
-        "F7" => Code::F7, "F8" => Code::F8, "F9" => Code::F9,
-        "F10" => Code::F10, "F11" => Code::F11, "F12" => Code::F12,
+        "F1" => Code::F1,
+        "F2" => Code::F2,
+        "F3" => Code::F3,
+        "F4" => Code::F4,
+        "F5" => Code::F5,
+        "F6" => Code::F6,
+        "F7" => Code::F7,
+        "F8" => Code::F8,
+        "F9" => Code::F9,
+        "F10" => Code::F10,
+        "F11" => Code::F11,
+        "F12" => Code::F12,
         _ => return None,
     })
 }
 
 /// Convert our key string to a Windows virtual-key code for `GetAsyncKeyState`.
+#[cfg(target_os = "windows")]
 fn key_name_to_vk(name: &str) -> Option<i32> {
     let code: i32 = match name {
         "Space" => 0x20,
@@ -166,6 +198,82 @@ fn key_name_to_vk(name: &str) -> Option<i32> {
     Some(code)
 }
 
+/// Convert a key name to a macOS hardware keycode (US layout) for
+/// use with `CGEventSourceKeyState`.
+#[cfg(target_os = "macos")]
+fn key_name_to_keycode_macos(name: &str) -> Option<u16> {
+    Some(match name {
+        "A" => 0,
+        "S" => 1,
+        "D" => 2,
+        "F" => 3,
+        "H" => 4,
+        "G" => 5,
+        "Z" => 6,
+        "X" => 7,
+        "C" => 8,
+        "V" => 9,
+        "B" => 11,
+        "Q" => 12,
+        "W" => 13,
+        "E" => 14,
+        "R" => 15,
+        "Y" => 16,
+        "T" => 17,
+        "U" => 32,
+        "I" => 34,
+        "P" => 35,
+        "L" => 37,
+        "J" => 38,
+        "K" => 40,
+        "N" => 45,
+        "M" => 46,
+        "O" => 31,
+        "0" => 29,
+        "1" => 18,
+        "2" => 19,
+        "3" => 20,
+        "4" => 21,
+        "5" => 23,
+        "6" => 22,
+        "7" => 26,
+        "8" => 28,
+        "9" => 25,
+        "Space" => 49,
+        "Tab" => 48,
+        "Return" | "Enter" => 36,
+        "Backspace" => 51,
+        "Escape" => 53,
+        "F1" => 122,
+        "F2" => 120,
+        "F3" => 99,
+        "F4" => 118,
+        "F5" => 96,
+        "F6" => 97,
+        "F7" => 98,
+        "F8" => 100,
+        "F9" => 101,
+        "F10" => 109,
+        "F11" => 103,
+        "F12" => 111,
+        _ => return None,
+    })
+}
+
+// Use the CoreGraphics HID event source to query current key state.
+// Does not require accessibility permissions.
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceKeyState(stateID: i32, keycode: u16) -> bool;
+}
+
+#[cfg(target_os = "macos")]
+fn is_key_down_macos(keycode: u16) -> bool {
+    // kCGEventSourceStateHIDSystemState = 0
+    unsafe { CGEventSourceKeyState(0, keycode) }
+}
+
 pub fn parsed_to_shortcut(h: &ParsedHotkey) -> Option<Shortcut> {
     let mut mods = Modifiers::empty();
     if h.ctrl {
@@ -184,14 +292,15 @@ pub fn parsed_to_shortcut(h: &ParsedHotkey) -> Option<Shortcut> {
     Some(Shortcut::new(Some(mods), code))
 }
 
+#[cfg(target_os = "windows")]
 fn is_key_down(vk: i32) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     unsafe { GetAsyncKeyState(vk) < 0 }
 }
 
 /// Read the currently-held state of every modifier we care about.
-/// Returns (ctrl, shift, alt, meta). VK_CONTROL/VK_SHIFT/VK_MENU are the
-/// "either left or right" virtual keys; Win has separate L/R so we OR them.
+/// Returns (ctrl, shift, alt, meta).
+#[cfg(target_os = "windows")]
 fn modifier_state() -> (bool, bool, bool, bool) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
@@ -204,13 +313,34 @@ fn modifier_state() -> (bool, bool, bool, bool) {
     )
 }
 
+#[cfg(target_os = "macos")]
+fn modifier_state() -> (bool, bool, bool, bool) {
+    // Left/right macOS key codes for modifier keys
+    const LCTRL: u16 = 59;
+    const RCTRL: u16 = 62;
+    const LSHIFT: u16 = 56;
+    const RSHIFT: u16 = 60;
+    const LALT: u16 = 58;
+    const RALT: u16 = 61;
+    const LCMD: u16 = 55;
+    const RCMD: u16 = 54;
+    (
+        is_key_down_macos(LCTRL) || is_key_down_macos(RCTRL),
+        is_key_down_macos(LSHIFT) || is_key_down_macos(RSHIFT),
+        is_key_down_macos(LALT) || is_key_down_macos(RALT),
+        is_key_down_macos(LCMD) || is_key_down_macos(RCMD),
+    )
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn modifier_state() -> (bool, bool, bool, bool) {
+    (false, false, false, false)
+}
+
 /// True if every required modifier in `need` is currently held.
 fn required_mods_held(need: &ParsedHotkey, state: (bool, bool, bool, bool)) -> bool {
     let (ctrl, shift, alt, meta) = state;
-    (!need.ctrl || ctrl)
-        && (!need.shift || shift)
-        && (!need.alt || alt)
-        && (!need.meta || meta)
+    (!need.ctrl || ctrl) && (!need.shift || shift) && (!need.alt || alt) && (!need.meta || meta)
 }
 
 /// Long-running watcher for a modifier-only chord like Ctrl+Win. Polls
@@ -234,19 +364,15 @@ fn spawn_modifier_chord_watcher(
         }
         let mut state = State::Idle;
         let mut last_fire: Option<Instant> = None;
-        tracing::info!(
-            "modifier-chord watcher started for {:?}",
-            hotkey
-        );
+        tracing::info!("modifier-chord watcher started for {:?}", hotkey);
         while alive.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
             let held = required_mods_held(&hotkey, modifier_state());
             match state {
                 State::Idle => {
                     if held {
-                        let cooled = last_fire.map_or(true, |t| {
-                            t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
-                        });
+                        let cooled =
+                            last_fire.map_or(true, |t| t.elapsed().as_millis() >= FIRE_COOLDOWN_MS);
                         if cooled {
                             state = State::Arming(Instant::now());
                         }
@@ -256,13 +382,8 @@ fn spawn_modifier_chord_watcher(
                     if !held {
                         // Released before the debounce — treat as noise.
                         state = State::Idle;
-                    } else if start.elapsed().as_millis()
-                        >= MODIFIER_CHORD_DEBOUNCE_MS as u128
-                    {
-                        tracing::debug!(
-                            "modifier-chord dictation pressed: {:?}",
-                            hotkey
-                        );
+                    } else if start.elapsed().as_millis() >= MODIFIER_CHORD_DEBOUNCE_MS as u128 {
+                        tracing::debug!("modifier-chord dictation pressed: {:?}", hotkey);
                         let _ = tx.send(HotkeyEvent::DictationPressed);
                         last_fire = Some(Instant::now());
                         state = State::Pressing;
@@ -297,6 +418,8 @@ fn modifier_chord_alive_slot() -> &'static Mutex<Option<Arc<AtomicBool>>> {
 /// we poll the actual key state to detect when the user lets go. The
 /// `release_evt` parameter lets the same poller drive either the
 /// dictation pipeline or the voice-transform pipeline.
+/// Windows: poll `GetAsyncKeyState` every 25 ms until the combo is released.
+#[cfg(target_os = "windows")]
 fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey, release_evt: HotkeyEvent) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
@@ -305,10 +428,6 @@ fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey, release_e
         return;
     };
     thread::spawn(move || {
-        // Safety net: regardless of polling result, never let this thread
-        // outlive a reasonable upper bound on a press. 60 seconds covers
-        // even the most generous dictation; if we hit it we fire release
-        // anyway so the orchestrator doesn't get stuck.
         let started = Instant::now();
         loop {
             thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
@@ -321,15 +440,56 @@ fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey, release_e
             let ctrl_ok = !hotkey.ctrl || is_key_down(VK_CONTROL.0 as i32);
             let shift_ok = !hotkey.shift || is_key_down(VK_SHIFT.0 as i32);
             let alt_ok = !hotkey.alt || is_key_down(VK_MENU.0 as i32);
-            let meta_ok = !hotkey.meta
-                || is_key_down(VK_LWIN.0 as i32)
-                || is_key_down(VK_RWIN.0 as i32);
+            let meta_ok =
+                !hotkey.meta || is_key_down(VK_LWIN.0 as i32) || is_key_down(VK_RWIN.0 as i32);
             if !(main_down && ctrl_ok && shift_ok && alt_ok && meta_ok) {
                 let _ = tx.send(release_evt.clone());
                 return;
             }
         }
     });
+}
+
+/// macOS: poll `CGEventSourceKeyState` every 25 ms until the combo is released.
+#[cfg(target_os = "macos")]
+fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey, release_evt: HotkeyEvent) {
+    let Some(main_kc) = hotkey.key.as_deref().and_then(key_name_to_keycode_macos) else {
+        return;
+    };
+    thread::spawn(move || {
+        const LCTRL: u16 = 59;
+        const RCTRL: u16 = 62;
+        const LSHIFT: u16 = 56;
+        const RSHIFT: u16 = 60;
+        const LALT: u16 = 58;
+        const RALT: u16 = 61;
+        const LCMD: u16 = 55;
+        const RCMD: u16 = 54;
+        let started = Instant::now();
+        loop {
+            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
+            if started.elapsed() > Duration::from_secs(60) {
+                tracing::warn!("release poller timed out — forcing release");
+                let _ = tx.send(release_evt.clone());
+                return;
+            }
+            let main_down = is_key_down_macos(main_kc);
+            let ctrl_ok = !hotkey.ctrl || is_key_down_macos(LCTRL) || is_key_down_macos(RCTRL);
+            let shift_ok = !hotkey.shift || is_key_down_macos(LSHIFT) || is_key_down_macos(RSHIFT);
+            let alt_ok = !hotkey.alt || is_key_down_macos(LALT) || is_key_down_macos(RALT);
+            let meta_ok = !hotkey.meta || is_key_down_macos(LCMD) || is_key_down_macos(RCMD);
+            if !(main_down && ctrl_ok && shift_ok && alt_ok && meta_ok) {
+                let _ = tx.send(release_evt.clone());
+                return;
+            }
+        }
+    });
+}
+
+/// Other platforms: immediately fire the release event (hold-to-talk not supported).
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn spawn_release_poller(tx: Sender<HotkeyEvent>, _hotkey: ParsedHotkey, release_evt: HotkeyEvent) {
+    let _ = tx.send(release_evt);
 }
 
 /// Create the hotkey channel. Returns (tx, rx). The tx is stored in
@@ -345,7 +505,7 @@ pub fn make_channel() -> (Sender<HotkeyEvent>, Receiver<HotkeyEvent>) {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct TransformSlotStatus {
     pub transform_id: i64,
-    pub slot: u8, // 1..=9
+    pub slot: u8,      // 1..=9
     pub combo: String, // e.g. "Alt+3" — human-readable
     pub registered: bool,
     pub error: Option<String>,
@@ -405,44 +565,47 @@ fn re_register(
         let dict_parsed = snapshot.dictation.clone();
         let dict_active = Arc::new(Mutex::new(false));
         let last_fire = Arc::new(Mutex::new(None::<Instant>));
-        let handler = move |_app: &AppHandle, sc: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent| {
-            if event.state() != ShortcutState::Pressed {
-                return;
-            }
-            // Cooldown + already-active gate to ignore auto-repeat.
-            {
-                let mut active = dict_active.lock();
-                if *active {
+        let handler =
+            move |_app: &AppHandle,
+                  sc: &Shortcut,
+                  event: tauri_plugin_global_shortcut::ShortcutEvent| {
+                if event.state() != ShortcutState::Pressed {
                     return;
                 }
-                let mut last = last_fire.lock();
-                let cooled = last.map_or(true, |t: Instant| {
-                    t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
-                });
-                if !cooled {
-                    return;
+                // Cooldown + already-active gate to ignore auto-repeat.
+                {
+                    let mut active = dict_active.lock();
+                    if *active {
+                        return;
+                    }
+                    let mut last = last_fire.lock();
+                    let cooled = last.map_or(true, |t: Instant| {
+                        t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+                    });
+                    if !cooled {
+                        return;
+                    }
+                    *active = true;
+                    *last = Some(Instant::now());
                 }
-                *active = true;
-                *last = Some(Instant::now());
-            }
-            tracing::debug!("global-shortcut dictation pressed: {:?}", sc);
-            let _ = tx_dict.send(HotkeyEvent::DictationPressed);
+                tracing::debug!("global-shortcut dictation pressed: {:?}", sc);
+                let _ = tx_dict.send(HotkeyEvent::DictationPressed);
 
-            // Spawn a one-shot poller that watches for release, sends the
-            // release event, then clears `dict_active` so the next press
-            // can fire again.
-            let tx_release = tx_dict.clone();
-            let parsed = dict_parsed.clone();
-            let dict_active_clone = dict_active.clone();
-            thread::spawn(move || {
-                let (poll_tx, poll_rx) = mpsc::channel();
-                spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
-                if let Ok(evt) = poll_rx.recv() {
-                    let _ = tx_release.send(evt);
-                }
-                *dict_active_clone.lock() = false;
-            });
-        };
+                // Spawn a one-shot poller that watches for release, sends the
+                // release event, then clears `dict_active` so the next press
+                // can fire again.
+                let tx_release = tx_dict.clone();
+                let parsed = dict_parsed.clone();
+                let dict_active_clone = dict_active.clone();
+                thread::spawn(move || {
+                    let (poll_tx, poll_rx) = mpsc::channel();
+                    spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
+                    if let Ok(evt) = poll_rx.recv() {
+                        let _ = tx_release.send(evt);
+                    }
+                    *dict_active_clone.lock() = false;
+                });
+            };
         if let Err(e) = gs.on_shortcut(dict_sc, handler) {
             tracing::warn!(
                 "register dictation hotkey failed (combo unsupported by RegisterHotKey?): {e:#}"
@@ -462,40 +625,43 @@ fn re_register(
         let pol_parsed = snapshot.polish_dictation.clone();
         let pol_active = Arc::new(Mutex::new(false));
         let last_fire = Arc::new(Mutex::new(None::<Instant>));
-        let handler = move |_app: &AppHandle, sc: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent| {
-            if event.state() != ShortcutState::Pressed {
-                return;
-            }
-            {
-                let mut active = pol_active.lock();
-                if *active {
+        let handler =
+            move |_app: &AppHandle,
+                  sc: &Shortcut,
+                  event: tauri_plugin_global_shortcut::ShortcutEvent| {
+                if event.state() != ShortcutState::Pressed {
                     return;
                 }
-                let mut last = last_fire.lock();
-                let cooled = last.map_or(true, |t: Instant| {
-                    t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
-                });
-                if !cooled {
-                    return;
+                {
+                    let mut active = pol_active.lock();
+                    if *active {
+                        return;
+                    }
+                    let mut last = last_fire.lock();
+                    let cooled = last.map_or(true, |t: Instant| {
+                        t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+                    });
+                    if !cooled {
+                        return;
+                    }
+                    *active = true;
+                    *last = Some(Instant::now());
                 }
-                *active = true;
-                *last = Some(Instant::now());
-            }
-            tracing::debug!("global-shortcut polish-dictation pressed: {:?}", sc);
-            let _ = tx_pol.send(HotkeyEvent::PolishDictationPressed);
+                tracing::debug!("global-shortcut polish-dictation pressed: {:?}", sc);
+                let _ = tx_pol.send(HotkeyEvent::PolishDictationPressed);
 
-            let tx_release = tx_pol.clone();
-            let parsed = pol_parsed.clone();
-            let pol_active_clone = pol_active.clone();
-            thread::spawn(move || {
-                let (poll_tx, poll_rx) = mpsc::channel();
-                spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
-                if let Ok(evt) = poll_rx.recv() {
-                    let _ = tx_release.send(evt);
-                }
-                *pol_active_clone.lock() = false;
-            });
-        };
+                let tx_release = tx_pol.clone();
+                let parsed = pol_parsed.clone();
+                let pol_active_clone = pol_active.clone();
+                thread::spawn(move || {
+                    let (poll_tx, poll_rx) = mpsc::channel();
+                    spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
+                    if let Ok(evt) = poll_rx.recv() {
+                        let _ = tx_release.send(evt);
+                    }
+                    *pol_active_clone.lock() = false;
+                });
+            };
         if let Err(e) = gs.on_shortcut(pol_sc, handler) {
             tracing::warn!("register polish-dictation hotkey failed: {e:#}");
         } else {
@@ -527,22 +693,23 @@ fn re_register(
         let tx_t = tx.clone();
         let id_for_cb = *transform_id;
         let last_fire: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-        let handler = move |_app: &AppHandle,
-                            _sc: &Shortcut,
-                            event: tauri_plugin_global_shortcut::ShortcutEvent| {
-            if event.state() != ShortcutState::Pressed {
-                return;
-            }
-            let mut last = last_fire.lock();
-            let cooled = last.map_or(true, |t: Instant| {
-                t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
-            });
-            if !cooled {
-                return;
-            }
-            *last = Some(Instant::now());
-            let _ = tx_t.send(HotkeyEvent::TransformTriggered(id_for_cb));
-        };
+        let handler =
+            move |_app: &AppHandle,
+                  _sc: &Shortcut,
+                  event: tauri_plugin_global_shortcut::ShortcutEvent| {
+                if event.state() != ShortcutState::Pressed {
+                    return;
+                }
+                let mut last = last_fire.lock();
+                let cooled = last.map_or(true, |t: Instant| {
+                    t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+                });
+                if !cooled {
+                    return;
+                }
+                *last = Some(Instant::now());
+                let _ = tx_t.send(HotkeyEvent::TransformTriggered(id_for_cb));
+            };
         match gs.on_shortcut(shortcut, handler) {
             Ok(_) => {
                 tracing::info!(
