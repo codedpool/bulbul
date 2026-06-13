@@ -1,4 +1,4 @@
-//! macOS text injection: NSPasteboard clipboard + Cmd+V via CGEvent.
+//! macOS text injection: NSPasteboard clipboard + Cmd+V via AppleScript.
 //!
 //! 1. Snapshot the user's prior clipboard contents (NSPasteboard read).
 //! 2. Write the transcript to the clipboard with TRANSIENT pasteboard
@@ -11,26 +11,34 @@
 //!    dictation hotkey and Cmd+V becomes something else.
 //! 4. Wait another 30ms (lets the clipboard settle and gives the OS a
 //!    moment between modifier-release and our synthetic event).
-//! 5. Post two CGEvents (V keydown + V keyup) with `.maskCommand`,
-//!    targeting `.cgSessionEventTap`. The V keycode is resolved via
-//!    TIS/UCKeyTranslate so the paste still works under Dvorak,
-//!    AZERTY, Workman, etc.
+//! 5. Drive `osascript` to send `keystroke "v" using command down`
+//!    through System Events. AppleScript's keystroke goes through the
+//!    official macOS Accessibility/HID path that the OS treats as
+//!    trusted input — more reliable across macOS versions (including
+//!    Tahoe) than directly posting a CGEvent to the session event tap,
+//!    which can silently fail to deliver the keystroke on newer
+//!    releases. Requires the `NSAppleEventsUsageDescription` Info.plist
+//!    key; first paste triggers a one-time "Bulbul wants to control
+//!    System Events" TCC prompt.
 //! 6. After 1s, restore the prior clipboard IF the clipboard still
 //!    holds exactly what we wrote (so the user can copy something
 //!    new mid-paste and we won't clobber it).
+//!
+//! The switch from CGEvent to osascript was contributed by
+//! @Pskuntal1248 (Parth singh) — verified working on macOS Tahoe where
+//! the previous CGEvent path could silently no-op.
 //!
 //! See:
 //!   <https://github.com/nicke5012/TransientPasteboardType>
 //!     — the convention clipboard managers honor for skip-record hints.
 
 use anyhow::{anyhow, Context, Result};
-use core_foundation::base::{CFRelease, CFTypeRef};
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use core_graphics::event_source::CGEventSourceStateID;
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2_foundation::{NSArray, NSString};
+use std::process::Command;
 use std::ptr;
 use std::thread;
 use std::time::Duration;
@@ -56,112 +64,12 @@ const POST_RELEASE_DELAY: Duration = Duration::from_millis(30);
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(40);
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(1000);
 
-// US-QWERTY fallback keycodes for V and C, used when TIS lookup fails
-// (e.g. non-Roman keyboard layouts where 'v' doesn't appear in the
-// translated layer). On US QWERTY these are correct; on Dvorak/AZERTY/
-// etc. the TIS lookup below resolves the real position.
-const FALLBACK_KEYCODE_V: u16 = 9;
-const FALLBACK_KEYCODE_C: u16 = 8;
-
 // ----- FFI: CGEventSourceKeyState ------------------------------------------
 // CGEventSourceKeyState isn't bound by the Rust core-graphics crate. The
 // C signature is documented as a pure-query function, safe from any
 // thread. C99 `bool` is ABI-compatible with Rust's `bool`.
 extern "C" {
     fn CGEventSourceKeyState(state_id: CGEventSourceStateID, key: u16) -> bool;
-}
-
-// ----- FFI: TIS + UCKeyTranslate -------------------------------------------
-// Carbon is the umbrella framework that exposes the modern TIS APIs.
-// They're not marked deprecated in current SDKs (the rest of Carbon is).
-#[link(name = "Carbon", kind = "framework")]
-extern "C" {
-    fn TISCopyCurrentKeyboardInputSource() -> CFTypeRef;
-    fn TISGetInputSourceProperty(source: CFTypeRef, property_key: CFTypeRef) -> CFTypeRef;
-    fn UCKeyTranslate(
-        keyboard_layout_ptr: *const u8,
-        virtual_key_code: u16,
-        key_action: u16,
-        modifier_key_state: u32,
-        keyboard_type: u32,
-        key_translate_options: u32,
-        dead_key_state: *mut u32,
-        max_string_length: usize,
-        actual_string_length: *mut usize,
-        unicode_string: *mut u16,
-    ) -> i32;
-    fn LMGetKbdType() -> u8;
-    fn CFDataGetBytePtr(data: CFTypeRef) -> *const u8;
-    static kTISPropertyUnicodeKeyLayoutData: CFTypeRef;
-}
-
-const UC_KEY_ACTION_DISPLAY: u16 = 3;
-const UC_KEY_TRANSLATE_NO_DEAD_KEYS_BIT: u32 = 1;
-const NO_ERR: i32 = 0;
-
-/// Walk the current keyboard layout's keycode table to find which
-/// position produces the given character when pressed without
-/// modifiers. Returns None when the character isn't reachable on the
-/// current layout (e.g. a Roman letter on a Cyrillic-only layout).
-fn keycode_for_character(target: char) -> Option<u16> {
-    // SAFETY: TISCopyCurrentKeyboardInputSource returns a +1 retained
-    // CFType ref; we CFRelease it before return. TISGetInputSourceProperty
-    // returns an unretained ref (no release needed). UCKeyTranslate is
-    // a pure function over the layout data.
-    unsafe {
-        let source = TISCopyCurrentKeyboardInputSource();
-        if source.is_null() {
-            return None;
-        }
-        let layout_data_ref =
-            TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
-        if layout_data_ref.is_null() {
-            CFRelease(source);
-            return None;
-        }
-        let layout_ptr = CFDataGetBytePtr(layout_data_ref);
-        if layout_ptr.is_null() {
-            CFRelease(source);
-            return None;
-        }
-        let kbd_type = LMGetKbdType() as u32;
-        let mut result: Option<u16> = None;
-        for keycode in 0u16..128 {
-            let mut chars = [0u16; 4];
-            let mut char_count: usize = 0;
-            let mut dead_key_state: u32 = 0;
-            let status = UCKeyTranslate(
-                layout_ptr,
-                keycode,
-                UC_KEY_ACTION_DISPLAY,
-                0, // modifier_key_state — unmodified base layer
-                kbd_type,
-                UC_KEY_TRANSLATE_NO_DEAD_KEYS_BIT,
-                &mut dead_key_state,
-                4,
-                &mut char_count,
-                chars.as_mut_ptr(),
-            );
-            if status == NO_ERR && char_count > 0 {
-                if let Some(c) = char::from_u32(chars[0] as u32) {
-                    if c == target {
-                        result = Some(keycode);
-                        break;
-                    }
-                }
-            }
-        }
-        CFRelease(source);
-        result
-    }
-}
-
-fn paste_keycode() -> u16 {
-    keycode_for_character('v').unwrap_or(FALLBACK_KEYCODE_V)
-}
-
-fn copy_keycode() -> u16 {
-    keycode_for_character('c').unwrap_or(FALLBACK_KEYCODE_C)
 }
 
 // ----- Public API ----------------------------------------------------------
@@ -183,7 +91,7 @@ pub fn inject_text(text: &str) -> Result<()> {
 
     wait_for_modifiers_released();
 
-    post_command_combo(paste_keycode()).context("posting Cmd+V")?;
+    run_cmd_keystroke("v").context("posting Cmd+V via osascript")?;
 
     // Background restore. Only restore if the clipboard still holds
     // *our* paste — that way a user-initiated mid-paste copy isn't
@@ -204,34 +112,42 @@ pub fn inject_text(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Synthesize Cmd+V at the Session-level event tap. Used by the
-/// Transform pipeline after writing transformed text to the clipboard.
+/// Synthesize Cmd+V. Used by the Transform pipeline after writing
+/// transformed text to the clipboard.
 pub fn send_ctrl_v() -> Result<()> {
-    post_command_combo(paste_keycode())
+    run_cmd_keystroke("v")
 }
 
-/// Synthesize Cmd+C at the Session-level event tap. Used by the
-/// Transform pipeline to copy the user's selection before processing.
+/// Synthesize Cmd+C. Used by the Transform pipeline to copy the user's
+/// selection before processing.
 pub fn send_ctrl_c() -> Result<()> {
-    post_command_combo(copy_keycode())
+    run_cmd_keystroke("c")
 }
 
-// ----- CGEvent post --------------------------------------------------------
+// ----- AppleScript-driven keystroke ----------------------------------------
 
-fn post_command_combo(keycode: u16) -> Result<()> {
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow!("CGEventSource::new failed"))?;
-
-    let key_down = CGEvent::new_keyboard_event(source.clone(), keycode, true)
-        .map_err(|_| anyhow!("CGEvent::new_keyboard_event(keyDown) failed"))?;
-    key_down.set_flags(CGEventFlags::CGEventFlagCommand);
-    key_down.post(CGEventTapLocation::Session);
-
-    let key_up = CGEvent::new_keyboard_event(source, keycode, false)
-        .map_err(|_| anyhow!("CGEvent::new_keyboard_event(keyUp) failed"))?;
-    key_up.set_flags(CGEventFlags::CGEventFlagCommand);
-    key_up.post(CGEventTapLocation::Session);
-
+/// Drive `osascript` to send a single ⌘+key keystroke through System
+/// Events. AppleScript's `keystroke` action goes through the official
+/// Accessibility/HID path the OS treats as trusted input — more
+/// reliable across macOS versions than directly posting a CGEvent to
+/// the session event tap, which can silently fail to deliver under
+/// newer macOS security hardening.
+///
+/// Requires the `NSAppleEventsUsageDescription` Info.plist key so TCC
+/// doesn't block the AppleEvent send. The first call from a fresh
+/// install triggers a one-time "Bulbul wants to control System Events"
+/// prompt; once granted, all future calls succeed silently.
+fn run_cmd_keystroke(key: &str) -> Result<()> {
+    let script = format!(
+        "tell application \"System Events\" to keystroke \"{key}\" using command down"
+    );
+    let status = Command::new("osascript")
+        .args(["-e", &script])
+        .status()
+        .context("failed to spawn osascript")?;
+    if !status.success() {
+        return Err(anyhow!("osascript exited with status {status}"));
+    }
     Ok(())
 }
 

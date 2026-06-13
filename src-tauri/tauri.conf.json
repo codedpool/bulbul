@@ -50,7 +50,8 @@
       "hardenedRuntime": true,
       "minimumSystemVersion": "10.15",
       "signingIdentity": "-",
-      "entitlements": "Entitlements.plist"
+      "entitlements": "Entitlements.plist",
+      "infoPlist": "Info.plist"
     },
     "linux": {
       "deb": {
