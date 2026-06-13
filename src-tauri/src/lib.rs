@@ -1265,7 +1265,7 @@ fn check_microphone_status_mac() -> String {
 fn request_microphone_access_mac() {
     use block2::RcBlock;
     use objc2::msg_send;
-    use objc2::runtime::AnyClass;
+    use objc2::runtime::{AnyClass, Bool};
     use objc2_foundation::NSString;
 
     // SAFETY: AVCaptureDevice.requestAccessForMediaType:completionHandler:
@@ -1280,7 +1280,10 @@ fn request_microphone_access_mac() {
             return;
         };
         let media_type = NSString::from_str("soun");
-        let block = RcBlock::new(|_granted: bool| {});
+        // objc2::runtime::Bool (not plain Rust bool) is required here:
+        // block2::RcBlock::new needs every arg type to implement Encode,
+        // which Rust's bool does not in the objc2 0.6 / block2 0.6 setup.
+        let block = RcBlock::new(|_granted: Bool| {});
         let _: () = msg_send![
             cls,
             requestAccessForMediaType: &*media_type,

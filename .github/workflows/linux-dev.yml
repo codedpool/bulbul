@@ -53,13 +53,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Wipe previous dev release
-        # Replaces (not appends to) the linux-dev release so the user
-        # always pulls the freshest build. Sibling macos-dev release is
-        # untouched. `|| true` keeps the first run green.
-        run: gh release delete linux-dev --yes --cleanup-tag || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # No pre-wipe of the linux-dev release: tauri-action replaces
+      # existing assets with the same name idempotently. Wiping before
+      # build left users with a 404 whenever a build failed downstream
+      # of the wipe — better to keep the last good release in place
+      # until a new one successfully publishes.
 
       - name: Build + sign dev release
         uses: tauri-apps/tauri-action@v0

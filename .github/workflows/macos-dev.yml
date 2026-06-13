@@ -37,14 +37,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Wipe previous dev release
-        # Replaces (not appends to) the macos-dev release so the tester
-        # always pulls the freshest build. --cleanup-tag drops the
-        # underlying git tag too; tauri-action recreates both.
-        # `|| true` keeps the first run green when no prior release exists.
-        run: gh release delete macos-dev --yes --cleanup-tag || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # No pre-wipe of the macos-dev release: tauri-action replaces
+      # existing assets with the same name idempotently. Wiping before
+      # build left the tester with a 404 whenever a build failed
+      # downstream of the wipe — better to keep the last good release
+      # in place until a new one successfully publishes.
 
       - name: Build + sign dev release
         uses: tauri-apps/tauri-action@v0
