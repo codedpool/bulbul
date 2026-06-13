@@ -53,11 +53,20 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      # No pre-wipe of the linux-dev release: tauri-action replaces
-      # existing assets with the same name idempotently. Wiping before
-      # build left users with a 404 whenever a build failed downstream
-      # of the wipe — better to keep the last good release in place
-      # until a new one successfully publishes.
+      - name: Wipe previous dev release
+        # Has to happen before tauri-action: when an existing linux-dev
+        # release is present, tauri-action re-uploads the bundle and
+        # standalone .sig but apparently merges-rather-than-overwrites
+        # the embedded signature in latest.json, so the manifest ends
+        # up pointing at a fresh bundle with a stale signature from
+        # the previous run and `minisign -V` fails on the tester side.
+        # Trade-off: if the build later fails, users see a 404 for the
+        # manifest until the next push — clear "wait and retry" signal,
+        # preferable to a scary-looking signature failure.
+        # `|| true` keeps the first run green when no prior release exists.
+        run: gh release delete linux-dev --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build + sign dev release
         uses: tauri-apps/tauri-action@v0
