@@ -6,6 +6,10 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ### Added
 
+- **macOS support** — full hold-to-talk dictation on macOS 11+, including modifier-chord hotkeys (⌃⌘, ⌥⌘, ⌃⇧Space), retina-aware menu-bar tray icon with template-image dark-mode tinting, native NSPasteboard paste with transient/concealed markers (so clipboard managers skip the entry), AppleScript-driven Cmd+V keystroke through System Events (more reliable across macOS versions than CGEvent posting, especially on Tahoe), TIS/UCKeyTranslate-aware modifier polling, AXIsProcessTrusted accessibility-permission detection, AVFoundation mic-permission status check + programmatic request, NSAppleEventsUsageDescription declared, ad-hoc signing with hardened-runtime entitlement. Universal binary covers Apple Silicon + Intel.
+- **Linux support** — hold-to-talk dictation on X11 + Wayland (best-effort on Wayland; portal-driven hotkey support is planned for v1.1.1). AppImage primary; .deb and .rpm secondary.
+- **Mac-aware onboarding wizard** — Permissions step inserted between Welcome and API key (Microphone + Accessibility cards, both polled every 1.5s for live status), hotkey-preset labels rendered with native ⌃⌥⇧⌘ glyphs, "Quit & Relaunch" button on the Accessibility card for cases where the OS doesn't refresh TCC trust mid-process.
+- **Visible rejection feedback** — when the dictation pipeline drops a take (too short, silence-induced hallucination), the overlay pill now briefly turns amber with a short label ("Too short — try again" / "No audio — check mic") instead of silently shrinking. Same diagnostic visibility applies to the dashboard: every transcript Whisper returns is persisted to history, including hallucination-filter drops, so users can see exactly what was heard regardless of injection outcome.
 - **Optional display name** — captured on the onboarding Welcome step (a single optional first-name field) and editable later in Settings → Personalization. Used to greet the user on the Home page (*"Welcome back, Roman"*) and to sign Compose drafts with their actual name instead of the model's `[Your Name]` placeholder. Stays in the local config file; never sent to any backend.
 - **Compose transform** — a new default transform that turns a dictated brief into a full draft (letter, email, message, memo). Adapts greeting / sign-off / tone to the format implied by the brief. Companion to **Polish**, which is now strictly for refining wording.
 - **Binding-failure banner on Transforms** — when one or more `Alt+N` transform shortcuts can't be registered (another app owns the combo, group-policy lock, etc.), a clear banner at the top of the Transforms page lists each failed shortcut with a human-readable reason — no more silent red chips that only explain themselves on hover.
@@ -35,7 +39,11 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 - Click-to-talk overlay — mouse-driven entry point with X / waveform / ✓ controls, alongside the existing hold-to-talk hotkey
 - Per-app dictionary scoping — substitutions that only fire in specific apps
-- macOS port
+- Wayland-native global hotkey via the GNOME / KDE shortcut portal (Linux) — current X11 path works under XWayland but native portal binding is more reliable
+
+### Contributors
+
+- [@Pskuntal1248](https://github.com/Pskuntal1248) (Parth singh) — macOS paste-keystroke hardening (switching the Cmd+V path from CGEvent to AppleScript via System Events, which delivers reliably on macOS Tahoe where the CGEvent path could silently no-op) and per-platform transform-slot bindings (Cmd+1..9 on macOS in place of Alt+1..9, which on Mac would globally capture the special-character chords ¡™£¢∞§¶•ª). Verified end-to-end on real Tahoe hardware. ([#1](https://github.com/codedpool/bulbul/pull/1))
 
 ## [1.0.0] — 2026-06-02
 
