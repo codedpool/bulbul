@@ -2144,6 +2144,27 @@ async fn process_pipeline(
     tracing::debug!("raw transcript: {transcript}");
     if transcript.trim().is_empty() || groq::is_likely_hallucination(&transcript) {
         tracing::info!("dropping likely-hallucinated transcript: {transcript:?}");
+        // Persist the rejected transcript so users can see WHAT Whisper
+        // returned when their hotkey produced no output. If history shows
+        // "thanks for watching" / "thank you" / "music", that's diagnostic
+        // gold — it means the mic captured silent or near-silent audio and
+        // Whisper hallucinated. The user can then fix their mic device
+        // routing or hotkey conflict instead of staring at an empty UI.
+        // raw_text and cleaned_text both carry the hallucinated phrase
+        // (no cleanup ran); empty cleaned_text would hide the diagnostic.
+        let _ = db::log_dictation_with_hits(
+            &db,
+            db::LogEntry {
+                raw_text: transcript.clone(),
+                cleaned_text: transcript.clone(),
+                mode: meta.mode.clone(),
+                language: meta.language.clone(),
+                foreground_app: meta.foreground_app.clone(),
+                duration_ms,
+            },
+            &[],
+            &[],
+        );
         emit_status(&app, "idle", Some("No speech detected.".into()));
         return;
     }
@@ -2250,10 +2271,30 @@ async fn process_pipeline(
             snip_hits.iter().map(|(_, c)| c).sum::<i64>()
         );
     }
-    // DB writes deferred: the hit-counter UPDATEs + activity-log INSERT
-    // happen in one transaction below, after injection, so the user doesn't
-    // wait on three sequential fsyncs.
     let t_local_ms = t_local_start.elapsed().as_millis() as u64;
+
+    // Persist BEFORE inject. Previously the activity-log INSERT happened
+    // after a successful paste, which meant a silent inject failure (no
+    // error, but text never landed) lost the transcript permanently with
+    // no way to recover it from the dashboard. Now the dashboard always
+    // reflects what Whisper heard, regardless of whether the paste landed.
+    // Clones used so meta stays intact for downstream callers
+    // (track_dictation_failed, correction watcher).
+    if let Err(e) = db::log_dictation_with_hits(
+        &db,
+        db::LogEntry {
+            raw_text: transcript.clone(),
+            cleaned_text: final_text.clone(),
+            mode: meta.mode.clone(),
+            language: meta.language.clone(),
+            foreground_app: meta.foreground_app.clone(),
+            duration_ms,
+        },
+        &dict_hits,
+        &snip_hits,
+    ) {
+        tracing::warn!("failed to log dictation: {e:#}");
+    }
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
@@ -2314,24 +2355,9 @@ async fn process_pipeline(
         None
     };
 
-    // Atomic activity-log + hit-counter write. Single transaction so SQLite
-    // does one fsync instead of three. Best-effort — failures never block
-    // injection or surface to the user.
-    if let Err(e) = db::log_dictation_with_hits(
-        &db,
-        db::LogEntry {
-            raw_text: transcript,
-            cleaned_text: final_text.clone(),
-            mode: meta.mode,
-            language: meta.language,
-            foreground_app: meta.foreground_app,
-            duration_ms,
-        },
-        &dict_hits,
-        &snip_hits,
-    ) {
-        tracing::warn!("failed to log dictation: {e:#}");
-    }
+    // Activity-log write moved to BEFORE inject above so silent paste
+    // failures don't lose the transcript. Telemetry payload below still
+    // fires after inject so we have the inject-success signal in metrics.
 
     // Keep the voice profile current without the user having to click Refresh.
     maybe_auto_refresh_voice(&app, &cfg, &db);
