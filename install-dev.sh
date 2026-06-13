@@ -24,7 +24,13 @@
 set -euo pipefail
 
 # --- Config ----------------------------------------------------------------
-MINISIGN_KEY='RWTLvdvsrlMNS4LQvsKO03T8kF+5jZ1s7KiyU4lKZmYPcd0+1qxm2gKt'
+# Prehashed Ed25519 (algorithm byte "ED") — tauri-action moved to
+# prehashed signing in a recent version. Same underlying Ed25519
+# keypair as the legacy "Ed" public key shipped with v1.0.0; only the
+# algorithm prefix differs (byte 2: 0x64 → 0x44, base64 char 2: W → U),
+# so minisign verifies prehashed signatures using the BLAKE2b-of-file
+# path instead of raw-file path. Key ID `cbbddbecae530d4b` matches.
+MINISIGN_KEY='RUTLvdvsrlMNS4LQvsKO03T8kF+5jZ1s7KiyU4lKZmYPcd0+1qxm2gKt'
 
 # --- Pre-flight: detect OS + arch -----------------------------------------
 case "$(uname -s)" in
