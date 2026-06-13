@@ -280,11 +280,31 @@ function StepPermissions({ onBack, onNext }) {
     };
   }, []);
 
+  // Trigger the macOS mic-permission prompt once on step entry.
+  // macOS only adds Bulbul to the Microphone TCC list (visible in
+  // System Settings → Privacy → Microphone) AFTER an app has actually
+  // called AVCaptureDevice.requestAccess. Without this, the Settings
+  // pane opens but shows no Bulbul row to toggle. Idempotent — calling
+  // it after the user has already responded is a no-op.
+  useEffect(() => {
+    invoke("request_microphone_access_mac").catch(() => {});
+  }, []);
+
   async function openSettings(pane) {
     // Shelling out to the macOS `open` CLI on the backend is more
     // reliable than tauri-plugin-opener's openUrl for custom URL
     // schemes like x-apple.systempreferences: — the plugin's default
     // capabilities only allow http/https and silently reject the rest.
+    //
+    // Before opening the pane for "microphone" specifically, request
+    // access again to guarantee Bulbul is in the TCC list — covers
+    // the edge case where the user reached this step without the
+    // initial useEffect having completed (rare, but cheap to defend).
+    if (pane === "microphone") {
+      try {
+        await invoke("request_microphone_access_mac");
+      } catch {}
+    }
     try {
       await invoke("open_mac_settings_pane", { pane });
     } catch {

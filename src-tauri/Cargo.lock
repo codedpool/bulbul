@@ -424,6 +424,7 @@ dependencies = [
  "accessibility-sys",
  "anyhow",
  "arboard",
+ "block2",
  "core-foundation",
  "core-graphics",
  "cpal",

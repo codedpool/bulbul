@@ -1247,6 +1247,52 @@ fn check_microphone_status_mac() -> String {
     "granted".to_string()
 }
 
+/// Mac-only: trigger the macOS mic-permission prompt by calling
+/// `AVCaptureDevice.requestAccessForMediaType:completionHandler:`.
+///
+/// This is necessary in addition to the status check because macOS only
+/// adds Bulbul to the System Settings → Privacy → Microphone list once
+/// the app has actually called requestAccess at least once. Without
+/// this, the user clicks "Open Microphone Settings", sees the right
+/// pane, but no Bulbul row to toggle — Accessibility doesn't have this
+/// quirk because AXIsProcessTrusted's prompt option registers us.
+///
+/// Fire-and-forget: the completion block is a no-op. The wizard polls
+/// `check_microphone_status_mac` every 1.5s and updates the UI when
+/// the user responds to the OS prompt (or toggles the slider later).
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn request_microphone_access_mac() {
+    use block2::RcBlock;
+    use objc2::msg_send;
+    use objc2::runtime::AnyClass;
+    use objc2_foundation::NSString;
+
+    // SAFETY: AVCaptureDevice.requestAccessForMediaType:completionHandler:
+    // is documented as callable from any thread. The completion block is
+    // RcBlock-allocated so it lives on the heap until AVFoundation
+    // releases its retain after invoking it.
+    unsafe {
+        let Some(cls) = AnyClass::get(c"AVCaptureDevice") else {
+            tracing::warn!(
+                "AVCaptureDevice class not found; cannot request mic access"
+            );
+            return;
+        };
+        let media_type = NSString::from_str("soun");
+        let block = RcBlock::new(|_granted: bool| {});
+        let _: () = msg_send![
+            cls,
+            requestAccessForMediaType: &*media_type,
+            completionHandler: &*block,
+        ];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn request_microphone_access_mac() {}
+
 /// Mac-only: open a specific System Settings privacy pane.
 ///
 /// `pane` is "accessibility", "microphone", or "privacy" (root).
@@ -1355,6 +1401,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_accessibility_status_mac,
             check_microphone_status_mac,
+            request_microphone_access_mac,
             open_mac_settings_pane,
             get_config,
             save_config,
