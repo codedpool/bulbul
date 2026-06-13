@@ -265,10 +265,13 @@ fn position_overlay_bottom_center(app: &AppHandle) {
 /// emitted to the frontend. Larger exit zone gives hysteresis so the
 /// expanded UI doesn't flicker as the cursor moves between buttons.
 ///
-/// Windows-only for now — Phase 7 of the macOS port replaces the Win32
-/// GetCursorPos call with NSEvent.mouseLocation. Until then Mac gets the
-/// no-op stub below: the pill renders fine, but satellite buttons aren't
-/// reachable (cursor-driven expansion is disabled).
+/// Windows uses GetCursorPos; macOS uses CGEventCreate(NULL) +
+/// CGEventGetLocation (cheaper than NSEvent.mouseLocation per-poll
+/// because it skips the objc2 round-trip). Linux is unimplemented —
+/// X11 could use XQueryPointer but Wayland has no global cursor query
+/// at all (privacy/security policy), so Linux ships without
+/// hover-expand for v1.1.0 and the satellite buttons aren't
+/// cursor-reachable on Linux.
 #[cfg(target_os = "windows")]
 fn spawn_hover_watcher(app: AppHandle) {
     use windows::Win32::Foundation::POINT;
@@ -315,9 +318,84 @@ fn spawn_hover_watcher(app: AppHandle) {
     });
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn spawn_hover_watcher(app: AppHandle) {
+    use core_foundation::base::CFTypeRef;
+    use core_graphics::geometry::CGPoint;
+
+    // Quartz Event Services lets us query the cursor location every
+    // 50ms without going through NSEvent (which would need an objc2
+    // round-trip per poll). Coordinates are in top-left logical points
+    // — Tauri's PhysicalPosition / PhysicalSize need to be divided by
+    // the scale factor before comparing.
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventCreate(source: CFTypeRef) -> CFTypeRef;
+        fn CGEventGetLocation(event: CFTypeRef) -> CGPoint;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(cf: CFTypeRef);
+    }
+
+    thread::spawn(move || {
+        let mut last_hovered = false;
+        loop {
+            thread::sleep(Duration::from_millis(50));
+            let Some(overlay) = app.get_webview_window("overlay") else {
+                continue;
+            };
+            let Ok(pos) = overlay.outer_position() else { continue; };
+            let Ok(size) = overlay.outer_size() else { continue; };
+            let scale = overlay.scale_factor().unwrap_or(1.0);
+
+            // CGEventCreate(NULL) returns an event with no source whose
+            // sole useful payload is the cursor location at creation
+            // time. SAFETY: we CFRelease the +1 retained event before
+            // the next iteration so there's no leak.
+            let event = unsafe { CGEventCreate(std::ptr::null()) };
+            if event.is_null() {
+                continue;
+            }
+            let mouse = unsafe { CGEventGetLocation(event) };
+            unsafe { CFRelease(event) };
+            let cursor_x = mouse.x;
+            let cursor_y = mouse.y;
+
+            // Convert window geometry to logical points to match the
+            // CGEvent coordinate space.
+            let x0 = pos.x as f64 / scale;
+            let y0 = pos.y as f64 / scale;
+            let w = size.width as f64 / scale;
+            let h = size.height as f64 / scale;
+            let cx = x0 + w / 2.0;
+            let cy = y0 + h - 24.0;
+
+            let entry_w = 100.0;
+            let entry_h = 40.0;
+            let in_entry = (cursor_x - cx).abs() < entry_w / 2.0
+                && (cursor_y - cy).abs() < entry_h / 2.0;
+
+            let in_exit = cursor_x >= x0
+                && cursor_x < x0 + w
+                && cursor_y >= y0
+                && cursor_y < y0 + h;
+
+            let new_hovered = if last_hovered { in_exit } else { in_entry };
+            if new_hovered != last_hovered {
+                last_hovered = new_hovered;
+                let _ = overlay.set_ignore_cursor_events(!new_hovered);
+                let _ = app.emit("overlay-hover", new_hovered);
+            }
+        }
+    });
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn spawn_hover_watcher(_app: AppHandle) {
-    // Phase 7: implement via NSEvent.mouseLocation. Until then no hover.
+    // Linux: X11 could use XQueryPointer; Wayland has no global cursor
+    // query. Deferred for v1.1.1 — pill renders fine, satellite buttons
+    // just aren't cursor-reachable until then.
 }
 
 
