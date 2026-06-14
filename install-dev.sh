@@ -24,13 +24,12 @@
 set -euo pipefail
 
 # --- Config ----------------------------------------------------------------
-# Prehashed Ed25519 (algorithm byte "ED") — tauri-action moved to
-# prehashed signing in a recent version. Same underlying Ed25519
-# keypair as the legacy "Ed" public key shipped with v1.0.0; only the
-# algorithm prefix differs (byte 2: 0x64 → 0x44, base64 char 2: W → U),
-# so minisign verifies prehashed signatures using the BLAKE2b-of-file
-# path instead of raw-file path. Key ID `cbbddbecae530d4b` matches.
-MINISIGN_KEY='RUTLvdvsrlMNS4LQvsKO03T8kF+5jZ1s7KiyU4lKZmYPcd0+1qxm2gKt'
+# Ed25519 public key (algorithm prefix "Ed" — minisign treats this as a
+# raw Ed25519 key that can verify BOTH legacy "Ed" raw-file signatures
+# AND prehashed "ED" BLAKE2b-of-file signatures. The signature's own
+# algorithm byte selects the verification path; the public key just
+# carries the underlying Ed25519 bytes. Key ID cbbddbecae530d4b.
+MINISIGN_KEY='RWTLvdvsrlMNS4LQvsKO03T8kF+5jZ1s7KiyU4lKZmYPcd0+1qxm2gKt'
 
 # --- Pre-flight: detect OS + arch -----------------------------------------
 case "$(uname -s)" in
@@ -116,9 +115,24 @@ curl -fsSL "$URL" -o "$BUNDLE"
 printf '%s' "$SIG_B64" | base64 --decode > "$SIG"
 
 # --- Verify ----------------------------------------------------------------
+# Stderr is NOT redirected so minisign's actual error ("comment signature
+# verification failed", "trusted comment too long", "Algorithm not
+# supported", etc.) reaches the user — silent "Signature verification
+# failed" alone makes it impossible to tell whether the bundle is
+# corrupt, the .sig is from a different bundle, or minisign is too old.
+# stdout is dropped because on success it just prints the trusted-
+# comment line, which is noise alongside our own log lines.
 echo '  > Verifying signature...'
-if ! minisign -V -P "$MINISIGN_KEY" -m "$BUNDLE" -x "$SIG" >/dev/null; then
-  echo '  ! Signature verification failed. Aborting.' >&2
+VERIFY_OUT=$(minisign -V -P "$MINISIGN_KEY" -m "$BUNDLE" -x "$SIG" 2>&1)
+VERIFY_RC=$?
+if [ "$VERIFY_RC" -ne 0 ]; then
+  echo '  ! Signature verification failed.' >&2
+  echo '    minisign output:' >&2
+  printf '      %s\n' "$VERIFY_OUT" >&2
+  echo '    Bundle:' "$BUNDLE" >&2
+  echo '    Bundle SHA-256:' "$(shasum -a 256 "$BUNDLE" 2>/dev/null | awk '{print $1}')" >&2
+  echo '    Bundle bytes:' "$(wc -c < "$BUNDLE" 2>/dev/null)" >&2
+  echo '    Aborting.' >&2
   exit 1
 fi
 echo '    Signature verified.'
