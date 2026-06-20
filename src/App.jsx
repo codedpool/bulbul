@@ -14,7 +14,7 @@ import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
 import { applyTheme } from "./theme.js";
-import { RELAUNCH_HINT } from "./platform.js";
+import { RELAUNCH_HINT, IS_ANDROID } from "./platform.js";
 import "./App.css";
 
 const ICONS = {
@@ -131,7 +131,10 @@ function App() {
     const unStaged = listen("update-staged", (e) => setStagedUpdate(e.payload));
     const un = listen("bulbul-status", (e) => setStatus(e.payload));
     const onKey = (e) => {
-      if (e.key === "Escape") getCurrentWindow().hide();
+      // Escape-to-hide is desktop-only — Android handles app dismissal
+      // via the system back button and home gesture, and there's no
+      // physical Escape key on a phone keyboard worth wiring.
+      if (e.key === "Escape" && !IS_ANDROID) getCurrentWindow().hide().catch(() => {});
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -211,12 +214,14 @@ function App() {
   return (
     <>
     <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
-      <TitleBar
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={() => setSidebarOpen((v) => !v)}
-        resolvedTheme={resolvedTheme}
-        onToggleTheme={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
-      />
+      {!IS_ANDROID && (
+        <TitleBar
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          resolvedTheme={resolvedTheme}
+          onToggleTheme={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+        />
+      )}
       {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
 
       <aside className="sidebar">
@@ -244,34 +249,38 @@ function App() {
           })}
         </nav>
         <div className="sidebar-footer">
-          <label
-            className="sidebar-toggle-row"
-            title="When on, the dashboard pops up at startup. When off, Bulbul boots silently to the tray — the pill still appears when you dictate."
-          >
-            <span className="sidebar-toggle-label">Open at startup</span>
-            <span className={`toggle ${config.open_dashboard_on_launch ? "on" : ""}`}>
-              <input
-                type="checkbox"
-                checked={!!config.open_dashboard_on_launch}
-                onChange={(e) => updateConfig({ ...config, open_dashboard_on_launch: e.target.checked })}
-              />
-              <span className="toggle-thumb" />
-            </span>
-          </label>
-          <label
-            className="sidebar-toggle-row"
-            title={`When on, the system-tray icon disappears. Bulbul keeps running in the background — the pill only appears while you're dictating. ${RELAUNCH_HINT}`}
-          >
-            <span className="sidebar-toggle-label">Hide tray icon</span>
-            <span className={`toggle ${config.hide_tray ? "on" : ""}`}>
-              <input
-                type="checkbox"
-                checked={!!config.hide_tray}
-                onChange={(e) => toggleHideTray(e.target.checked)}
-              />
-              <span className="toggle-thumb" />
-            </span>
-          </label>
+          {!IS_ANDROID && (
+            <>
+              <label
+                className="sidebar-toggle-row"
+                title="When on, the dashboard pops up at startup. When off, Bulbul boots silently to the tray — the pill still appears when you dictate."
+              >
+                <span className="sidebar-toggle-label">Open at startup</span>
+                <span className={`toggle ${config.open_dashboard_on_launch ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.open_dashboard_on_launch}
+                    onChange={(e) => updateConfig({ ...config, open_dashboard_on_launch: e.target.checked })}
+                  />
+                  <span className="toggle-thumb" />
+                </span>
+              </label>
+              <label
+                className="sidebar-toggle-row"
+                title={`When on, the system-tray icon disappears. Bulbul keeps running in the background — the pill only appears while you're dictating. ${RELAUNCH_HINT}`}
+              >
+                <span className="sidebar-toggle-label">Hide tray icon</span>
+                <span className={`toggle ${config.hide_tray ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.hide_tray}
+                    onChange={(e) => toggleHideTray(e.target.checked)}
+                  />
+                  <span className="toggle-thumb" />
+                </span>
+              </label>
+            </>
+          )}
           <div className={`status status-${status.state}`}>
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
