@@ -43,6 +43,13 @@ class BulbulAccessibilityService : AccessibilityService() {
                     TAG,
                     "VIEW_FOCUSED pkg=${event.packageName} class=${event.className} editable=$editable"
                 )
+                if (editable && event.packageName?.toString() != packageName) {
+                    // User focused a text field in some other app —
+                    // bring the bubble up. We exclude our own package
+                    // so the dashboard's settings inputs don't trigger
+                    // the bubble on top of themselves.
+                    BulbulForegroundService.start(this)
+                }
                 // node.recycle() is no-op on API 33+, harmless on older.
                 node?.recycle()
             }

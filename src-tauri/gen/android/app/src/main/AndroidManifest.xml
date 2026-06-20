@@ -55,6 +55,17 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Foreground service that owns the floating bubble + mic
+             stream. foregroundServiceType="microphone" is required
+             from Android 14 onward for any fg service that records
+             audio; declaring it here makes the audio path (Phase 6)
+             work the moment RECORD_AUDIO is granted. Not exported —
+             only Bulbul's own components start it. -->
+        <service
+            android:name=".BulbulForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"
