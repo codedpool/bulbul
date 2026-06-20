@@ -3344,3 +3344,121 @@ button.small {
 .modal .primary {
   margin-top: 8px;
 }
+
+/* ─────────── Android layout (phone-sized webview) ───────────
+   The desktop shell is a fixed 200-px sidebar + flex content +
+   floating titlebar. On a phone the titlebar is already hidden
+   from JSX, and the sidebar would eat half the screen — so we
+   reshape into the Android idiom: content on top, sidebar as a
+   bottom tab bar showing icon-only nav, modals go full-screen.
+
+   We gate on `.platform-android` (set by platform.js) rather than
+   a viewport media query so a desktop user resizing their window
+   doesn't accidentally hit phone layout. */
+
+html.platform-android body,
+html.platform-android #root {
+  height: 100vh;
+  overflow: hidden;
+}
+
+html.platform-android .app-shell {
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Sidebar collapses to a horizontal tab bar pinned at the bottom.
+   Brand mark + label hide (no space), sidebar-footer hides
+   (status pill + version are not load-bearing on mobile — they
+   live in Settings if the user wants them). */
+html.platform-android .sidebar {
+  width: 100%;
+  height: 64px;
+  flex-direction: row;
+  border-right: 0;
+  border-top: 1px solid var(--fill);
+  padding: 8px 6px;
+  order: 2; /* below content */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+html.platform-android .brand,
+html.platform-android .sidebar-footer {
+  display: none;
+}
+
+html.platform-android .nav {
+  flex-direction: row;
+  gap: 4px;
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Tab buttons: icon stacked above a small label, equal-width along
+   the row so they read as a tab bar rather than a menu list. */
+html.platform-android .nav-item {
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  min-width: 56px;
+  font-size: 10px;
+}
+
+html.platform-android .nav-icon,
+html.platform-android .nav-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+html.platform-android .nav-label {
+  flex: 0;
+  font-size: 10px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+html.platform-android .nav-tag {
+  display: none;
+}
+
+/* Main content takes the rest of the height, with safe-area
+   padding so it doesn't slide under the status bar / system
+   gesture area. */
+html.platform-android .content {
+  order: 1;
+  padding: 16px 16px 16px;
+  padding-top: max(16px, env(safe-area-inset-top));
+  flex: 1;
+}
+
+html.platform-android .page-header h1 {
+  font-size: 22px;
+}
+
+html.platform-android .stat-cards {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* Settings modal becomes full-screen — a small centred card is
+   cramped on a phone and the toolbar at the top of a real
+   settings page is a familiar pattern. */
+html.platform-android .modal-overlay {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--bg);
+}
+
+html.platform-android .modal {
+  max-width: 100%;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  border: 0;
+  padding: 20px;
+  overflow-y: auto;
+}

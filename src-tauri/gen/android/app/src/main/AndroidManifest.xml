@@ -37,6 +37,15 @@
             </intent-filter>
         </activity>
 
+        <!-- First-launch permission walker. MainActivity launches it
+             on top of the webview if any of the three required grants
+             (RECORD_AUDIO, overlay, accessibility) are missing.
+             Not exported — only Bulbul launches it. -->
+        <activity
+            android:name=".SetupActivity"
+            android:exported="false"
+            android:label="@string/app_name" />
+
         <!-- Bulbul accessibility service. Off until the user enables it
              in Settings → Accessibility → Bulbul (the onboarding step
              surfaces that screen via Intent). The system holds the

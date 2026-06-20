@@ -159,6 +159,25 @@ class BulbulForegroundService : Service() {
         }
     }
 
+    /// Persists the bubble's last on-screen position so it doesn't
+    /// jump back to the right edge after a system kill or reboot.
+    /// SharedPreferences (not config.json) because this is a UI
+    /// concern of the foreground service — the user never sees it,
+    /// it doesn't belong in the shared Config schema.
+    private fun saveBubblePosition(x: Int, y: Int) {
+        getSharedPreferences(BUBBLE_PREFS, Context.MODE_PRIVATE).edit().apply {
+            putInt(BUBBLE_X, x)
+            putInt(BUBBLE_Y, y)
+            apply()
+        }
+    }
+
+    private fun loadBubblePosition(): Pair<Int, Int>? {
+        val prefs = getSharedPreferences(BUBBLE_PREFS, Context.MODE_PRIVATE)
+        if (!prefs.contains(BUBBLE_X)) return null
+        return prefs.getInt(BUBBLE_X, 0) to prefs.getInt(BUBBLE_Y, 0)
+    }
+
     /// Reads the Groq API key from the same config.json the Rust
     /// save_config command writes to. Both sides agree the file lives
     /// under filesDir / app_data_dir — they're the same Android path —
@@ -234,6 +253,7 @@ class BulbulForegroundService : Service() {
             onTap = ::onBubbleTap,
             onLongPressDown = ::onBubbleLongPress,
             onLongPressUp = ::onBubbleHoldReleased,
+            onDragEnd = ::saveBubblePosition,
         ))
         val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -250,11 +270,14 @@ class BulbulForegroundService : Service() {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // Start at the right edge, roughly above where the IME
-            // top will be. The user can drag from here; we'll save
-            // the last position once SharedPreferences is wired.
-            x = (resources.displayMetrics.widthPixels * 0.78).toInt()
-            y = (resources.displayMetrics.heightPixels * 0.55).toInt()
+            // Prefer the last spot the user dragged the bubble to; on
+            // a fresh install drop it at the right edge, roughly above
+            // the IME top.
+            val saved = loadBubblePosition()
+            x = saved?.first
+                ?: (resources.displayMetrics.widthPixels * 0.78).toInt()
+            y = saved?.second
+                ?: (resources.displayMetrics.heightPixels * 0.55).toInt()
         }
 
         view.bind(params, wm)
@@ -285,6 +308,12 @@ class BulbulForegroundService : Service() {
         // Mirrors MOBILE_CONFIG_FILE on the Rust side — same file,
         // both processes read/write JSON shaped like `Config`.
         private const val CONFIG_FILE = "config.json"
+        // Bubble position cache — separate from config.json because
+        // it's a transient UI concern, not a setting the user
+        // configures through the React Settings page.
+        private const val BUBBLE_PREFS = "bulbul_bubble"
+        private const val BUBBLE_X = "x"
+        private const val BUBBLE_Y = "y"
 
         /// Start the foreground service if it isn't already running.
         /// Safe to call repeatedly.
@@ -311,6 +340,7 @@ private data class BubbleCallbacks(
     val onTap: () -> Unit,
     val onLongPressDown: () -> Unit,
     val onLongPressUp: () -> Unit,
+    val onDragEnd: (x: Int, y: Int) -> Unit,
 )
 
 /// The floating bubble itself. Draws a filled circle in onDraw and
@@ -417,6 +447,7 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
                 }
                 if (dragging) {
                     Log.d(TAG, "drag end at (${p.x}, ${p.y})")
+                    cb.onDragEnd(p.x, p.y)
                     dragging = false
                 }
             }
