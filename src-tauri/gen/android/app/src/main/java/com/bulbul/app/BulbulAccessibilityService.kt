@@ -31,6 +31,12 @@ class BulbulAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.i(TAG, "Bulbul accessibility service connected")
+        TextInjector.bind(this)
+    }
+
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        TextInjector.unbind()
+        return super.onUnbind(intent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

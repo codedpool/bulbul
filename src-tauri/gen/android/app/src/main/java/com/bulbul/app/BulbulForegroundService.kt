@@ -93,22 +93,16 @@ class BulbulForegroundService : Service() {
     }
 
     /// Tap-to-toggle: first tap starts the recorder, second tap stops
-    /// it and writes the WAV to the app's external files dir
-    /// (filesDir/recordings/{epoch_ms}.wav). Phase 6b replaces the
-    /// disk write with a Groq Whisper POST + AccessibilityService
-    /// injection — keeping the disk write right now so the user can
-    /// pull the file off the device and confirm capture works.
+    /// it, transcribes via Groq, and injects the result into the
+    /// focused field. If Groq fails for any reason (no API key, no
+    /// network, server error) we fall back to writing the WAV to
+    /// filesDir/recordings/ so the user's audio isn't lost.
     private fun onBubbleTap() {
         val r = recorder ?: return
         if (r.isRecording()) {
             val wav = r.stop()
             bubbleView?.setRecording(false)
-            if (wav != null) {
-                // Disk I/O off the main thread.
-                thread(name = "BulbulRecordingWriter", isDaemon = true) {
-                    writeRecording(wav)
-                }
-            }
+            if (wav != null) processCapturedAudio(wav)
         } else {
             val ok = r.start()
             if (ok) {
@@ -119,20 +113,9 @@ class BulbulForegroundService : Service() {
         }
     }
 
-    private fun writeRecording(wav: ByteArray) {
-        try {
-            val dir = File(filesDir, "recordings").apply { mkdirs() }
-            val file = File(dir, "${System.currentTimeMillis()}.wav")
-            FileOutputStream(file).use { it.write(wav) }
-            Log.i(TAG, "wrote ${wav.size} bytes to ${file.absolutePath}")
-        } catch (t: Throwable) {
-            Log.w(TAG, "writing recording failed", t)
-        }
-    }
-
-    /// Long-press: hold-to-talk. Press starts; release stops + writes.
-    /// We map the press half here; the BubbleView fires release once
-    /// it sees ACTION_UP after a long-press fired.
+    /// Long-press: hold-to-talk. Press starts; release stops + sends.
+    /// BubbleView fires the release once it sees ACTION_UP after a
+    /// long-press has fired.
     private fun onBubbleLongPress() {
         val r = recorder ?: return
         if (!r.isRecording()) {
@@ -145,11 +128,54 @@ class BulbulForegroundService : Service() {
         if (r.isRecording()) {
             val wav = r.stop()
             bubbleView?.setRecording(false)
-            if (wav != null) {
-                thread(name = "BulbulRecordingWriter", isDaemon = true) {
-                    writeRecording(wav)
-                }
+            if (wav != null) processCapturedAudio(wav)
+        }
+    }
+
+    /// Off-main-thread: ship the WAV to Groq Whisper, then inject the
+    /// transcript into the focused field via the AccessibilityService.
+    /// On any failure, write the WAV to disk so the user's words
+    /// survive — they'll lose the convenience of auto-paste but not
+    /// the audio itself.
+    private fun processCapturedAudio(wav: ByteArray) {
+        thread(name = "BulbulTranscribe", isDaemon = true) {
+            val apiKey = getApiKey()
+            val transcript = if (apiKey.isNotBlank()) {
+                GroqClient.transcribe(apiKey, wav)
+            } else null
+
+            if (transcript != null) {
+                val injected = TextInjector.inject(transcript)
+                Log.i(TAG, "transcript len=${transcript.length} injected=$injected")
+                // If we couldn't inject (no focused field, A11y not
+                // bound), still save the WAV so the dictation isn't
+                // lost — but only when there's no transcript to fall
+                // back on either.
+                if (!injected) writeRecording(wav)
+            } else {
+                Log.w(TAG, "transcription failed; saving WAV instead")
+                writeRecording(wav)
             }
+        }
+    }
+
+    /// Reads the Groq API key from SharedPreferences. The Tauri/React
+    /// settings UI writes here via a Tauri command (Phase 7) — until
+    /// that lands the key can be set manually with `adb shell run-as
+    /// com.bulbul.app` for testing.
+    private fun getApiKey(): String {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(PREF_GROQ_API_KEY, "").orEmpty()
+    }
+
+    private fun writeRecording(wav: ByteArray) {
+        try {
+            val dir = File(filesDir, "recordings").apply { mkdirs() }
+            val file = File(dir, "${System.currentTimeMillis()}.wav")
+            FileOutputStream(file).use { it.write(wav) }
+            Log.i(TAG, "wrote ${wav.size} bytes to ${file.absolutePath}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "writing recording failed", t)
         }
     }
 
@@ -248,6 +274,11 @@ class BulbulForegroundService : Service() {
         private const val CHANNEL_ID = "bulbul.bubble"
         private const val NOTIFICATION_ID = 1001
         private const val BUBBLE_SIZE_DP = 56
+        // The Tauri/React settings command writes the Groq API key
+        // into this prefs file (Phase 7); for now it can be seeded
+        // manually via adb for testing.
+        const val PREFS_NAME = "bulbul_prefs"
+        const val PREF_GROQ_API_KEY = "groq_api_key"
 
         /// Start the foreground service if it isn't already running.
         /// Safe to call repeatedly.
