@@ -27,28 +27,56 @@ mod config;
 
 use config::Config;
 use serde_json::{json, Value};
+use tauri::Manager;
 
-// ---------- Startup commands (App.jsx useEffect on mount) ----------
+/// Where Bulbul keeps mobile config on disk. Tauri's app_data_dir on
+/// Android resolves to Context.getFilesDir() (i.e.
+/// /data/data/com.bulbul.app/files/), so reading the same path from
+/// Kotlin via `filesDir` is the bridge that lets BulbulForegroundService
+/// pick up the Groq API key the React Settings UI saves here.
+const MOBILE_CONFIG_FILE: &str = "config.json";
 
-/// Returns a Bulbul config with `onboarding_completed = true` so the
-/// React shell skips the desktop-shaped wizard and renders the main
-/// dashboard. The Android-flavored onboarding (mic + accessibility +
-/// overlay permissions) is a separate flow added once the
-/// AccessibilityService and overlay bubble land.
-#[tauri::command]
-fn get_config() -> Config {
-    let mut cfg = Config::default();
+fn mobile_config_defaults(mut cfg: Config) -> Config {
     cfg.onboarding_completed = true;
     cfg.privacy_acknowledged = true;
     cfg
 }
 
-/// Persisting config on Android is a no-op for now. Once mobile storage
-/// is wired (Android SharedPreferences or app-private file), this gets
-/// replaced with a real write.
+// ---------- Startup commands (App.jsx useEffect on mount) ----------
+
+/// Reads the persisted config from app-private storage. Falls back to
+/// a mobile-flavoured default (onboarding + privacy acknowledged
+/// pre-flipped) so the React shell skips the desktop-shaped wizard
+/// and renders the main dashboard the first time the user opens the
+/// app on a fresh install.
 #[tauri::command]
-fn save_config(_new_cfg: Config) -> Result<(), String> {
-    Ok(())
+fn get_config(app: tauri::AppHandle) -> Config {
+    let cfg = read_config(&app).unwrap_or_default();
+    mobile_config_defaults(cfg)
+}
+
+/// Writes the config as JSON to <app_data_dir>/config.json. The Kotlin
+/// foreground service reads the same file to pick up the Groq API
+/// key — no JNI needed because both sides agree on the path
+/// (Android's Context.getFilesDir() == Tauri's app_data_dir on this
+/// platform).
+#[tauri::command]
+fn save_config(app: tauri::AppHandle, new_cfg: Config) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(MOBILE_CONFIG_FILE);
+    let json = serde_json::to_string_pretty(&new_cfg).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+fn read_config(app: &tauri::AppHandle) -> Option<Config> {
+    let dir = app.path().app_data_dir().ok()?;
+    let path = dir.join(MOBILE_CONFIG_FILE);
+    if !path.exists() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<Config>(&text).ok()
 }
 
 /// Autostart on Android is governed by the BOOT_COMPLETED broadcast,

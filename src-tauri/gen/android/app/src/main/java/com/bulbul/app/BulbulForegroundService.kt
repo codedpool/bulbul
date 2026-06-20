@@ -159,13 +159,21 @@ class BulbulForegroundService : Service() {
         }
     }
 
-    /// Reads the Groq API key from SharedPreferences. The Tauri/React
-    /// settings UI writes here via a Tauri command (Phase 7) — until
-    /// that lands the key can be set manually with `adb shell run-as
-    /// com.bulbul.app` for testing.
+    /// Reads the Groq API key from the same config.json the Rust
+    /// save_config command writes to. Both sides agree the file lives
+    /// under filesDir / app_data_dir — they're the same Android path —
+    /// so the React Settings UI writing through Tauri immediately
+    /// becomes visible to this service without a JNI bridge.
     private fun getApiKey(): String {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(PREF_GROQ_API_KEY, "").orEmpty()
+        return try {
+            val file = File(filesDir, CONFIG_FILE)
+            if (!file.exists()) return ""
+            val json = org.json.JSONObject(file.readText())
+            json.optString("groq_api_key", "")
+        } catch (t: Throwable) {
+            Log.w(TAG, "reading config.json failed", t)
+            ""
+        }
     }
 
     private fun writeRecording(wav: ByteArray) {
@@ -274,11 +282,9 @@ class BulbulForegroundService : Service() {
         private const val CHANNEL_ID = "bulbul.bubble"
         private const val NOTIFICATION_ID = 1001
         private const val BUBBLE_SIZE_DP = 56
-        // The Tauri/React settings command writes the Groq API key
-        // into this prefs file (Phase 7); for now it can be seeded
-        // manually via adb for testing.
-        const val PREFS_NAME = "bulbul_prefs"
-        const val PREF_GROQ_API_KEY = "groq_api_key"
+        // Mirrors MOBILE_CONFIG_FILE on the Rust side — same file,
+        // both processes read/write JSON shaped like `Config`.
+        private const val CONFIG_FILE = "config.json"
 
         /// Start the foreground service if it isn't already running.
         /// Safe to call repeatedly.
