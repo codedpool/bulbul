@@ -175,7 +175,26 @@ class BulbulForegroundService : Service() {
     private fun loadBubblePosition(): Pair<Int, Int>? {
         val prefs = getSharedPreferences(BUBBLE_PREFS, Context.MODE_PRIVATE)
         if (!prefs.contains(BUBBLE_X)) return null
-        return prefs.getInt(BUBBLE_X, 0) to prefs.getInt(BUBBLE_Y, 0)
+        val x = prefs.getInt(BUBBLE_X, 0)
+        val y = prefs.getInt(BUBBLE_Y, 0)
+        val sizePx = BUBBLE_SIZE_DP.dp(this)
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        // If the saved position would put the bubble entirely or
+        // mostly off-screen (rotation change, switch to a smaller
+        // display, stale data from a different default), drop it and
+        // fall back to the default — better to surprise the user with
+        // a relocated bubble than a missing one.
+        if (x < 0 || y < 0 || x + sizePx > screenW || y + sizePx > screenH) {
+            Log.w(
+                TAG,
+                "saved bubble position ($x, $y) is off-screen on " +
+                    "${screenW}x${screenH} — discarding"
+            )
+            prefs.edit().remove(BUBBLE_X).remove(BUBBLE_Y).apply()
+            return null
+        }
+        return x to y
     }
 
     /// Reads the Groq API key from the same config.json the Rust
@@ -245,7 +264,10 @@ class BulbulForegroundService : Service() {
     }
 
     private fun showBubble() {
-        if (bubbleView != null) return
+        if (bubbleView != null) {
+            Log.d(TAG, "showBubble called but bubbleView already exists — skipping")
+            return
+        }
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         windowManager = wm
 
@@ -261,30 +283,55 @@ class BulbulForegroundService : Service() {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
+        val sizePx = BUBBLE_SIZE_DP.dp(this)
         val params = WindowManager.LayoutParams(
-            BUBBLE_SIZE_DP.dp(this),
-            BUBBLE_SIZE_DP.dp(this),
+            sizePx,
+            sizePx,
             overlayType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // Prefer the last spot the user dragged the bubble to; on
-            // a fresh install drop it at the right edge, roughly above
-            // the IME top.
+            // Anchored near the top-left of the screen for first-run
+            // discoverability — the previous "right edge, mid-height"
+            // default was sometimes landing under the IME or off-
+            // screen on certain devices and people couldn't find the
+            // bubble at all. Saved drag positions still win after the
+            // first move.
             val saved = loadBubblePosition()
-            x = saved?.first
-                ?: (resources.displayMetrics.widthPixels * 0.78).toInt()
-            y = saved?.second
-                ?: (resources.displayMetrics.heightPixels * 0.55).toInt()
+            val screenW = resources.displayMetrics.widthPixels
+            val screenH = resources.displayMetrics.heightPixels
+            // Even after loadBubblePosition's validation, clamp once
+            // more here so a future rotation or screen-size change
+            // can't put us off-screen between load and addView.
+            // Leaves a one-bubble-width margin so the user always sees
+            // the full circle.
+            x = (saved?.first ?: dp(40)).coerceIn(0, screenW - sizePx)
+            y = (saved?.second ?: dp(120)).coerceIn(0, screenH - sizePx)
         }
 
-        view.bind(params, wm)
-        wm.addView(view, params)
-        bubbleView = view
-        bubbleParams = params
+        Log.i(
+            TAG,
+            "showBubble: addView size=${sizePx}px pos=(${params.x}, ${params.y}) " +
+                "screen=${resources.displayMetrics.widthPixels}x${resources.displayMetrics.heightPixels} " +
+                "overlayType=$overlayType"
+        )
+        try {
+            view.bind(params, wm)
+            wm.addView(view, params)
+            bubbleView = view
+            bubbleParams = params
+            Log.i(TAG, "showBubble: addView succeeded")
+        } catch (t: Throwable) {
+            // BadTokenException — overlay permission was revoked
+            // mid-session. Surface it so we know what's wrong.
+            Log.e(TAG, "showBubble: addView FAILED", t)
+        }
     }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     private fun hideBubble() {
         val v = bubbleView ?: return

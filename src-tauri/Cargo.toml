@@ -9,6 +9,19 @@ edition = "2021"
 name = "bulbul_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Tauri 2's `tauri::generate_context!()` decides at compile time
+# whether the webview loads frontendDist (the bundled dist/) or the
+# devUrl from tauri.conf.json. With the `custom-protocol` feature off
+# it bakes the devUrl in unconditionally — fine for `tauri dev` /
+# `npm run tauri dev`, but disastrous for any release binary built
+# outside the Tauri CLI (e.g. our manual `cargo build --release` for
+# Android, where the resulting APK tries to connect to a Vite dev
+# server that isn't running). The Tauri CLI's `tauri build` flips this
+# on automatically; everywhere else we have to opt in via
+# --features custom-protocol on the cargo command line.
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -48,6 +61,16 @@ cpal = "0.15"
 arboard = "3"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+
+# ----- Android-only dependencies ----------------------------------------
+# rustls 0.23 (pulled in transitively by reqwest's rustls-tls feature)
+# refuses to operate until a CryptoProvider is installed in the process
+# default registry — on Windows + macOS reqwest falls back to Schannel /
+# SecureTransport so this never trips, but on Android there is no
+# native TLS backend so any reqwest::Client::new() panics on the first
+# call with "No provider set". We install ring at startup in mobile.rs.
+[target.'cfg(target_os = "android")'.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 # Platform-specific dependencies. Top-level [dependencies] above must
 # stay portable across Windows + macOS (+ eventually Linux); anything that

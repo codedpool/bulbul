@@ -323,9 +323,36 @@ fn delete_note(_id: i64) -> Result<(), String> {
 
 // ---------- Settings + updater ----------
 
+/// Pings Groq's `/v1/models` with the user-provided key. 200 → key
+/// works. 401 → key is wrong. Anything else → surface the body so the
+/// user can see what Groq said (rate-limit, account suspended, etc.).
+/// Mirrors `groq::validate_key` on desktop; kept inline here so the
+/// mobile build doesn't pull in the entire desktop `groq` module
+/// (which depends on `hound`, `tokio` retry helpers, and the shared
+/// client cache that has different requirements on mobile).
 #[tauri::command]
-async fn validate_api_key(_api_key: String) -> Result<(), String> {
-    Err("API-key validation is not yet supported on Android.".to_string())
+async fn validate_api_key(api_key: String) -> Result<(), String> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err("API key is empty.".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client init failed: {e}"))?;
+    let resp = client
+        .get("https://api.groq.com/openai/v1/models")
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Err(format!("Groq rejected key ({status}): {body}"))
+    }
 }
 
 #[tauri::command]
@@ -354,6 +381,17 @@ fn complete_onboarding() -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // rustls 0.23 (transitively pulled in by reqwest's rustls-tls
+    // feature) refuses to operate until a CryptoProvider is installed
+    // in the process-default registry. On Windows + macOS reqwest
+    // falls back to a native TLS backend so this never trips, but on
+    // Android there is no native backend — the first reqwest call
+    // (which Tauri's IPC layer makes internally on the first
+    // invoke) panics with "No provider set" and aborts the process.
+    // Install ring early; .ok() so a re-init from a hot-reload or a
+    // duplicate caller doesn't itself panic.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
