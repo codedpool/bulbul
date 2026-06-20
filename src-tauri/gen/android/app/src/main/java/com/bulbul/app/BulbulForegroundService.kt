@@ -51,12 +51,16 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.concurrent.thread
 
 class BulbulForegroundService : Service() {
 
     private var windowManager: WindowManager? = null
     private var bubbleView: BubbleView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
+    private var recorder: AudioRecorder? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -65,6 +69,7 @@ class BulbulForegroundService : Service() {
         Log.i(TAG, "service onCreate")
         createNotificationChannel()
         startInForeground()
+        recorder = AudioRecorder(this)
         showBubble()
     }
 
@@ -78,8 +83,74 @@ class BulbulForegroundService : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "service onDestroy")
+        // Drop any in-flight recording on the floor so the mic
+        // releases — we don't want a half-finished clip lingering
+        // after the service dies.
+        try { recorder?.stop() } catch (_: Throwable) {}
+        recorder = null
         hideBubble()
         super.onDestroy()
+    }
+
+    /// Tap-to-toggle: first tap starts the recorder, second tap stops
+    /// it and writes the WAV to the app's external files dir
+    /// (filesDir/recordings/{epoch_ms}.wav). Phase 6b replaces the
+    /// disk write with a Groq Whisper POST + AccessibilityService
+    /// injection — keeping the disk write right now so the user can
+    /// pull the file off the device and confirm capture works.
+    private fun onBubbleTap() {
+        val r = recorder ?: return
+        if (r.isRecording()) {
+            val wav = r.stop()
+            bubbleView?.setRecording(false)
+            if (wav != null) {
+                // Disk I/O off the main thread.
+                thread(name = "BulbulRecordingWriter", isDaemon = true) {
+                    writeRecording(wav)
+                }
+            }
+        } else {
+            val ok = r.start()
+            if (ok) {
+                bubbleView?.setRecording(true)
+            } else {
+                Log.w(TAG, "recorder failed to start — RECORD_AUDIO probably not granted")
+            }
+        }
+    }
+
+    private fun writeRecording(wav: ByteArray) {
+        try {
+            val dir = File(filesDir, "recordings").apply { mkdirs() }
+            val file = File(dir, "${System.currentTimeMillis()}.wav")
+            FileOutputStream(file).use { it.write(wav) }
+            Log.i(TAG, "wrote ${wav.size} bytes to ${file.absolutePath}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "writing recording failed", t)
+        }
+    }
+
+    /// Long-press: hold-to-talk. Press starts; release stops + writes.
+    /// We map the press half here; the BubbleView fires release once
+    /// it sees ACTION_UP after a long-press fired.
+    private fun onBubbleLongPress() {
+        val r = recorder ?: return
+        if (!r.isRecording()) {
+            if (r.start()) bubbleView?.setRecording(true)
+        }
+    }
+
+    private fun onBubbleHoldReleased() {
+        val r = recorder ?: return
+        if (r.isRecording()) {
+            val wav = r.stop()
+            bubbleView?.setRecording(false)
+            if (wav != null) {
+                thread(name = "BulbulRecordingWriter", isDaemon = true) {
+                    writeRecording(wav)
+                }
+            }
+        }
     }
 
     private fun startInForeground() {
@@ -125,7 +196,11 @@ class BulbulForegroundService : Service() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         windowManager = wm
 
-        val view = BubbleView(this)
+        val view = BubbleView(this, BubbleCallbacks(
+            onTap = ::onBubbleTap,
+            onLongPressDown = ::onBubbleLongPress,
+            onLongPressUp = ::onBubbleHoldReleased,
+        ))
         val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -191,13 +266,24 @@ class BulbulForegroundService : Service() {
     }
 }
 
+/// Callbacks the bubble fires into the foreground service. Kept as a
+/// data class with named lambdas so the wiring at the call site reads
+/// declaratively (`onTap = ...`) and so the service can pass method
+/// references in directly.
+private data class BubbleCallbacks(
+    val onTap: () -> Unit,
+    val onLongPressDown: () -> Unit,
+    val onLongPressUp: () -> Unit,
+)
+
 /// The floating bubble itself. Draws a filled circle in onDraw and
-/// owns the touch logic: tap → toggle, long-press → start hold-mode,
-/// drag → reposition. For Phase 5 every action just logs; Phase 6
-/// wires them into the audio path.
-private class BubbleView(context: Context) : View(context) {
+/// owns the touch logic: tap → toggle, long-press → start hold-mode
+/// (fires onLongPressDown, then onLongPressUp on release), drag →
+/// reposition. The "recording" visual state swaps the fill to red so
+/// the user has unambiguous feedback while audio is being captured.
+private class BubbleView(context: Context, private val cb: BubbleCallbacks) : View(context) {
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#3B82F6") // matches Bulbul's primary blue
+        color = COLOR_IDLE
         style = Paint.Style.FILL
     }
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -215,20 +301,38 @@ private class BubbleView(context: Context) : View(context) {
     private var dragInitialTouchY = 0f
     private var dragging = false
 
+    /// True between the long-press detector firing and ACTION_UP.
+    /// Used to suppress the singleTapConfirmed callback for the same
+    /// gesture and to know to fire onLongPressUp on release.
+    private var inLongPress = false
+
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            Log.d(TAG, "tap")
+            // GestureDetector calls this even if a long-press already
+            // fired; gate it so hold gestures don't also toggle.
+            if (!inLongPress) cb.onTap()
             return true
         }
 
         override fun onLongPress(e: MotionEvent) {
-            Log.d(TAG, "long-press")
+            inLongPress = true
+            cb.onLongPressDown()
         }
     })
 
     fun bind(p: WindowManager.LayoutParams, w: WindowManager) {
         params = p
         wm = w
+    }
+
+    /// Flip the fill colour so the user can see when capture is active.
+    /// Posted to the view's handler so it's safe to call from any
+    /// thread (the recorder lives off the main thread).
+    fun setRecording(active: Boolean) {
+        post {
+            fillPaint.color = if (active) COLOR_RECORDING else COLOR_IDLE
+            invalidate()
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -251,6 +355,7 @@ private class BubbleView(context: Context) : View(context) {
                 dragInitialTouchX = event.rawX
                 dragInitialTouchY = event.rawY
                 dragging = false
+                inLongPress = false
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - dragInitialTouchX
@@ -269,6 +374,10 @@ private class BubbleView(context: Context) : View(context) {
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (inLongPress) {
+                    cb.onLongPressUp()
+                    inLongPress = false
+                }
                 if (dragging) {
                     Log.d(TAG, "drag end at (${p.x}, ${p.y})")
                     dragging = false
@@ -285,6 +394,10 @@ private class BubbleView(context: Context) : View(context) {
     companion object {
         private const val TAG = "BulbulBubble"
         private const val TOUCH_SLOP_PX = 12
+        // Bulbul's primary blue when idle; cherry red when capturing,
+        // so a glance at the screen tells you whether audio is live.
+        private val COLOR_IDLE = Color.parseColor("#3B82F6")
+        private val COLOR_RECORDING = Color.parseColor("#EF4444")
     }
 }
 
