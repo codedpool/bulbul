@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Desktop-only capabilities — global shortcut for OS-level hotkeys",
+  "platforms": ["windows", "linux", "macOS"],
+  "windows": ["main", "overlay", "scratchpad"],
+  "permissions": [
+    "global-shortcut:default"
+  ]
+}

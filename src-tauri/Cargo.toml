@@ -18,13 +18,6 @@ tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
-# OS-level RegisterHotKey, used because rdev's low-level hook is suppressed
-# when Bulbul's own webview has focus.
-tauri-plugin-global-shortcut = "2"
-# Ensures only one Bulbul process can run at a time. Without this, two
-# instances both watch the modifier-chord keyboard state, both fire on
-# the same hotkey press, and writes to the shared SQLite + config race.
-tauri-plugin-single-instance = "2"
 
 # Local persistence (activity log + V2 data)
 rusqlite = { version = "0.31", features = ["bundled"] }
@@ -34,16 +27,27 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Audio
-cpal = "0.15"
+# WAV encoder — used to package recorded audio for Groq's STT endpoint
 hound = "3.5"
 
 # HTTP / Groq
 reqwest = { version = "0.12", default-features = false, features = ["multipart", "json", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 
-# Clipboard
+# ----- Desktop-only dependencies -----------------------------------------
+# Audio capture, clipboard, OS hotkeys, and single-instance guarding are
+# all desktop-only concepts. On Android, audio is recorded via Kotlin
+# AudioRecord and bridged through JNI; text injection goes through the
+# Accessibility Service rather than a clipboard; "hotkeys" are gestures
+# on the floating bubble; and only one Activity exists per process by
+# Android's process model. Gating these out of the Android build keeps
+# the dependency graph small and removes a wall of compile errors from
+# crates that simply don't have an Android target.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+cpal = "0.15"
 arboard = "3"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
 
 # Platform-specific dependencies. Top-level [dependencies] above must
 # stay portable across Windows + macOS (+ eventually Linux); anything that
