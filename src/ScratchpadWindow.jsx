@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ConfirmDialog from "./components/ConfirmDialog.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
+import { IS_MAC } from "./platform.js";
 import "./ScratchpadWindow.css";
 
 const AUTOSAVE_DELAY_MS = 600;
@@ -335,6 +336,13 @@ export default function ScratchpadWindow() {
 
 function SpTitleBar() {
   const win = getCurrentWindow();
+  // On macOS the OS owns the traffic-light controls — render an empty
+  // drag region so the window stays draggable but we don't duplicate
+  // the OS buttons. Cmd+W / red traffic-light close still fires
+  // CloseRequested in Rust, which hides the window.
+  if (IS_MAC) {
+    return <div className="sp-titlebar" data-tauri-drag-region />;
+  }
   return (
     <div className="sp-titlebar" data-tauri-drag-region>
       <div className="sp-titlebar-spacer" data-tauri-drag-region />

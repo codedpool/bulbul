@@ -135,6 +135,15 @@ body, html, #root {
   padding-left: 6px;
 }
 
+/* macOS owns the window chrome — the traffic lights are positioned by
+   AppKit at roughly 12px from the left edge and span ~70px. Push our
+   own titlebar controls right so they don't sit underneath. The custom
+   Win-style min/max/close buttons are hidden in JSX on Mac; only the
+   sidebar / theme toggles remain. */
+.platform-mac .titlebar-left {
+  padding-left: 80px;
+}
+
 .titlebar-spacer {
   flex: 1;
   height: 32px; /* still draggable, just invisible */

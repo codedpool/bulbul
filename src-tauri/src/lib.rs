@@ -1146,6 +1146,14 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // controls) — we suspect a Tauri 2 + WebView2 quirk around lazy window
     // creation in dev mode. Building it during boot gives the WebView2 host
     // time to fully initialize before the user ever interacts with it.
+    // Decorations: false on Win/Linux so our custom React TitleBar
+    // renders a borderless look matching the dashboard. macOS keeps
+    // decorations on so the traffic lights live where Mac users expect.
+    #[cfg(target_os = "macos")]
+    let decorations = true;
+    #[cfg(not(target_os = "macos"))]
+    let decorations = false;
+
     let window = WebviewWindowBuilder::new(
         app,
         "scratchpad",
@@ -1154,7 +1162,7 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     .title("Bulbul Scratchpad")
     .inner_size(760.0, 540.0)
     .min_inner_size(520.0, 380.0)
-    .decorations(false)
+    .decorations(decorations)
     .center()
     .resizable(true)
     .maximizable(false)
@@ -1162,7 +1170,9 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     .visible(false)
     .build()?;
 
-    // Intercept the X button so the window persists across opens.
+    // Intercept the close button (X on Win/Linux, red traffic light on
+    // macOS) so the window persists across opens. Cmd+Q / RunEvent::
+    // ExitRequested goes through a separate code path and still quits.
     let win_handle = window.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
@@ -1680,6 +1690,18 @@ pub fn run() {
             setup_scratchpad_window(&handle)?;
 
             if let Some(window) = handle.get_webview_window("main") {
+                // macOS wants the native title bar + traffic lights — those
+                // are the affordances Mac users actually look for. The
+                // window is built `decorations: false` (Win/Linux ship a
+                // custom title bar to match their borderless aesthetic),
+                // so we flip decorations back on at runtime for Mac only.
+                // The custom React TitleBar component hides its
+                // Win-style min/max/close buttons under .platform-mac
+                // and leaves leading padding for the traffic lights.
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = window.set_decorations(true);
+                }
                 let cfg = handle.state::<AppState>().config.clone();
                 let want_show = {
                     let c = cfg.lock();
