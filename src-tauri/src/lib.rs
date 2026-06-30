@@ -1763,8 +1763,24 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Bulbul");
+        .build(tauri::generate_context!())
+        .expect("error while building Bulbul")
+        .run(|app, event| {
+            // macOS: when the user closes the window (red traffic light)
+            // we call `prevent_close` + `window.hide()` — the process keeps
+            // running so dictation still works. Without an explicit Reopen
+            // handler, though, clicking the dock icon afterwards does
+            // nothing because Tauri doesn't auto-show hidden windows. Mac
+            // users (rightly) expect dock-icon click to bring the app
+            // forward, so we re-show the main window here. Same code path
+            // covers Cmd+Tab activation that lands on Bulbul when no
+            // window is visible.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                show_settings(app);
+            }
+            let _ = (app, event);
+        });
 }
 
 fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
