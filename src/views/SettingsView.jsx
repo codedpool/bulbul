@@ -75,6 +75,7 @@ export default function SettingsView({
   const [keyState, setKeyState] = useState("idle");
   const [keyError, setKeyError] = useState("");
   const [recordingHotkeyFor, setRecordingHotkeyFor] = useState(null);
+  const [recordingError, setRecordingError] = useState("");
   const [updateState, setUpdateState] = useState({ state: "idle", message: "" });
   const paneRef = useRef(null);
 
@@ -107,34 +108,119 @@ export default function SettingsView({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose, recordingHotkeyFor]);
 
-  // Hotkey recording. Captures any key combo and writes it to either
-  // hotkey or polish_hotkey based on which row called us.
+  // Hotkey recording. Captures any key combo (incl. modifier-only chords
+  // like Ctrl+Win) and writes it to either hotkey or polish_hotkey based
+  // on which row called us.
+  //
+  // State machine, why it's not "just read e.code on keydown":
+  //   * Modifier-only chords (Ctrl+Win, Alt+Win) have NO non-modifier
+  //     key. To record one we have to watch the sequence — track which
+  //     modifiers were held at peak, then commit on the final release
+  //     IF the user never pressed a non-modifier in between.
+  //   * Unrecognized keys (PrintScreen, ScrollLock, Eject, etc.) used
+  //     to silently abort the recording, leaving the user thinking
+  //     the feature was broken. Now we keep recording and surface the
+  //     unsupported-key message inline.
+  //   * Accidental single-modifier taps (the user hits Ctrl, thinks,
+  //     then lifts) reset the peak instead of committing — committing
+  //     a one-modifier chord would register a hotkey that triggers on
+  //     every plain Ctrl press, which is unusable.
   useEffect(() => {
     if (!recordingHotkeyFor) return;
-    const handler = (e) => {
-      if (e.key === "Escape") {
-        e.stopImmediatePropagation();
-        setRecordingHotkeyFor(null);
-        return;
-      }
-      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      const parts = [];
-      if (e.ctrlKey) parts.push("Ctrl");
-      if (e.shiftKey) parts.push("Shift");
-      if (e.altKey) parts.push("Alt");
-      if (e.metaKey) parts.push("Win");
-      const k = domKeyToName(e.code);
-      if (!k) { setRecordingHotkeyFor(null); return; }
-      parts.push(k);
-      const combo = parts.join("+");
+    setRecordingError("");
+    // Peak modifier set (high-water mark; never decreases until the
+    // sequence resets after a stray single-mod tap).
+    let peak = { ctrl: false, shift: false, alt: false, meta: false };
+    let nonModPressed = false;
+
+    const reset = () => {
+      peak = { ctrl: false, shift: false, alt: false, meta: false };
+      nonModPressed = false;
+    };
+
+    const commit = (combo) => {
       const field = recordingHotkeyFor === "polish" ? "polish_hotkey" : "hotkey";
       updateConfig({ ...config, [field]: combo });
       setRecordingHotkeyFor(null);
+      setRecordingError("");
     };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        setRecordingHotkeyFor(null);
+        setRecordingError("");
+        return;
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      // Update high-water mark with the modifier state seen during
+      // this event. Modifier keys themselves also set their flag on
+      // e.<mod>Key during their own keydown.
+      peak = {
+        ctrl: e.ctrlKey || peak.ctrl,
+        shift: e.shiftKey || peak.shift,
+        alt: e.altKey || peak.alt,
+        meta: e.metaKey || peak.meta,
+      };
+
+      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+        // Pure modifier press — wait for either a non-modifier press
+        // (regular combo) or the final release (modifier-only chord).
+        return;
+      }
+
+      nonModPressed = true;
+      const k = domKeyToName(e.code);
+      if (!k) {
+        setRecordingError(
+          `"${e.key || e.code}" isn't supported as a hotkey. Try a letter, digit, function key, arrow, or punctuation.`,
+        );
+        return;
+      }
+      const parts = [];
+      if (peak.ctrl) parts.push("Ctrl");
+      if (peak.shift) parts.push("Shift");
+      if (peak.alt) parts.push("Alt");
+      if (peak.meta) parts.push("Win");
+      parts.push(k);
+      commit(parts.join("+"));
+    };
+
+    const onKeyUp = (e) => {
+      // If a non-modifier was pressed during this sequence, the combo
+      // was already committed on keydown — ignore the trailing release.
+      if (nonModPressed) return;
+      // Only meaningful when all modifiers have just been released.
+      const stillHeld = e.ctrlKey || e.shiftKey || e.altKey || e.metaKey;
+      if (stillHeld) return;
+      const count =
+        (peak.ctrl ? 1 : 0) +
+        (peak.shift ? 1 : 0) +
+        (peak.alt ? 1 : 0) +
+        (peak.meta ? 1 : 0);
+      if (count < 2) {
+        // Stray single-modifier tap — treat as noise and rearm so the
+        // user can keep trying without re-clicking "Change".
+        reset();
+        return;
+      }
+      const parts = [];
+      if (peak.ctrl) parts.push("Ctrl");
+      if (peak.shift) parts.push("Shift");
+      if (peak.alt) parts.push("Alt");
+      if (peak.meta) parts.push("Win");
+      commit(parts.join("+"));
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
   }, [recordingHotkeyFor, config, updateConfig]);
 
   if (!open || !config) return null;
@@ -224,6 +310,8 @@ export default function SettingsView({
                 config={config}
                 recordingHotkeyFor={recordingHotkeyFor}
                 setRecordingHotkeyFor={setRecordingHotkeyFor}
+                recordingError={recordingError}
+                clearRecordingError={() => setRecordingError("")}
               />
             )}
             {active === "personalization" && (
@@ -354,7 +442,21 @@ function PaneAccount({ hasKey, draftKey, setDraftKey, saveKey, keyState, keyErro
   );
 }
 
-function PaneHotkeys({ config, recordingHotkeyFor, setRecordingHotkeyFor }) {
+function PaneHotkeys({
+  config,
+  recordingHotkeyFor,
+  setRecordingHotkeyFor,
+  recordingError,
+  clearRecordingError,
+}) {
+  const startRecording = (which) => {
+    clearRecordingError?.();
+    setRecordingHotkeyFor(which);
+  };
+  const cancelRecording = () => {
+    clearRecordingError?.();
+    setRecordingHotkeyFor(null);
+  };
   return (
     <>
       <Row
@@ -365,8 +467,9 @@ function PaneHotkeys({ config, recordingHotkeyFor, setRecordingHotkeyFor }) {
         <HotkeyControl
           combo={config.hotkey}
           isRecording={recordingHotkeyFor === "dictation"}
-          onStart={() => setRecordingHotkeyFor("dictation")}
-          onCancel={() => setRecordingHotkeyFor(null)}
+          error={recordingHotkeyFor === "dictation" ? recordingError : ""}
+          onStart={() => startRecording("dictation")}
+          onCancel={cancelRecording}
         />
       </Row>
       <Row
@@ -377,8 +480,9 @@ function PaneHotkeys({ config, recordingHotkeyFor, setRecordingHotkeyFor }) {
         <HotkeyControl
           combo={config.polish_hotkey || "Shift+Alt+P"}
           isRecording={recordingHotkeyFor === "polish"}
-          onStart={() => setRecordingHotkeyFor("polish")}
-          onCancel={() => setRecordingHotkeyFor(null)}
+          error={recordingHotkeyFor === "polish" ? recordingError : ""}
+          onStart={() => startRecording("polish")}
+          onCancel={cancelRecording}
         />
       </Row>
       <p className="muted small settings-note">
@@ -554,18 +658,27 @@ function ToggleRow({ title, hint, checked, onChange }) {
   );
 }
 
-function HotkeyControl({ combo, isRecording, onStart, onCancel }) {
+function HotkeyControl({ combo, isRecording, error, onStart, onCancel }) {
   return (
     <div className="row hotkey-row">
       <div className="hotkey-display">
-        {isRecording
-          ? <span className="muted">Press a key combo… (Esc to cancel)</span>
-          : formatHotkey(combo).map((part, i) => (
-              <span key={i}>
-                {i > 0 && <span className="plus">+</span>}
-                <kbd>{part}</kbd>
-              </span>
-            ))}
+        {isRecording ? (
+          error ? (
+            <span className="hotkey-error">{error}</span>
+          ) : (
+            <span className="muted">
+              Press a key combo… Modifier-only chords (Ctrl+Win, Alt+Win)
+              also work — just release the keys. Esc to cancel.
+            </span>
+          )
+        ) : (
+          formatHotkey(combo).map((part, i) => (
+            <span key={i}>
+              {i > 0 && <span className="plus">+</span>}
+              <kbd>{part}</kbd>
+            </span>
+          ))
+        )}
       </div>
       <button onClick={isRecording ? onCancel : onStart}>
         {isRecording ? "Cancel" : "Change"}
@@ -658,14 +771,46 @@ function formatHotkey(s) {
   return [...mods, ...keys];
 }
 
+// Map a DOM `KeyboardEvent.code` to the canonical key name that the Rust
+// hotkey layer (hotkey.rs: normalize_key_name, key_name_to_code,
+// key_name_to_vk) understands. Returning null means "this physical key
+// isn't supported as a hotkey" — the recorder surfaces that to the user
+// instead of silently aborting.
+//
+// The names produced here must round-trip through the backend's
+// normalize_key_name unchanged, otherwise the saved config drifts
+// away from what key_name_to_code can resolve.
 function domKeyToName(code) {
   if (!code) return null;
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
-  if (code === "Space") return "Space";
   if (/^F\d+$/.test(code)) return code;
-  if (code === "Enter") return "Enter";
-  if (code === "Backspace") return "Backspace";
-  if (code === "Tab") return "Tab";
-  return null;
+  switch (code) {
+    case "Space": return "Space";
+    case "Enter": return "Enter";
+    case "Backspace": return "Backspace";
+    case "Tab": return "Tab";
+    case "ArrowUp": return "Up";
+    case "ArrowDown": return "Down";
+    case "ArrowLeft": return "Left";
+    case "ArrowRight": return "Right";
+    case "Insert": return "Insert";
+    case "Delete": return "Delete";
+    case "Home": return "Home";
+    case "End": return "End";
+    case "PageUp": return "PageUp";
+    case "PageDown": return "PageDown";
+    case "Semicolon": return ";";
+    case "Quote": return "'";
+    case "Comma": return ",";
+    case "Period": return ".";
+    case "Slash": return "/";
+    case "Backslash": return "\\";
+    case "BracketLeft": return "[";
+    case "BracketRight": return "]";
+    case "Minus": return "-";
+    case "Equal": return "=";
+    case "Backquote": return "`";
+    default: return null;
+  }
 }
