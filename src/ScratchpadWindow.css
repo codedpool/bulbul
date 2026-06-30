@@ -40,7 +40,7 @@ html, body, #root {
   overflow: hidden;
 }
 .platform-mac .sp-titlebar {
-  padding-left: 80px; /* clear of the floating traffic lights */
+  padding-left: 96px; /* clear of the floating traffic lights (cluster ends ~78px in) */
 }
 
 /* ─────────── Custom title bar (matches main app) ─────────── */
