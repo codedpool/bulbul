@@ -127,27 +127,31 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
           >
             {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
           </button>
-          <button
-            className="onb-tb-btn"
-            onClick={() => win.minimize().catch(() => {})}
-            aria-label="Minimize"
-            title="Minimize"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            </svg>
-          </button>
-          <button
-            className="onb-tb-btn onb-tb-close"
-            onClick={() => win.close().catch(() => {})}
-            aria-label="Close"
-            title="Close"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-              <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            </svg>
-          </button>
+          {!IS_MAC && (
+            <>
+              <button
+                className="onb-tb-btn"
+                onClick={() => win.minimize().catch(() => {})}
+                aria-label="Minimize"
+                title="Minimize"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                </svg>
+              </button>
+              <button
+                className="onb-tb-btn onb-tb-close"
+                onClick={() => win.close().catch(() => {})}
+                aria-label="Close"
+                title="Close"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                  <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                </svg>
+              </button>
+            </>
+          )}
         </div>
       </header>
 

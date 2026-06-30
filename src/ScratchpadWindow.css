@@ -26,6 +26,23 @@ html, body, #root {
   background: var(--bg);
 }
 
+/* macOS: window is borderless + transparent + TitleBarStyle::Overlay so
+   the OS traffic lights float over our content. Let the body show
+   through and round the inner shell so the visible window edge is
+   rounded — matches the main dashboard. */
+.platform-mac html,
+.platform-mac body,
+.platform-mac #root {
+  background: transparent;
+}
+.platform-mac .sp-shell {
+  border-radius: 10px;
+  overflow: hidden;
+}
+.platform-mac .sp-titlebar {
+  padding-left: 80px; /* clear of the floating traffic lights */
+}
+
 /* ─────────── Custom title bar (matches main app) ─────────── */
 
 .sp-titlebar {

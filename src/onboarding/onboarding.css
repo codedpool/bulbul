@@ -19,6 +19,11 @@
   border-radius: 10px;
   overflow: hidden;
 }
+/* Push the brand mark + dots clear of the OS traffic lights that
+   float at the top-left of the window in TitleBarStyle::Overlay mode. */
+.platform-mac .onb-top {
+  padding-left: 90px;
+}
 
 .onb-shell * { box-sizing: border-box; }
 .onb-shell button,
