@@ -66,6 +66,12 @@ features = [
 ]
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# CGEvent-driven keystroke synthesis for inject/macos.rs. Replaces the
+# osascript+System Events path that needed the AppleEvents TCC prompt;
+# enigo posts events directly through CGEventPost which only needs the
+# Accessibility permission we already require for the global hotkey
+# polling. Matches what cjpais/handy ships in production.
+enigo = "0.6.1"
 # NSWorkspace + NSRunningApplication for foreground-app detection
 # (window_info/macos.rs).
 objc2-app-kit = "0.3"
