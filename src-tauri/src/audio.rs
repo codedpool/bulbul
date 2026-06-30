@@ -3,24 +3,72 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use parking_lot::Mutex;
 use std::io::Cursor;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
-/// Captures audio from the system default input device.
-/// Each call to start() resolves the default device fresh, so users can
-/// switch headsets/mics between recordings without restarting the app.
-pub struct Recorder {
-    inner: Arc<Mutex<Inner>>,
-    _stream: Stream,
+/// Shared state between the cpal input callback and the orchestrator.
+/// The callback always fires while the stream is playing, but only
+/// pushes samples when `recording` is set — that way starting and
+/// stopping a dictation is just a flag flip plus a fast WASAPI
+/// `Start`/`Stop`, with no per-press device re-open.
+struct SessionState {
+    recording: AtomicBool,
+    samples: Mutex<Vec<i16>>,
+}
+
+/// Module-singleton persistent audio. Built once on first use (or at
+/// startup via `prewarm`); the stream stays alive for the lifetime of
+/// the process. Between dictations the stream is paused, so the
+/// Windows microphone-in-use indicator should only show while a
+/// recording is actually in flight.
+struct PersistentAudio {
+    stream: Stream,
+    state: Arc<SessionState>,
     sample_rate: u32,
     channels: u16,
 }
 
-struct Inner {
-    samples: Vec<i16>,
+// SAFETY: cpal's Windows (WASAPI) Stream is internally thread-safe — the
+// audio callback runs on a system audio thread, and play/pause are
+// COM-protected. Holding it behind a Mutex<Option<...>> gives us
+// exclusive access on the control side. We need the manual Send impl
+// because cpal::Stream is platform-conditionally Send and the type
+// system can't see the cfg.
+unsafe impl Send for PersistentAudio {}
+
+static PERSISTENT: OnceLock<Mutex<Option<PersistentAudio>>> = OnceLock::new();
+
+fn slot() -> &'static Mutex<Option<PersistentAudio>> {
+    PERSISTENT.get_or_init(|| Mutex::new(None))
 }
 
-impl Recorder {
-    pub fn start() -> Result<Self> {
+/// Pre-warm the audio stream during app startup so the first dictation
+/// doesn't pay the WASAPI initialisation tax (~300–700 ms on observed
+/// hardware). Idempotent. Failures are logged but not fatal — we'll
+/// retry lazily on the first press.
+pub fn prewarm() {
+    let t0 = Instant::now();
+    match ensure_built() {
+        Ok(_) => tracing::info!(
+            "audio prewarm complete in {}ms",
+            t0.elapsed().as_millis()
+        ),
+        Err(e) => tracing::warn!("audio prewarm failed (will retry on first press): {e:#}"),
+    }
+}
+
+fn ensure_built() -> Result<()> {
+    let mut g = slot().lock();
+    if g.is_some() {
+        return Ok(());
+    }
+    *g = Some(PersistentAudio::build()?);
+    Ok(())
+}
+
+impl PersistentAudio {
+    fn build() -> Result<Self> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -30,7 +78,7 @@ impl Recorder {
             .default_input_config()
             .context("could not query default input config")?;
         tracing::info!(
-            "recording from device {:?} @ {} Hz, {} channels, {:?}",
+            "audio: building persistent stream from device {:?} @ {} Hz, {} channels, {:?}",
             name,
             config.sample_rate().0,
             config.channels(),
@@ -40,22 +88,26 @@ impl Recorder {
         let sample_rate = config.sample_rate().0;
         let channels = config.channels();
         let stream_config: StreamConfig = config.clone().into();
-        let inner = Arc::new(Mutex::new(Inner {
-            samples: Vec::with_capacity((sample_rate as usize) * 4),
-        }));
+        let state = Arc::new(SessionState {
+            recording: AtomicBool::new(false),
+            samples: Mutex::new(Vec::with_capacity((sample_rate as usize) * 4)),
+        });
 
         let err_fn = |err| tracing::error!("audio stream error: {err}");
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
-                let inner = inner.clone();
+                let st = state.clone();
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[f32], _| {
-                        let mut g = inner.lock();
-                        g.samples.reserve(data.len());
+                        if !st.recording.load(Ordering::Acquire) {
+                            return;
+                        }
+                        let mut g = st.samples.lock();
+                        g.reserve(data.len());
                         for &s in data {
                             let clamped = s.clamp(-1.0, 1.0);
-                            g.samples.push((clamped * i16::MAX as f32) as i16);
+                            g.push((clamped * i16::MAX as f32) as i16);
                         }
                     },
                     err_fn,
@@ -63,26 +115,31 @@ impl Recorder {
                 )?
             }
             SampleFormat::I16 => {
-                let inner = inner.clone();
+                let st = state.clone();
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[i16], _| {
-                        let mut g = inner.lock();
-                        g.samples.extend_from_slice(data);
+                        if !st.recording.load(Ordering::Acquire) {
+                            return;
+                        }
+                        st.samples.lock().extend_from_slice(data);
                     },
                     err_fn,
                     None,
                 )?
             }
             SampleFormat::U16 => {
-                let inner = inner.clone();
+                let st = state.clone();
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[u16], _| {
-                        let mut g = inner.lock();
-                        g.samples.reserve(data.len());
+                        if !st.recording.load(Ordering::Acquire) {
+                            return;
+                        }
+                        let mut g = st.samples.lock();
+                        g.reserve(data.len());
                         for &s in data {
-                            g.samples.push((s as i32 - i16::MAX as i32) as i16);
+                            g.push((s as i32 - i16::MAX as i32) as i16);
                         }
                     },
                     err_fn,
@@ -92,21 +149,74 @@ impl Recorder {
             fmt => return Err(anyhow!("unsupported sample format: {fmt:?}")),
         };
 
-        stream.play().context("starting input stream")?;
-
+        // Initial play→pause warms WASAPI fully — subsequent play() is
+        // then just IAudioClient::Start (the fast path), not the full
+        // create-and-negotiate flow that dominated press→listening.
+        stream
+            .play()
+            .context("warming the persistent stream (initial play)")?;
+        stream
+            .pause()
+            .context("warming the persistent stream (initial pause)")?;
         Ok(Self {
-            inner,
-            _stream: stream,
+            stream,
+            state,
             sample_rate,
             channels,
+        })
+    }
+}
+
+/// Public recorder facade. Holds a clone of the persistent state and
+/// the metadata needed to encode the final WAV; the cpal stream itself
+/// lives in the static slot and is never dropped between dictations.
+pub struct Recorder {
+    state: Arc<SessionState>,
+    sample_rate: u32,
+    channels: u16,
+}
+
+impl Recorder {
+    pub fn start() -> Result<Self> {
+        let t0 = Instant::now();
+        ensure_built()?;
+        let g = slot().lock();
+        let pa = g.as_ref().expect("persistent audio present after ensure_built");
+        // Reset session state before unpausing so the callback never sees
+        // a stale buffer on its first invocation of the new session.
+        pa.state.samples.lock().clear();
+        pa.state.recording.store(true, Ordering::Release);
+        let play_started = Instant::now();
+        pa.stream.play().context("stream.play")?;
+        tracing::debug!(
+            "audio: session start — ensure_built+lock={}µs stream.play={}µs",
+            play_started.duration_since(t0).as_micros(),
+            play_started.elapsed().as_micros(),
+        );
+        Ok(Self {
+            state: pa.state.clone(),
+            sample_rate: pa.sample_rate,
+            channels: pa.channels,
         })
     }
 
     /// Stop recording and return WAV bytes plus signal metrics.
     pub fn finish(self) -> Result<RecordingResult> {
-        // Dropping _stream stops capture. Pull samples out.
-        drop(self._stream);
-        let samples = std::mem::take(&mut self.inner.lock().samples);
+        // Stop the cpal callback from accepting more samples, then pause
+        // the WASAPI stream so the mic-indicator goes back to "off"
+        // between dictations. We drain the session buffer afterwards
+        // because the callback may still be mid-write when we flip the
+        // recording flag.
+        {
+            let g = slot().lock();
+            if let Some(pa) = g.as_ref() {
+                pa.state.recording.store(false, Ordering::Release);
+                if let Err(e) = pa.stream.pause() {
+                    tracing::warn!("audio: stream.pause failed: {e}");
+                }
+            }
+        }
+        let samples = std::mem::take(&mut *self.state.samples.lock());
 
         // Downmix to mono if needed.
         let mono: Vec<i16> = if self.channels <= 1 {
@@ -133,6 +243,7 @@ impl Recorder {
         // one without the other.
         let peak_dbfs = compute_peak_dbfs(&mono);
         let rms_dbfs = compute_rms_dbfs(&mono);
+        let max_window_rms_dbfs = compute_max_window_rms_dbfs(&mono, self.sample_rate);
         let seconds = if self.sample_rate == 0 {
             0.0
         } else {
@@ -183,12 +294,13 @@ impl Recorder {
             wav: buf.into_inner(),
             peak_dbfs,
             rms_dbfs,
+            max_window_rms_dbfs,
             seconds,
         })
     }
 
     pub fn captured_seconds(&self) -> f32 {
-        let len = self.inner.lock().samples.len() as f32;
+        let len = self.state.samples.lock().len() as f32;
         if self.sample_rate == 0 {
             0.0
         } else {
@@ -201,6 +313,11 @@ pub struct RecordingResult {
     pub wav: Vec<u8>,
     pub peak_dbfs: f32,
     pub rms_dbfs: f32,
+    /// RMS of the loudest 30 ms window in the clip. This is what the
+    /// silence gate should look at — clip-wide RMS gets dragged down by
+    /// leading/trailing dead air, which penalises slow speakers and
+    /// distant talkers even when their actual speech is clearly audible.
+    pub max_window_rms_dbfs: f32,
     pub seconds: f32,
 }
 
@@ -237,6 +354,56 @@ fn compute_rms_dbfs(samples: &[i16]) -> f32 {
         return -120.0;
     }
     (20.0 * rms.log10()) as f32
+}
+
+/// RMS in dBFS of the loudest 30 ms window in the clip. Sliding hop is
+/// 15 ms (50 % overlap) so a voiced moment never falls between cracks.
+///
+/// We need this because the silence gate that runs over the recording
+/// can't use the clip-wide RMS — a user who speaks softly from across
+/// the room and pauses between words has a clip whose average energy is
+/// dominated by silence, even when the actual speech is plainly audible
+/// in any individual window. The maximum window RMS reflects the
+/// *loudest moment* in the clip, which is what we actually care about
+/// when deciding "is there any speech here at all?".
+///
+/// Returns -120 dBFS for empty / zero buffers so the caller can compare
+/// against a fixed threshold without special-casing.
+fn compute_max_window_rms_dbfs(samples: &[i16], sample_rate: u32) -> f32 {
+    if samples.is_empty() || sample_rate == 0 {
+        return -120.0;
+    }
+    let window = ((sample_rate as usize) * 30 / 1000).max(1);
+    // Short clip: one window is the whole thing — fall back to clip RMS.
+    if samples.len() <= window {
+        return compute_rms_dbfs(samples);
+    }
+    let hop = (window / 2).max(1);
+    let scale = i16::MAX as f64;
+    let mut best_db = f32::NEG_INFINITY;
+    let mut start = 0;
+    while start + window <= samples.len() {
+        let sum_sq: f64 = samples[start..start + window]
+            .iter()
+            .map(|&s| {
+                let f = s as f64 / scale;
+                f * f
+            })
+            .sum();
+        let rms = (sum_sq / window as f64).sqrt();
+        if rms > 0.0 {
+            let dbfs = (20.0 * rms.log10()) as f32;
+            if dbfs > best_db {
+                best_db = dbfs;
+            }
+        }
+        start += hop;
+    }
+    if best_db == f32::NEG_INFINITY {
+        -120.0
+    } else {
+        best_db
+    }
 }
 
 /// Target the post-AGC peak just below 0 dBFS so we never clip on the

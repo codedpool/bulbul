@@ -1,8 +1,7 @@
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,11 +13,6 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 const FIRE_COOLDOWN_MS: u128 = 700;
 /// How often the release poller checks the dictation hotkey's key state.
 const RELEASE_POLL_MS: u64 = 25;
-/// How long both modifiers of a modifier-only chord (e.g. Ctrl+Win) must
-/// be held before we treat it as a dictation request. Short enough to feel
-/// snappy, long enough that brushing both keys for unrelated reasons
-/// (Ctrl+Win+arrow to switch desktop, etc.) doesn't fire dictation.
-const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 80;
 
 #[derive(Clone, Debug)]
 pub enum HotkeyEvent {
@@ -88,22 +82,45 @@ pub struct HotkeySet {
 
 fn normalize_key_name(s: &str) -> String {
     let trimmed = s.trim();
-    if trimmed.len() == 1 {
-        trimmed.to_ascii_uppercase()
-    } else {
-        let mut out = String::with_capacity(trimmed.len());
-        let mut chars = trimmed.chars();
-        if let Some(c) = chars.next() {
-            out.push(c.to_ascii_uppercase());
-        }
-        for c in chars {
-            out.push(c.to_ascii_lowercase());
-        }
-        if out.starts_with('F') && out[1..].chars().all(|c| c.is_ascii_digit()) {
-            out = out.to_ascii_uppercase();
-        }
-        out
+    // Compound names need a fixed canonical form so that saved configs
+    // round-trip cleanly: file → ParsedHotkey::parse → this function →
+    // key_name_to_code lookup. If we let the generic capitalise-first
+    // logic run on "PageUp" it becomes "Pageup", and then the Code
+    // match arm "PageUp" => Code::PageUp never fires.
+    let lower = trimmed.to_ascii_lowercase();
+    match lower.as_str() {
+        "up" | "arrowup" => return "Up".into(),
+        "down" | "arrowdown" => return "Down".into(),
+        "left" | "arrowleft" => return "Left".into(),
+        "right" | "arrowright" => return "Right".into(),
+        "insert" | "ins" => return "Insert".into(),
+        "delete" | "del" => return "Delete".into(),
+        "home" => return "Home".into(),
+        "end" => return "End".into(),
+        "pageup" | "pgup" => return "PageUp".into(),
+        "pagedown" | "pgdn" => return "PageDown".into(),
+        "space" => return "Space".into(),
+        "tab" => return "Tab".into(),
+        "enter" | "return" => return "Enter".into(),
+        "backspace" => return "Backspace".into(),
+        "escape" | "esc" => return "Escape".into(),
+        _ => {}
     }
+    if trimmed.len() == 1 {
+        return trimmed.to_ascii_uppercase();
+    }
+    let mut out = String::with_capacity(trimmed.len());
+    let mut chars = trimmed.chars();
+    if let Some(c) = chars.next() {
+        out.push(c.to_ascii_uppercase());
+    }
+    for c in chars {
+        out.push(c.to_ascii_lowercase());
+    }
+    if out.starts_with('F') && out[1..].chars().all(|c| c.is_ascii_digit()) {
+        out = out.to_ascii_uppercase();
+    }
+    out
 }
 
 /// Convert our internal key string ("Space", "A", "F9") to the plugin's
@@ -132,6 +149,27 @@ fn key_name_to_code(name: &str) -> Option<Code> {
         "F4" => Code::F4, "F5" => Code::F5, "F6" => Code::F6,
         "F7" => Code::F7, "F8" => Code::F8, "F9" => Code::F9,
         "F10" => Code::F10, "F11" => Code::F11, "F12" => Code::F12,
+        "Up" => Code::ArrowUp,
+        "Down" => Code::ArrowDown,
+        "Left" => Code::ArrowLeft,
+        "Right" => Code::ArrowRight,
+        "Insert" => Code::Insert,
+        "Delete" => Code::Delete,
+        "Home" => Code::Home,
+        "End" => Code::End,
+        "PageUp" => Code::PageUp,
+        "PageDown" => Code::PageDown,
+        ";" => Code::Semicolon,
+        "'" => Code::Quote,
+        "," => Code::Comma,
+        "." => Code::Period,
+        "/" => Code::Slash,
+        "\\" => Code::Backslash,
+        "[" => Code::BracketLeft,
+        "]" => Code::BracketRight,
+        "-" => Code::Minus,
+        "=" => Code::Equal,
+        "`" => Code::Backquote,
         _ => return None,
     })
 }
@@ -144,6 +182,27 @@ fn key_name_to_vk(name: &str) -> Option<i32> {
         "Return" | "Enter" => 0x0D,
         "Backspace" => 0x08,
         "Escape" => 0x1B,
+        "Up" => 0x26,
+        "Down" => 0x28,
+        "Left" => 0x25,
+        "Right" => 0x27,
+        "Insert" => 0x2D,
+        "Delete" => 0x2E,
+        "Home" => 0x24,
+        "End" => 0x23,
+        "PageUp" => 0x21,
+        "PageDown" => 0x22,
+        ";" => 0xBA,  // VK_OEM_1
+        "'" => 0xDE,  // VK_OEM_7
+        "," => 0xBC,  // VK_OEM_COMMA
+        "." => 0xBE,  // VK_OEM_PERIOD
+        "/" => 0xBF,  // VK_OEM_2
+        "\\" => 0xDC, // VK_OEM_5
+        "[" => 0xDB,  // VK_OEM_4
+        "]" => 0xDD,  // VK_OEM_6
+        "-" => 0xBD,  // VK_OEM_MINUS
+        "=" => 0xBB,  // VK_OEM_PLUS
+        "`" => 0xC0,  // VK_OEM_3
         // Letters: VK_<A-Z> is just ASCII upper.
         x if x.len() == 1 && x.chars().next().unwrap().is_ascii_uppercase() => {
             x.chars().next().unwrap() as i32
@@ -187,110 +246,6 @@ pub fn parsed_to_shortcut(h: &ParsedHotkey) -> Option<Shortcut> {
 fn is_key_down(vk: i32) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     unsafe { GetAsyncKeyState(vk) < 0 }
-}
-
-/// Read the currently-held state of every modifier we care about.
-/// Returns (ctrl, shift, alt, meta). VK_CONTROL/VK_SHIFT/VK_MENU are the
-/// "either left or right" virtual keys; Win has separate L/R so we OR them.
-fn modifier_state() -> (bool, bool, bool, bool) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
-    };
-    (
-        is_key_down(VK_CONTROL.0 as i32),
-        is_key_down(VK_SHIFT.0 as i32),
-        is_key_down(VK_MENU.0 as i32),
-        is_key_down(VK_LWIN.0 as i32) || is_key_down(VK_RWIN.0 as i32),
-    )
-}
-
-/// True if every required modifier in `need` is currently held.
-fn required_mods_held(need: &ParsedHotkey, state: (bool, bool, bool, bool)) -> bool {
-    let (ctrl, shift, alt, meta) = state;
-    (!need.ctrl || ctrl)
-        && (!need.shift || shift)
-        && (!need.alt || alt)
-        && (!need.meta || meta)
-}
-
-/// Long-running watcher for a modifier-only chord like Ctrl+Win. Polls
-/// modifier state every 25ms. Fires DictationPressed once both required
-/// modifiers have been held for MODIFIER_CHORD_DEBOUNCE_MS, and
-/// DictationReleased the instant either is released. Stops when `alive`
-/// is set to false (settings change → re_register swaps in a new watcher).
-fn spawn_modifier_chord_watcher(
-    tx: Sender<HotkeyEvent>,
-    hotkey: ParsedHotkey,
-    alive: Arc<AtomicBool>,
-) {
-    thread::spawn(move || {
-        // State machine: Idle → Arming(start) → Pressing.
-        // Cooldown across consecutive presses guards against accidental
-        // re-trigger when the user briefly bounces a key.
-        enum State {
-            Idle,
-            Arming(Instant),
-            Pressing,
-        }
-        let mut state = State::Idle;
-        let mut last_fire: Option<Instant> = None;
-        tracing::info!(
-            "modifier-chord watcher started for {:?}",
-            hotkey
-        );
-        while alive.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
-            let held = required_mods_held(&hotkey, modifier_state());
-            match state {
-                State::Idle => {
-                    if held {
-                        let cooled = last_fire.map_or(true, |t| {
-                            t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
-                        });
-                        if cooled {
-                            state = State::Arming(Instant::now());
-                        }
-                    }
-                }
-                State::Arming(start) => {
-                    if !held {
-                        // Released before the debounce — treat as noise.
-                        state = State::Idle;
-                    } else if start.elapsed().as_millis()
-                        >= MODIFIER_CHORD_DEBOUNCE_MS as u128
-                    {
-                        tracing::debug!(
-                            "modifier-chord dictation pressed: {:?}",
-                            hotkey
-                        );
-                        let _ = tx.send(HotkeyEvent::DictationPressed);
-                        last_fire = Some(Instant::now());
-                        state = State::Pressing;
-                    }
-                }
-                State::Pressing => {
-                    if !held {
-                        let _ = tx.send(HotkeyEvent::DictationReleased);
-                        state = State::Idle;
-                    }
-                }
-            }
-        }
-        // Stopped — if we were mid-press make sure release fires so the
-        // orchestrator doesn't get stuck holding a recording open.
-        if matches!(state, State::Pressing) {
-            let _ = tx.send(HotkeyEvent::DictationReleased);
-        }
-        tracing::info!("modifier-chord watcher exited for {:?}", hotkey);
-    });
-}
-
-/// Holds the AtomicBool that keeps the current modifier-chord watcher
-/// alive. re_register swaps in a fresh flag and signals the old one to
-/// stop, so only one watcher runs at a time.
-fn modifier_chord_alive_slot() -> &'static Mutex<Option<Arc<AtomicBool>>> {
-    static SLOT: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
 }
 
 /// Hold-to-talk release detector. RegisterHotKey only signals key-down;
@@ -373,29 +328,31 @@ fn re_register(
         tracing::warn!("unregister_all failed: {e:#}");
     }
 
-    // Stop any modifier-chord watcher from the previous registration. We
-    // always swap, even if the new dictation hotkey is also a modifier
-    // chord — a new watcher with the up-to-date spec gets spawned below.
-    {
-        let mut slot = modifier_chord_alive_slot().lock();
-        if let Some(prev) = slot.take() {
-            prev.store(false, Ordering::Relaxed);
-        }
-    }
+    // Clear any chord mask in the keyboard hook before we re-apply
+    // below. This also fires a synthetic Released event if a chord was
+    // mid-press, so the orchestrator doesn't get stuck.
+    #[cfg(target_os = "windows")]
+    crate::keyboard_hook::set_chord_mask(0);
 
     let snapshot = set.lock().clone();
 
     // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
-    // plugin's RegisterHotKey backend can't represent these, so we run a
-    // background polling thread that watches the modifier state directly.
+    // plugin's RegisterHotKey backend can't represent these, and naive
+    // polling can't prevent the Start menu from popping on Win release.
+    // Route the chord through the low-level keyboard hook instead — it
+    // intercepts the events before Windows's shell sees them, so tap
+    // detection never fires for the held Win key.
     if snapshot.dictation.is_modifier_chord() {
-        let alive = Arc::new(AtomicBool::new(true));
-        *modifier_chord_alive_slot().lock() = Some(alive.clone());
-        spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone(), alive);
-        tracing::info!(
-            "registered dictation (modifier-chord watcher): {:?}",
-            snapshot.dictation
-        );
+        #[cfg(target_os = "windows")]
+        {
+            let mask = crate::keyboard_hook::chord_mask_for(&snapshot.dictation);
+            crate::keyboard_hook::set_chord_mask(mask);
+            tracing::info!(
+                "registered dictation (LL keyboard hook): {:?} mask=0b{:04b}",
+                snapshot.dictation,
+                mask
+            );
+        }
     }
     // Dictation, branch B: regular combo with a non-modifier key
     // (Ctrl+Shift+Space etc.). Uses the global-shortcut plugin for press,
