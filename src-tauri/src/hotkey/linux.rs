@@ -51,6 +51,12 @@ const KC_SUPER_L: u8 = 133;
 const KC_SUPER_R: u8 = 134;
 
 /// Map a hotkey key-name string to an X11 keycode (US QWERTY positions).
+/// Hard-coded for a US-ANSI PC keyboard with the standard xkb evdev
+/// mapping. Mirrors `super::key_name_to_code` so the release poller
+/// can resolve every key the recorder accepts — without these new
+/// entries, binding e.g. `Ctrl+Shift+;` succeeds at press but
+/// `DictationReleased` fires immediately and dictation captures
+/// nothing.
 fn key_name_to_x11_keycode(name: &str) -> Option<u8> {
     Some(match name {
         "A" => 38, "B" => 56, "C" => 54, "D" => 40, "E" => 26, "F" => 41,
@@ -65,6 +71,15 @@ fn key_name_to_x11_keycode(name: &str) -> Option<u8> {
         "F1" => 67, "F2" => 68, "F3" => 69, "F4" => 70, "F5" => 71,
         "F6" => 72, "F7" => 73, "F8" => 74, "F9" => 75, "F10" => 76,
         "F11" => 95, "F12" => 96,
+        // Arrows.
+        "Up" => 111, "Down" => 116, "Left" => 113, "Right" => 114,
+        // Navigation block.
+        "Home" => 110, "End" => 115, "PageUp" => 112, "PageDown" => 117,
+        "Insert" => 118, "Delete" => 119,
+        // Punctuation (xkb evdev).
+        ";" => 47, "'" => 48, "," => 59, "." => 60, "/" => 61,
+        "\\" => 51, "[" => 34, "]" => 35,
+        "-" => 20, "=" => 21, "`" => 49,
         _ => return None,
     })
 }

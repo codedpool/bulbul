@@ -80,6 +80,14 @@ fn required_mods_held(need: &ParsedHotkey, state: (bool, bool, bool, bool)) -> b
 /// Map our hotkey key-name string to a Mac virtual key code. Hard-coded
 /// for US QWERTY — covers >95% of keyboards. Phase 7 polish can add
 /// TIS-based dynamic lookup for Dvorak/AZERTY layouts.
+///
+/// The arrows / navigation / punctuation entries below mirror the
+/// expanded `key_name_to_code` table in `super` — without them, binding
+/// a hotkey like `Ctrl+Shift+;` succeeds at the press side (the
+/// global-shortcut plugin uses W3C `Code` values) but the release
+/// poller can't translate the main key, fires an immediate
+/// `DictationReleased`, and dictation ends before any audio is
+/// captured.
 fn key_name_to_mac_keycode(name: &str) -> Option<u16> {
     Some(match name {
         "A" => 0, "B" => 11, "C" => 8, "D" => 2, "E" => 14, "F" => 3,
@@ -94,6 +102,24 @@ fn key_name_to_mac_keycode(name: &str) -> Option<u16> {
         "F1" => 122, "F2" => 120, "F3" => 99, "F4" => 118, "F5" => 96,
         "F6" => 97, "F7" => 98, "F8" => 100, "F9" => 101, "F10" => 109,
         "F11" => 103, "F12" => 111,
+        // Arrows (kVK_*Arrow).
+        "Up" => 126, "Down" => 125, "Left" => 123, "Right" => 124,
+        // Navigation (kVK_*).
+        "Home" => 115, "End" => 119, "PageUp" => 116, "PageDown" => 121,
+        "Delete" => 117,  // kVK_ForwardDelete — the ⌦ key.
+        "Insert" => 114,  // Mac has no Insert; kVK_Help is the closest physical analog.
+        // Punctuation (kVK_ANSI_* on a US-ANSI layout).
+        ";" => 41,        // Semicolon
+        "'" => 39,        // Quote
+        "," => 43,        // Comma
+        "." => 47,        // Period
+        "/" => 44,        // Slash
+        "\\" => 42,       // Backslash
+        "[" => 33,        // LeftBracket
+        "]" => 30,        // RightBracket
+        "-" => 27,        // Minus
+        "=" => 24,        // Equal
+        "`" => 50,        // Grave / backtick
         _ => return None,
     })
 }
