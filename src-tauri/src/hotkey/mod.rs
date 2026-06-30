@@ -107,22 +107,45 @@ pub struct HotkeySet {
 
 fn normalize_key_name(s: &str) -> String {
     let trimmed = s.trim();
-    if trimmed.len() == 1 {
-        trimmed.to_ascii_uppercase()
-    } else {
-        let mut out = String::with_capacity(trimmed.len());
-        let mut chars = trimmed.chars();
-        if let Some(c) = chars.next() {
-            out.push(c.to_ascii_uppercase());
-        }
-        for c in chars {
-            out.push(c.to_ascii_lowercase());
-        }
-        if out.starts_with('F') && out[1..].chars().all(|c| c.is_ascii_digit()) {
-            out = out.to_ascii_uppercase();
-        }
-        out
+    // Compound names need a fixed canonical form so that saved configs
+    // round-trip cleanly: file → ParsedHotkey::parse → this function →
+    // key_name_to_code lookup. If we let the generic capitalise-first
+    // logic run on "PageUp" it becomes "Pageup", and then the Code
+    // match arm "PageUp" => Code::PageUp never fires.
+    let lower = trimmed.to_ascii_lowercase();
+    match lower.as_str() {
+        "up" | "arrowup" => return "Up".into(),
+        "down" | "arrowdown" => return "Down".into(),
+        "left" | "arrowleft" => return "Left".into(),
+        "right" | "arrowright" => return "Right".into(),
+        "insert" | "ins" => return "Insert".into(),
+        "delete" | "del" => return "Delete".into(),
+        "home" => return "Home".into(),
+        "end" => return "End".into(),
+        "pageup" | "pgup" => return "PageUp".into(),
+        "pagedown" | "pgdn" => return "PageDown".into(),
+        "space" => return "Space".into(),
+        "tab" => return "Tab".into(),
+        "enter" | "return" => return "Enter".into(),
+        "backspace" => return "Backspace".into(),
+        "escape" | "esc" => return "Escape".into(),
+        _ => {}
     }
+    if trimmed.len() == 1 {
+        return trimmed.to_ascii_uppercase();
+    }
+    let mut out = String::with_capacity(trimmed.len());
+    let mut chars = trimmed.chars();
+    if let Some(c) = chars.next() {
+        out.push(c.to_ascii_uppercase());
+    }
+    for c in chars {
+        out.push(c.to_ascii_lowercase());
+    }
+    if out.starts_with('F') && out[1..].chars().all(|c| c.is_ascii_digit()) {
+        out = out.to_ascii_uppercase();
+    }
+    out
 }
 
 /// Convert our internal key string ("Space", "A", "F9") to the plugin's
@@ -152,6 +175,27 @@ fn key_name_to_code(name: &str) -> Option<Code> {
         "F4" => Code::F4, "F5" => Code::F5, "F6" => Code::F6,
         "F7" => Code::F7, "F8" => Code::F8, "F9" => Code::F9,
         "F10" => Code::F10, "F11" => Code::F11, "F12" => Code::F12,
+        "Up" => Code::ArrowUp,
+        "Down" => Code::ArrowDown,
+        "Left" => Code::ArrowLeft,
+        "Right" => Code::ArrowRight,
+        "Insert" => Code::Insert,
+        "Delete" => Code::Delete,
+        "Home" => Code::Home,
+        "End" => Code::End,
+        "PageUp" => Code::PageUp,
+        "PageDown" => Code::PageDown,
+        ";" => Code::Semicolon,
+        "'" => Code::Quote,
+        "," => Code::Comma,
+        "." => Code::Period,
+        "/" => Code::Slash,
+        "\\" => Code::Backslash,
+        "[" => Code::BracketLeft,
+        "]" => Code::BracketRight,
+        "-" => Code::Minus,
+        "=" => Code::Equal,
+        "`" => Code::Backquote,
         _ => return None,
     })
 }
@@ -216,17 +260,18 @@ fn re_register(
     }
 
     // Stop any platform-specific watchers from the previous registration
-    // (Windows: the modifier-chord polling thread; macOS: future
+    // (Windows: clears the LL keyboard hook's chord mask; macOS: future
     // CGEventTap teardown). Always run, even if the new dictation hotkey
-    // is also a modifier chord — a fresh watcher with the up-to-date
-    // spec gets spawned below.
+    // is also a modifier chord — a fresh registration with the up-to-date
+    // spec gets installed below.
     native::stop_native_watchers();
 
     let snapshot = set.lock().clone();
 
     // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
     // plugin's RegisterHotKey backend can't represent these, so we hand
-    // off to the platform's native polling implementation.
+    // off to the platform's native implementation (Windows uses the LL
+    // keyboard hook; macOS/Linux use polling watchers).
     if snapshot.dictation.is_modifier_chord() {
         native::spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone());
     }
