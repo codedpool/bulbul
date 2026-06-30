@@ -2497,7 +2497,24 @@ async fn process_pipeline(
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
-    if let Err(e) = inject::inject_text(&final_text) {
+    // Fast path: when Bulbul's own scratchpad is the focused window,
+    // skip the OS-level Cmd+V / Ctrl+V round-trip and emit the text
+    // straight into the React tree via Tauri IPC. The OS paste path
+    // (NSPasteboard + osascript keystroke on macOS, SendInput Ctrl+V on
+    // Windows) was failing reliably on Mac when the target was our own
+    // window — System Events keystroke routing is sensitive to frontmost
+    // / key-window state and TCC permissions, and synthesizing a paste
+    // back into ourselves through the OS is more fragile than just
+    // telling the React side directly. Same emission path also avoids
+    // touching the user's clipboard at all.
+    let scratchpad_focused = app
+        .get_webview_window("scratchpad")
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    if scratchpad_focused {
+        tracing::debug!("inject: routing to scratchpad via IPC (window focused)");
+        let _ = app.emit_to("scratchpad", "scratchpad-append", final_text.clone());
+    } else if let Err(e) = inject::inject_text(&final_text) {
         tracing::error!("inject failed: {e:#}");
         emit_status(&app, "error", Some(format!("Inject: {e:#}")));
         notify(&app, "Bulbul inject failed", &format!("{e:#}"));

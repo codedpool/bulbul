@@ -35,6 +35,55 @@ export default function ScratchpadWindow() {
     return () => { un.then((f) => f()); };
   }, []);
 
+  // Dictation into the scratchpad: when the scratchpad window is the
+  // focused webview at inject-time, the orchestrator (lib.rs) emits
+  // `scratchpad-append` with the cleaned transcript instead of going
+  // through the OS-level Cmd+V / Ctrl+V path. Routing the OS paste
+  // back into our own window was fragile on macOS (System Events
+  // keystroke routing depends on TCC permission + focus order); a
+  // direct IPC insert sidesteps that entirely and also doesn't touch
+  // the user's clipboard.
+  //
+  // Insert at the textarea's current cursor (or replace the current
+  // selection). Falls back to appending at the end if the textarea
+  // somehow doesn't have a usable selection.
+  useEffect(() => {
+    const un = listen("scratchpad-append", (event) => {
+      const incoming = String(event.payload || "");
+      if (!incoming) return;
+      const el = bodyRef.current;
+      // Prefer the live caret position from the textarea itself; if it
+      // isn't focused right now, fall back to the last remembered
+      // selection (selRef), and finally to appending at end.
+      let start;
+      let end;
+      if (el && document.activeElement === el) {
+        start = el.selectionStart;
+        end = el.selectionEnd;
+      } else if (selRef.current && Number.isFinite(selRef.current.start)) {
+        start = selRef.current.start;
+        end = selRef.current.end;
+      } else {
+        start = body.length;
+        end = body.length;
+      }
+      setBody((prev) => {
+        const next = prev.slice(0, start) + incoming + prev.slice(end);
+        dirtyRef.current = true;
+        return next;
+      });
+      requestAnimationFrame(() => {
+        const node = bodyRef.current;
+        if (!node) return;
+        const caret = start + incoming.length;
+        node.focus();
+        node.setSelectionRange(caret, caret);
+        selRef.current = { start: caret, end: caret };
+      });
+    });
+    return () => { un.then((f) => f()); };
+  }, [body]);
+
   function rememberSelection() {
     const el = bodyRef.current;
     if (!el) return;
