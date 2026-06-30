@@ -14,7 +14,7 @@ import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
 import { applyTheme } from "./theme.js";
-import { RELAUNCH_HINT } from "./platform.js";
+import { IS_MAC, RELAUNCH_HINT } from "./platform.js";
 import "./App.css";
 
 const ICONS = {
@@ -370,44 +370,52 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
             </svg>
           )}
         </button>
-        <button
-          className="tb-btn"
-          aria-label="Minimize"
-          title="Minimize"
-          onClick={() => win.minimize().catch(() => {})}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-          </svg>
-        </button>
-        <button
-          className="tb-btn"
-          aria-label={isMaximized ? "Restore" : "Maximize"}
-          title={isMaximized ? "Restore" : "Maximize"}
-          onClick={() => win.toggleMaximize().catch(() => {})}
-        >
-          {isMaximized ? (
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <rect x="2" y="3.2" width="5.5" height="5.5" fill="none" stroke="currentColor" strokeWidth="1" />
-              <path d="M3.2 3.2 V1.5 H8.5 V6.8 H6.8" fill="none" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          )}
-        </button>
-        <button
-          className="tb-btn tb-close"
-          aria-label="Close"
-          title="Close"
-          onClick={() => win.close().catch(() => {})}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-          </svg>
-        </button>
+        {/* On macOS the OS owns minimize / maximize / close — the red,
+            yellow, green traffic lights on the left. Rendering our own
+            buttons next to them would be visually doubled. The theme
+            toggle stays because it isn't a window-control. */}
+        {!IS_MAC && (
+          <>
+            <button
+              className="tb-btn"
+              aria-label="Minimize"
+              title="Minimize"
+              onClick={() => win.minimize().catch(() => {})}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              className="tb-btn"
+              aria-label={isMaximized ? "Restore" : "Maximize"}
+              title={isMaximized ? "Restore" : "Maximize"}
+              onClick={() => win.toggleMaximize().catch(() => {})}
+            >
+              {isMaximized ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <rect x="2" y="3.2" width="5.5" height="5.5" fill="none" stroke="currentColor" strokeWidth="1" />
+                  <path d="M3.2 3.2 V1.5 H8.5 V6.8 H6.8" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              )}
+            </button>
+            <button
+              className="tb-btn tb-close"
+              aria-label="Close"
+              title="Close"
+              onClick={() => win.close().catch(() => {})}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              </svg>
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
