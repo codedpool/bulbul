@@ -25,6 +25,8 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
@@ -1146,15 +1148,13 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // controls) — we suspect a Tauri 2 + WebView2 quirk around lazy window
     // creation in dev mode. Building it during boot gives the WebView2 host
     // time to fully initialize before the user ever interacts with it.
-    // Decorations: false on Win/Linux so our custom React TitleBar
-    // renders a borderless look matching the dashboard. macOS keeps
-    // decorations on so the traffic lights live where Mac users expect.
-    #[cfg(target_os = "macos")]
-    let decorations = true;
-    #[cfg(not(target_os = "macos"))]
-    let decorations = false;
-
-    let window = WebviewWindowBuilder::new(
+    // Borderless on every platform — the custom React SpTitleBar draws
+    // its own drag region and (on Win/Linux) min/close buttons. On Mac
+    // we keep traffic lights via TitleBarStyle::Overlay and pair it with
+    // a transparent window so the rounded `.sp-shell` corner radius
+    // shows around them — same visual language as the main dashboard.
+    #[allow(unused_mut)]
+    let mut builder = WebviewWindowBuilder::new(
         app,
         "scratchpad",
         WebviewUrl::App("index.html#scratchpad".into()),
@@ -1162,13 +1162,20 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     .title("Bulbul Scratchpad")
     .inner_size(760.0, 540.0)
     .min_inner_size(520.0, 380.0)
-    .decorations(decorations)
+    .decorations(false)
     .center()
     .resizable(true)
     .maximizable(false)
     .skip_taskbar(false)
-    .visible(false)
-    .build()?;
+    .visible(false);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .transparent(true);
+    }
+    let window = builder.build()?;
 
     // Intercept the close button (X on Win/Linux, red traffic light on
     // macOS) so the window persists across opens. Cmd+Q / RunEvent::
@@ -1690,18 +1697,13 @@ pub fn run() {
             setup_scratchpad_window(&handle)?;
 
             if let Some(window) = handle.get_webview_window("main") {
-                // macOS wants the native title bar + traffic lights — those
-                // are the affordances Mac users actually look for. The
-                // window is built `decorations: false` (Win/Linux ship a
-                // custom title bar to match their borderless aesthetic),
-                // so we flip decorations back on at runtime for Mac only.
-                // The custom React TitleBar component hides its
-                // Win-style min/max/close buttons under .platform-mac
-                // and leaves leading padding for the traffic lights.
-                #[cfg(target_os = "macos")]
-                {
-                    let _ = window.set_decorations(true);
-                }
+                // Mac uses the borderless + transparent + overlay-titlebar
+                // configuration from tauri.conf.json so the rounded shell
+                // shows around the floating traffic lights — same visual
+                // language as Linear, Raycast, Things. The React TitleBar
+                // hides its Win-style min/max/close on .platform-mac and
+                // adds 80px of leading padding so the sidebar toggle sits
+                // clear of the traffic lights.
                 let cfg = handle.state::<AppState>().config.clone();
                 let want_show = {
                     let c = cfg.lock();
