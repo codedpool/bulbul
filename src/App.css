@@ -72,6 +72,27 @@ body, html, #root {
   color: var(--text);
 }
 
+/* Mac visual polish: the sidebar's default background tint
+   (var(--bg-sunken)) creates a visible two-tone boundary under the
+   traffic lights — RGB buttons sit on the lighter sidebar strip
+   while the main content next to it is darker/whiter. On a native
+   NSWindow title bar strip that reads as "off". Matching sidebar bg
+   to main content gives a single-color strip under the traffic
+   lights, same as Wispr Flow / Linear / Raycast.
+   Also tighten the brand block so the "bulbul" wordmark sits close
+   to the chrome strip and drop the divider that used to cut across
+   the sidebar. */
+.platform-mac .sidebar {
+  background: var(--bg);
+  padding-top: 8px;
+}
+.platform-mac .brand {
+  padding-top: 40px;
+  padding-bottom: 12px;
+  border-bottom: none;
+  margin-bottom: 4px;
+}
+
 .loading {
   color: var(--text-dim);
   text-align: center;
