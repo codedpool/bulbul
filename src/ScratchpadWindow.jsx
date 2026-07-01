@@ -35,42 +35,45 @@ export default function ScratchpadWindow() {
     return () => { un.then((f) => f()); };
   }, []);
 
-  // Dictation into the scratchpad: when the scratchpad window is the
-  // focused webview at inject-time, the orchestrator (lib.rs) emits
-  // `scratchpad-append` with the cleaned transcript instead of going
-  // through the OS-level Cmd+V / Ctrl+V path. Routing the OS paste
-  // back into our own window was fragile on macOS (System Events
-  // keystroke routing depends on TCC permission + focus order); a
-  // direct IPC insert sidesteps that entirely and also doesn't touch
-  // the user's clipboard.
+  // Dictation into the scratchpad: when the orchestrator (lib.rs)
+  // decides the scratchpad is the target it emits `scratchpad-append`
+  // with the cleaned transcript instead of firing OS-level Cmd+V /
+  // Ctrl+V. That path is fragile on Mac (self-paste through System
+  // Events depends on TCC + key-window state) and touches the user's
+  // clipboard; IPC insert skips both.
   //
-  // Insert at the textarea's current cursor (or replace the current
-  // selection). Falls back to appending at the end if the textarea
-  // somehow doesn't have a usable selection.
+  // Register the listener ONCE (empty deps). An earlier version had
+  // `[body]` in the deps to keep the append-fallback in sync, but that
+  // tore down + re-registered the listener on every keystroke — events
+  // fired during the async tear-down window were being dropped.
+  // Instead we read live text length off the DOM node when we need the
+  // end-of-body fallback, which is always current.
   useEffect(() => {
     const un = listen("scratchpad-append", (event) => {
       const incoming = String(event.payload || "");
       if (!incoming) return;
       const el = bodyRef.current;
-      // Prefer the live caret position from the textarea itself; if it
-      // isn't focused right now, fall back to the last remembered
-      // selection (selRef), and finally to appending at end.
       let start;
       let end;
       if (el && document.activeElement === el) {
+        // Live selection — textarea has focus, use its caret directly.
         start = el.selectionStart;
         end = el.selectionEnd;
       } else if (selRef.current && Number.isFinite(selRef.current.start)) {
+        // Textarea lost focus (transform panel click etc.) — resume at
+        // the caret we remembered on the last blur.
         start = selRef.current.start;
         end = selRef.current.end;
       } else {
-        start = body.length;
-        end = body.length;
+        // First dictation of the session, textarea never focused. Read
+        // length off the DOM so we don't need `body` in deps.
+        const len = el?.value.length ?? 0;
+        start = len;
+        end = len;
       }
       setBody((prev) => {
-        const next = prev.slice(0, start) + incoming + prev.slice(end);
         dirtyRef.current = true;
-        return next;
+        return prev.slice(0, start) + incoming + prev.slice(end);
       });
       requestAnimationFrame(() => {
         const node = bodyRef.current;
@@ -82,7 +85,7 @@ export default function ScratchpadWindow() {
       });
     });
     return () => { un.then((f) => f()); };
-  }, [body]);
+  }, []);
 
   function rememberSelection() {
     const el = bodyRef.current;

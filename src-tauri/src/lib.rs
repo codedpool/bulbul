@@ -1148,11 +1148,18 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // controls) — we suspect a Tauri 2 + WebView2 quirk around lazy window
     // creation in dev mode. Building it during boot gives the WebView2 host
     // time to fully initialize before the user ever interacts with it.
-    // Borderless on every platform — the custom React SpTitleBar draws
-    // its own drag region and (on Win/Linux) min/close buttons. On Mac
-    // we keep traffic lights via TitleBarStyle::Overlay and pair it with
-    // a transparent window so the rounded `.sp-shell` corner radius
-    // shows around them — same visual language as the main dashboard.
+    // Mac keeps native NSWindow chrome (traffic lights) via
+    // decorations(true) — without them, TitleBarStyle::Overlay has no
+    // title bar to make transparent and the traffic lights vanish. The
+    // FullSizeContentView flag from Overlay still extends our React
+    // content up to the top edge behind the floating buttons, so the
+    // dashboard aesthetic works. Win/Linux stay borderless because their
+    // custom React SpTitleBar draws its own min/close.
+    #[cfg(target_os = "macos")]
+    let decorations = true;
+    #[cfg(not(target_os = "macos"))]
+    let decorations = false;
+
     #[allow(unused_mut)]
     let mut builder = WebviewWindowBuilder::new(
         app,
@@ -1162,7 +1169,7 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     .title("Bulbul Scratchpad")
     .inner_size(760.0, 540.0)
     .min_inner_size(520.0, 380.0)
-    .decorations(false)
+    .decorations(decorations)
     .center()
     .resizable(true)
     .maximizable(false)
@@ -1172,8 +1179,7 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     {
         builder = builder
             .title_bar_style(TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .transparent(true);
+            .hidden_title(true);
     }
     let window = builder.build()?;
 
@@ -2499,22 +2505,53 @@ async fn process_pipeline(
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
-    // Fast path: when Bulbul's own scratchpad is the focused window,
-    // skip the OS-level Cmd+V / Ctrl+V round-trip and emit the text
-    // straight into the React tree via Tauri IPC. The OS paste path
-    // (NSPasteboard + osascript keystroke on macOS, SendInput Ctrl+V on
-    // Windows) was failing reliably on Mac when the target was our own
-    // window — System Events keystroke routing is sensitive to frontmost
-    // / key-window state and TCC permissions, and synthesizing a paste
-    // back into ourselves through the OS is more fragile than just
-    // telling the React side directly. Same emission path also avoids
-    // touching the user's clipboard at all.
-    let scratchpad_focused = app
-        .get_webview_window("scratchpad")
+    // Fast path: when Bulbul's own scratchpad is the target, skip the
+    // OS Cmd+V / Ctrl+V round-trip and push the text straight into the
+    // React tree via Tauri IPC. Bypassing OS paste keeps the user's
+    // clipboard clean and dodges Mac's fragile self-paste path (System
+    // Events routing is sensitive to key-window state + TCC).
+    //
+    // Routing decision:
+    //   1. If Tauri reports scratchpad as the focused window → route.
+    //   2. On Mac, `is_focused()` can return false during hotkey
+    //      handling because NSApp key-window state is transitioning on
+    //      a different thread; fall back to
+    //      "foreground_app is bulbul AND scratchpad is visible" so a
+    //      user who clicked the scratchpad textarea and held the
+    //      hotkey still gets IPC delivery.
+    let scratchpad_win = app.get_webview_window("scratchpad");
+    let scratchpad_focused = scratchpad_win
+        .as_ref()
         .and_then(|w| w.is_focused().ok())
         .unwrap_or(false);
-    if scratchpad_focused {
-        tracing::debug!("inject: routing to scratchpad via IPC (window focused)");
+    let scratchpad_visible = scratchpad_win
+        .as_ref()
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    let bulbul_foreground = meta
+        .foreground_app
+        .as_deref()
+        .map(|b| b.to_ascii_lowercase().contains("bulbul"))
+        .unwrap_or(false);
+    let route_to_scratchpad =
+        scratchpad_focused || (bulbul_foreground && scratchpad_visible);
+    tracing::debug!(
+        "inject routing: route_to_scratchpad={} (focused={} visible={} bulbul_fg={} fg_app={:?})",
+        route_to_scratchpad,
+        scratchpad_focused,
+        scratchpad_visible,
+        bulbul_foreground,
+        meta.foreground_app
+    );
+    if route_to_scratchpad {
+        // Nudge the scratchpad forward so the user actually sees the
+        // text land — otherwise a scratchpad tucked behind another
+        // window silently receives the IPC and the user thinks the
+        // paste failed.
+        if let Some(w) = scratchpad_win.as_ref() {
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
         let _ = app.emit_to("scratchpad", "scratchpad-append", final_text.clone());
     } else if let Err(e) = inject::inject_text(&final_text) {
         tracing::error!("inject failed: {e:#}");
