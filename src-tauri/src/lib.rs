@@ -25,8 +25,6 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
-#[cfg(target_os = "macos")]
-use tauri::TitleBarStyle;
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
@@ -1148,20 +1146,20 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // controls) — we suspect a Tauri 2 + WebView2 quirk around lazy window
     // creation in dev mode. Building it during boot gives the WebView2 host
     // time to fully initialize before the user ever interacts with it.
-    // Mac keeps native NSWindow chrome (traffic lights) via
-    // decorations(true) — without them, TitleBarStyle::Overlay has no
-    // title bar to make transparent and the traffic lights vanish. The
-    // FullSizeContentView flag from Overlay still extends our React
-    // content up to the top edge behind the floating buttons, so the
-    // dashboard aesthetic works. Win/Linux stay borderless because their
-    // custom React SpTitleBar draws its own min/close.
+    // Mac keeps native NSWindow chrome (traffic lights + standard
+    // title bar) via decorations(true). We deliberately do NOT set
+    // titleBarStyle: Overlay or hiddenTitle here anymore — that
+    // combination broke traffic light rendering on some macOS versions
+    // (green button vanishing) and made hide-in-fullscreen extra
+    // fragile. Matches what cjpais/handy ships: default NSWindow, no
+    // style overrides. Win/Linux stay borderless because their custom
+    // React SpTitleBar draws its own min/close.
     #[cfg(target_os = "macos")]
     let decorations = true;
     #[cfg(not(target_os = "macos"))]
     let decorations = false;
 
-    #[allow(unused_mut)]
-    let mut builder = WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         "scratchpad",
         WebviewUrl::App("index.html#scratchpad".into()),
@@ -1174,14 +1172,8 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     .resizable(true)
     .maximizable(false)
     .skip_taskbar(false)
-    .visible(false);
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(TitleBarStyle::Overlay)
-            .hidden_title(true);
-    }
-    let window = builder.build()?;
+    .visible(false)
+    .build()?;
 
     // Intercept the close button (X on Win/Linux, red traffic light on
     // macOS) so the window persists across opens. Cmd+Q / RunEvent::
@@ -2583,21 +2575,29 @@ async fn process_pipeline(
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
-    // Fast path: when Bulbul's own scratchpad is the target, skip the
+    // Fast path: when Bulbul's own webview is the target, skip the
     // OS Cmd+V / Ctrl+V round-trip and push the text straight into the
     // React tree via Tauri IPC. Bypassing OS paste keeps the user's
-    // clipboard clean and dodges Mac's fragile self-paste path (System
-    // Events routing is sensitive to key-window state + TCC).
+    // clipboard clean and dodges Mac's fragile self-paste where
+    // CGEvent Cmd+V posted to Bulbul's own WKWebView often silently
+    // no-ops.
     //
-    // Routing decision:
-    //   1. If Tauri reports scratchpad as the focused window → route.
-    //   2. On Mac, `is_focused()` can return false during hotkey
-    //      handling because NSApp key-window state is transitioning on
-    //      a different thread; fall back to
-    //      "foreground_app is bulbul AND scratchpad is visible" so a
-    //      user who clicked the scratchpad textarea and held the
-    //      hotkey still gets IPC delivery.
+    // Two Bulbul destinations exist:
+    //   - "scratchpad" window: standalone editor (tray → Open
+    //     scratchpad). Fires `scratchpad-append`; its listener always
+    //     consumes.
+    //   - "main" window's inline ScratchpadView (dashboard sidebar →
+    //     Scratchpad). Fires `bulbul-focused-insert`; the inline
+    //     listener only consumes when its own textarea has document
+    //     focus, so dictating from Home/Insights is a silent no-op.
+    //
+    // Routing:
+    //   1. Standalone is focused (or Mac fallback: Bulbul foreground +
+    //      standalone visible + main NOT focused) → standalone.
+    //   2. Bulbul foreground + main visible → main.
+    //   3. Otherwise → OS-level paste (external app is the target).
     let scratchpad_win = app.get_webview_window("scratchpad");
+    let main_win = app.get_webview_window("main");
     let scratchpad_focused = scratchpad_win
         .as_ref()
         .and_then(|w| w.is_focused().ok())
@@ -2606,23 +2606,35 @@ async fn process_pipeline(
         .as_ref()
         .and_then(|w| w.is_visible().ok())
         .unwrap_or(false);
+    let main_focused = main_win
+        .as_ref()
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    let main_visible = main_win
+        .as_ref()
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
     let bulbul_foreground = meta
         .foreground_app
         .as_deref()
         .map(|b| b.to_ascii_lowercase().contains("bulbul"))
         .unwrap_or(false);
-    let route_to_scratchpad =
-        scratchpad_focused || (bulbul_foreground && scratchpad_visible);
+    let route_to_standalone = scratchpad_focused
+        || (bulbul_foreground && scratchpad_visible && !main_focused);
+    let route_to_main = !route_to_standalone && bulbul_foreground && main_visible;
     tracing::debug!(
-        "inject routing: route_to_scratchpad={} (focused={} visible={} bulbul_fg={} fg_app={:?})",
-        route_to_scratchpad,
+        "inject routing: standalone={} main={} (sp_focused={} sp_visible={} main_focused={} main_visible={} bulbul_fg={} fg={:?})",
+        route_to_standalone,
+        route_to_main,
         scratchpad_focused,
         scratchpad_visible,
+        main_focused,
+        main_visible,
         bulbul_foreground,
         meta.foreground_app
     );
-    if route_to_scratchpad {
-        // Nudge the scratchpad forward so the user actually sees the
+    if route_to_standalone {
+        // Nudge the standalone forward so the user actually sees the
         // text land — otherwise a scratchpad tucked behind another
         // window silently receives the IPC and the user thinks the
         // paste failed.
@@ -2631,6 +2643,8 @@ async fn process_pipeline(
             let _ = w.set_focus();
         }
         let _ = app.emit_to("scratchpad", "scratchpad-append", final_text.clone());
+    } else if route_to_main {
+        let _ = app.emit_to("main", "bulbul-focused-insert", final_text.clone());
     } else if let Err(e) = inject::inject_text(&final_text) {
         tracing::error!("inject failed: {e:#}");
         emit_status(&app, "error", Some(format!("Inject: {e:#}")));

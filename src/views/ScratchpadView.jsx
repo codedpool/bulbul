@@ -30,6 +30,38 @@ export default function ScratchpadView() {
     return () => { un.then((f) => f()); };
   }, []);
 
+  // Dictation into the INLINE scratchpad view (dashboard sidebar →
+  // Scratchpad). The orchestrator emits `bulbul-focused-insert` to the
+  // main window when Bulbul is foreground on Mac but the standalone
+  // scratchpad isn't the target. We only consume when this textarea is
+  // the current document focus — a stray emit from Home/Insights is a
+  // silent no-op that way, and the standalone window's own listener
+  // (which fires on `scratchpad-append`, a different event) still owns
+  // its case.
+  useEffect(() => {
+    const un = listen("bulbul-focused-insert", (event) => {
+      const incoming = String(event.payload || "");
+      if (!incoming) return;
+      const el = bodyRef.current;
+      if (!el || document.activeElement !== el) return;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      setBody((prev) => {
+        dirtyRef.current = true;
+        return prev.slice(0, start) + incoming + prev.slice(end);
+      });
+      requestAnimationFrame(() => {
+        const node = bodyRef.current;
+        if (!node) return;
+        const caret = start + incoming.length;
+        node.focus();
+        node.setSelectionRange(caret, caret);
+        selRef.current = { start: caret, end: caret };
+      });
+    });
+    return () => { un.then((f) => f()); };
+  }, []);
+
   function rememberSelection() {
     const el = bodyRef.current;
     if (!el) return;

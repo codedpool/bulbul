@@ -224,19 +224,6 @@ function App() {
           <img src={bulbulMark} alt="" className="brand-mark" aria-hidden />
           <div className="brand-text">bulbul</div>
         </div>
-        {IS_MAC && (
-          <button
-            className="brand-sidebar-toggle"
-            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-            onClick={() => setSidebarOpen((v) => !v)}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-              <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
-              <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
-            </svg>
-          </button>
-        )}
         <nav className="nav">
           {SECTIONS.map((s) => {
             // Settings is a modal popup, not a routed page — clicking it
@@ -285,6 +272,44 @@ function App() {
               <span className="toggle-thumb" />
             </span>
           </label>
+          {IS_MAC && (
+            <div className="sidebar-mac-controls">
+              <button
+                className="sidebar-mac-btn"
+                onClick={() => setSidebarOpen((v) => !v)}
+                aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+                title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <line x1="9" y1="4" x2="9" y2="20" />
+                </svg>
+                <span className="sidebar-mac-label">
+                  {sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+                </span>
+              </button>
+              <button
+                className="sidebar-mac-btn"
+                onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+                aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+                title={resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
+              >
+                {resolvedTheme === "dark" ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                  </svg>
+                )}
+                <span className="sidebar-mac-label">
+                  {resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
+                </span>
+              </button>
+            </div>
+          )}
           <div className={`status status-${status.state}`}>
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
