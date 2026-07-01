@@ -40,12 +40,33 @@ body, html, #root {
   display: none;
 }
 
+/* ────────── Mac chrome header ──────────
+   A distinct 44px strip along the top of the window that holds the
+   OS traffic lights and our floating sidebar toggle. Slightly
+   sunken background + subtle bottom border read as an explicit
+   header, so the RGB row doesn't float ambiguously over the sidebar
+   content below. Sidebar + main content padding-top offsets clear
+   this strip. */
+.platform-mac .app-shell::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--field);
+  z-index: 998;
+  pointer-events: none;
+}
+
 /* Wispr Flow-style sidebar toggle: sits inline with the traffic
    lights, immediately to their right. Overlay title bar mode extends
    window content up to Y=0, so we can place a fixed-position button
-   at (top: 14px, left: 88px) — 88px clears the ~78px cluster + 10px
-   breathing room. Icon-only, 22×22 hit area, subtle hover fill so it
-   reads as chrome, not content. */
+   at (top: 14px, left: 90px) — 90px clears the ~78px cluster + 12px
+   breathing room. 14px icon in a 22×22 hit box matches the traffic
+   light diameter for visual balance; thin 1.5px stroke keeps it
+   feeling like chrome, not content. */
 .mac-floating-sidebar-toggle {
   display: none;
 }
@@ -54,14 +75,14 @@ body, html, #root {
   align-items: center;
   justify-content: center;
   position: fixed;
-  top: 12px;
-  left: 88px;
-  width: 26px;
+  top: 14px;
+  left: 90px;
+  width: 22px;
   height: 22px;
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text-muted);
   cursor: pointer;
   z-index: 1002;
@@ -72,25 +93,26 @@ body, html, #root {
   color: var(--text);
 }
 
-/* Mac visual polish: the sidebar's default background tint
-   (var(--bg-sunken)) creates a visible two-tone boundary under the
-   traffic lights — RGB buttons sit on the lighter sidebar strip
-   while the main content next to it is darker/whiter. On a native
-   NSWindow title bar strip that reads as "off". Matching sidebar bg
-   to main content gives a single-color strip under the traffic
-   lights, same as Wispr Flow / Linear / Raycast.
-   Also tighten the brand block so the "bulbul" wordmark sits close
-   to the chrome strip and drop the divider that used to cut across
-   the sidebar. */
+/* Mac sidebar: single-color bg matches main content (border-right
+   still delineates the column). Padding-top clears the 44px chrome
+   header + 8px breathing so the brand mark sits comfortably below
+   the RGB row. No divider under the brand — the header separator
+   already carries that job. */
 .platform-mac .sidebar {
   background: var(--bg);
-  padding-top: 8px;
+  padding-top: 52px;
 }
 .platform-mac .brand {
-  padding-top: 40px;
-  padding-bottom: 12px;
+  padding-top: 0;
+  padding-bottom: 14px;
   border-bottom: none;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+/* Main content: same top-clearance treatment as the sidebar so
+   page headers (h1) don't hide behind the chrome header. */
+.platform-mac .content {
+  padding-top: 60px;
 }
 
 .loading {
