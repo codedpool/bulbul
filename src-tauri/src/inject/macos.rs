@@ -146,6 +146,21 @@ pub fn send_ctrl_c() -> Result<()> {
     send_cmd(KVK_C)
 }
 
+/// Force-eager Enigo initialization. Onboarding calls this when the
+/// user reaches the Accessibility step so `Enigo::new`'s built-in
+/// `AXIsProcessTrustedWithOptions({prompt: true})` pops the native
+/// "Bulbul wants Accessibility" dialog inside the wizard rather than
+/// silently on first paste. Result: Bulbul appears in the Accessibility
+/// list at the moment the user is looking for it, instead of the user
+/// having to click `+` and browse to Bulbul.app.
+///
+/// Idempotent — subsequent calls hit the cached OnceLock and short-
+/// circuit. Retry-friendly — a failed prime (permission not granted
+/// yet) leaves SLOT empty so the next call retries.
+pub fn prime_enigo() -> Result<()> {
+    enigo_handle().map(|_| ())
+}
+
 // ----- Keystroke synthesis -------------------------------------------------
 
 /// Dispatch a Cmd+<vkey> chord. Defaults to the enigo (CGEvent) path;
