@@ -1190,6 +1190,25 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
+            // See main-window handler for the fullscreen-then-hide
+            // black-Space bug — same fix applies here.
+            #[cfg(target_os = "macos")]
+            {
+                if matches!(win_handle.is_fullscreen(), Ok(true)) {
+                    let _ = win_handle.set_fullscreen(false);
+                    let after = win_handle.clone();
+                    std::thread::spawn(move || {
+                        for _ in 0..30 {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            if matches!(after.is_fullscreen(), Ok(false)) {
+                                break;
+                            }
+                        }
+                        let _ = after.hide();
+                    });
+                    return;
+                }
+            }
             let _ = win_handle.hide();
         }
     });
@@ -1311,6 +1330,37 @@ fn check_accessibility_status_mac() -> bool {
 #[tauri::command]
 fn check_accessibility_status_mac() -> bool {
     true
+}
+
+/// Mac-only: eagerly trigger the Accessibility TCC prompt. The
+/// onboarding wizard's Permissions step calls this on mount so the
+/// user sees the native "Bulbul wants to use Accessibility" dialog
+/// inside the wizard — instead of Bulbul being invisible in the
+/// System Settings list until first paste tries and silently fails.
+///
+/// Implemented by calling `Enigo::new(&Settings::default())` under the
+/// hood — `Settings::default()` sets `open_prompt_to_get_permissions:
+/// true`, which drives enigo's internal
+/// `AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: true})`
+/// call. That's what registers Bulbul with TCC AND shows the system
+/// dialog. Priming and paste share the same code path, so a successful
+/// prime is a strict guarantee the actual paste-time call also
+/// succeeds — no double-source-of-truth risk.
+///
+/// Idempotent: returns Ok on repeat calls without re-prompting.
+/// Returns Err with a description if AX isn't granted yet, so the
+/// wizard can log-and-poll (the polling `check_accessibility_status_mac`
+/// still drives the ✓/○ UI state).
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn prime_accessibility_mac() -> Result<(), String> {
+    inject::prime_enigo().map_err(|e| format!("{e:#}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn prime_accessibility_mac() -> Result<(), String> {
+    Ok(())
 }
 
 /// Restart Bulbul cleanly. Used by the onboarding wizard's
@@ -1567,6 +1617,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             check_accessibility_status_mac,
+            prime_accessibility_mac,
             check_microphone_status_mac,
             request_microphone_access_mac,
             open_mac_settings_pane,
@@ -1723,6 +1774,33 @@ pub fn run() {
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
+                        // Mac: hiding a window that's inside a fullscreen
+                        // Space leaves the Space behind as a black screen —
+                        // classic AppKit behavior since NSWindow.hide isn't
+                        // aware of NSWindowStyleMaskFullScreen. Exit the
+                        // fullscreen Space first, then hide once the exit
+                        // animation lands, so the user snaps back to their
+                        // previous Space cleanly.
+                        #[cfg(target_os = "macos")]
+                        {
+                            if matches!(win_handle.is_fullscreen(), Ok(true)) {
+                                let _ = win_handle.set_fullscreen(false);
+                                let after = win_handle.clone();
+                                std::thread::spawn(move || {
+                                    // AppKit's fullscreen exit animates over
+                                    // ~500-700ms. Poll every 100ms, cap at 3s
+                                    // so a stuck transition can't deadlock.
+                                    for _ in 0..30 {
+                                        std::thread::sleep(std::time::Duration::from_millis(100));
+                                        if matches!(after.is_fullscreen(), Ok(false)) {
+                                            break;
+                                        }
+                                    }
+                                    let _ = after.hide();
+                                });
+                                return;
+                            }
+                        }
                         let _ = win_handle.hide();
                     }
                 });

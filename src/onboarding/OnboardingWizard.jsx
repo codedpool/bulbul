@@ -319,8 +319,25 @@ function StepPermissions({ onBack, onNext }) {
   // called AVCaptureDevice.requestAccess. Without this, the Settings
   // pane opens but shows no Bulbul row to toggle. Idempotent — calling
   // it after the user has already responded is a no-op.
+  //
+  // Same reasoning drives prime_accessibility_mac: enigo's Enigo::new
+  // internally calls AXIsProcessTrustedWithOptions({prompt: true})
+  // which registers Bulbul with the Accessibility TCC list AND pops
+  // the native "Bulbul wants Accessibility" system dialog. Without
+  // this priming call, the user opens Settings → Accessibility and
+  // finds no Bulbul row — they'd have to click `+` and browse to
+  // Bulbul.app themselves. Priming makes the toggle appear where
+  // they're already looking. If AX is already granted, the call
+  // succeeds silently and doesn't re-prompt.
   useEffect(() => {
     invoke("request_microphone_access_mac").catch(() => {});
+    invoke("prime_accessibility_mac").catch(() => {
+      // Expected on first run before user grants — the wizard's
+      // polling still drives the ✓ state, and the system dialog has
+      // already fired at this point (that's a side-effect of the
+      // AXIsProcessTrustedWithOptions call, not the Rust return
+      // value). Silent catch keeps the console clean.
+    });
   }, []);
 
   async function openSettings(pane) {
@@ -422,7 +439,7 @@ function StepPermissions({ onBack, onNext }) {
           <p className="onb-perm-confirm muted small">
             {axGranted
               ? "Detected — ready to go."
-              : "Toggle Bulbul on, then come back. If the check mark doesn't appear within a few seconds, click Quit & Relaunch — macOS sometimes needs Bulbul to restart before the new permission takes effect."}
+              : "macOS just popped a system dialog asking to grant Accessibility. Click Open System Settings in it, toggle Bulbul on, then come back. If the check mark doesn't appear within a few seconds, click Quit & Relaunch — macOS sometimes needs Bulbul to restart before the new permission takes effect."}
           </p>
         </article>
       </div>

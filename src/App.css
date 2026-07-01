@@ -267,6 +267,35 @@ body, html, #root {
   line-height: 1;
 }
 
+/* Mac-only: the sidebar toggle lives here (below the brand mark)
+   instead of in the titlebar, since sitting next to the traffic lights
+   looked cramped. Hidden by default so Win/Linux don't render it. */
+.brand-sidebar-toggle {
+  display: none;
+}
+.platform-mac .brand-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  margin: -4px 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+.platform-mac .brand-sidebar-toggle:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+.platform-mac .app-shell.sidebar-collapsed .brand-sidebar-toggle {
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .nav {
   display: flex;
   flex-direction: column;

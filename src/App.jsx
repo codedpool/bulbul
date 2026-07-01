@@ -224,6 +224,19 @@ function App() {
           <img src={bulbulMark} alt="" className="brand-mark" aria-hidden />
           <div className="brand-text">bulbul</div>
         </div>
+        {IS_MAC && (
+          <button
+            className="brand-sidebar-toggle"
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            onClick={() => setSidebarOpen((v) => !v)}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+              <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
+        )}
         <nav className="nav">
           {SECTIONS.map((s) => {
             // Settings is a modal popup, not a routed page — clicking it
@@ -339,17 +352,23 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="titlebar-left">
-        <button
-          className="tb-btn tb-sidebar"
-          aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          onClick={onToggleSidebar}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-            <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
-            <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
-          </svg>
-        </button>
+        {/* On macOS the sidebar toggle lives inside the sidebar (below the
+            brand mark) — pairing it with the traffic lights looked
+            cramped. Win/Linux keep it here so it sits next to the custom
+            titlebar controls the OS doesn't provide. */}
+        {!IS_MAC && (
+          <button
+            className="tb-btn tb-sidebar"
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            onClick={onToggleSidebar}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+              <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
+        )}
       </div>
       <div className="titlebar-spacer" data-tauri-drag-region />
       <div className="titlebar-controls">
