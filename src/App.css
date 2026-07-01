@@ -30,14 +30,46 @@ body, html, #root {
   height: 100%;
 }
 
-/* macOS: we now ship the standard native NSWindow chrome (same as
-   Handy), so the OS handles corner rounding and the title bar draws
-   itself. Our custom React .titlebar is redundant on Mac — hide it
-   entirely; sidebar toggle + theme toggle live in the sidebar instead.
-   Native title bar handles window drag automatically, so no
-   data-tauri-drag-region needed here. */
+/* macOS: native NSWindow chrome with TitleBarStyle::Overlay so the
+   title bar strip is transparent and content extends behind it. The
+   React .titlebar is redundant (native chrome renders traffic lights
+   + drag region); hide it. The sidebar toggle floats at the same Y
+   as the traffic lights, positioned to their right — Wispr Flow /
+   Linear / Raycast pattern. */
 .platform-mac .titlebar {
   display: none;
+}
+
+/* Wispr Flow-style sidebar toggle: sits inline with the traffic
+   lights, immediately to their right. Overlay title bar mode extends
+   window content up to Y=0, so we can place a fixed-position button
+   at (top: 14px, left: 88px) — 88px clears the ~78px cluster + 10px
+   breathing room. Icon-only, 22×22 hit area, subtle hover fill so it
+   reads as chrome, not content. */
+.mac-floating-sidebar-toggle {
+  display: none;
+}
+.platform-mac .mac-floating-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 12px;
+  left: 88px;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  z-index: 1002;
+  transition: background 120ms ease, color 120ms ease;
+}
+.platform-mac .mac-floating-sidebar-toggle:hover {
+  background: var(--fill);
+  color: var(--text);
 }
 
 .loading {

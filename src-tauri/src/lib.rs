@@ -25,6 +25,8 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
@@ -1146,20 +1148,20 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // controls) — we suspect a Tauri 2 + WebView2 quirk around lazy window
     // creation in dev mode. Building it during boot gives the WebView2 host
     // time to fully initialize before the user ever interacts with it.
-    // Mac keeps native NSWindow chrome (traffic lights + standard
-    // title bar) via decorations(true). We deliberately do NOT set
-    // titleBarStyle: Overlay or hiddenTitle here anymore — that
-    // combination broke traffic light rendering on some macOS versions
-    // (green button vanishing) and made hide-in-fullscreen extra
-    // fragile. Matches what cjpais/handy ships: default NSWindow, no
-    // style overrides. Win/Linux stay borderless because their custom
-    // React SpTitleBar draws its own min/close.
+    // Mac: native NSWindow chrome (traffic lights work like every
+    // other Mac app), plus TitleBarStyle::Overlay + hiddenTitle so the
+    // title bar strip is transparent and our content extends behind
+    // it. That lets us place a small sidebar toggle at the same Y as
+    // the traffic lights — the Wispr Flow / Linear / Raycast pattern.
+    // Win/Linux stay borderless because their custom React SpTitleBar
+    // draws its own min/close.
     #[cfg(target_os = "macos")]
     let decorations = true;
     #[cfg(not(target_os = "macos"))]
     let decorations = false;
 
-    let window = WebviewWindowBuilder::new(
+    #[allow(unused_mut)]
+    let mut builder = WebviewWindowBuilder::new(
         app,
         "scratchpad",
         WebviewUrl::App("index.html#scratchpad".into()),
@@ -1172,8 +1174,14 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     .resizable(true)
     .maximizable(false)
     .skip_taskbar(false)
-    .visible(false)
-    .build()?;
+    .visible(false);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+    let window = builder.build()?;
 
     // Intercept the close button (X on Win/Linux, red traffic light on
     // macOS) so the window persists across opens. Cmd+Q / RunEvent::
