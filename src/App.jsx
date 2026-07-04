@@ -224,8 +224,8 @@ function App() {
           aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
           title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <rect x="3" y="4" width="18" height="16" rx="2" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <rect x="3" y="4" width="18" height="16" rx="2.5" />
             <line x1="9" y1="4" x2="9" y2="20" />
           </svg>
         </button>
