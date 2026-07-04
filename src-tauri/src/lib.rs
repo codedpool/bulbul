@@ -1725,6 +1725,14 @@ pub fn run() {
             {
                 linux_env::set_app_handle(handle.clone());
                 spawn_signal_watcher(handle.clone());
+                // Wayland: bring up the RemoteDesktop paste portal now so
+                // its one-time "allow input" dialog appears at launch —
+                // or silently, if a prior grant's restore token is on
+                // disk — instead of interrupting the first dictation.
+                // No-op / graceful-fallback on X11 and toolless desktops.
+                if linux_env::is_wayland() {
+                    inject::linux_portal_paste::spawn();
+                }
             }
 
             // Build tray-icon variants. Mac uses a dedicated monochrome

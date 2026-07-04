@@ -25,11 +25,39 @@ use tauri::{AppHandle, Emitter};
 /// cross-platform native watcher signature stays untouched).
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
-/// Last (backend, detail) reported. Kept because the first status
+/// Last hotkey (backend, detail) reported. Kept because the first status
 /// usually fires during Rust setup, before the webview has registered
 /// its event listener — `support_info` folds it in so the frontend's
 /// initial fetch can't miss it.
 static LAST_STATUS: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+/// Same idea for the paste backend (portal / tools / none). Lets the
+/// support banner suppress the "install ydotool" hint once the
+/// RemoteDesktop portal is confirmed working.
+static LAST_PASTE_STATUS: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+/// Register Bulbul's app id with xdg-desktop-portal exactly once per
+/// process. Without this, GNOME's portal rejects GlobalShortcuts +
+/// RemoteDesktop requests with "an app id is required" (the error the
+/// Wayland tester hit). Best-effort: pre-1.17 portals lack the Registry
+/// interface and error here — harmless, the portal calls then fail the
+/// same way they would have anyway. Shared by the hotkey portal and the
+/// paste actor; the OnceCell guarantees the underlying D-Bus call runs
+/// once even when both race at startup.
+pub async fn ensure_host_app_registered() {
+    static ONCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+    ONCE.get_or_init(|| async {
+        match ashpd::AppID::try_from("com.bulbul.app") {
+            Ok(id) => {
+                if let Err(e) = ashpd::register_host_app(id).await {
+                    tracing::debug!("register_host_app failed (old portal?): {e}");
+                }
+            }
+            Err(e) => tracing::debug!("invalid app id: {e}"),
+        }
+    })
+    .await;
+}
 
 pub fn set_app_handle(handle: AppHandle) {
     let _ = APP_HANDLE.set(handle);
@@ -84,6 +112,20 @@ pub fn emit_hotkey_status(backend: &str, detail: String) {
     }
 }
 
+/// Report the paste backend. "portal" = RemoteDesktop portal is live
+/// (no tool needed); "tools" = falling back to wtype/ydotool; "none" =
+/// nothing works yet.
+pub fn emit_paste_status(backend: &str, detail: String) {
+    tracing::info!("linux paste status: backend={backend} detail={detail}");
+    *LAST_PASTE_STATUS.lock() = Some((backend.to_string(), detail.clone()));
+    if let Some(app) = APP_HANDLE.get() {
+        let _ = app.emit(
+            "linux-paste-status",
+            serde_json::json!({ "backend": backend, "detail": detail }),
+        );
+    }
+}
+
 /// Everything the frontend Linux-support banner needs in one call.
 /// Command-invoked from the dashboard on Linux only.
 pub fn support_info() -> serde_json::Value {
@@ -92,6 +134,10 @@ pub fn support_info() -> serde_json::Value {
         .map(|p| format!("{} --toggle-dictation", p.display()))
         .unwrap_or_else(|_| "bulbul --toggle-dictation".into());
     let (hotkey_backend, hotkey_detail) = LAST_STATUS
+        .lock()
+        .clone()
+        .unwrap_or(("unknown".to_string(), String::new()));
+    let (paste_backend, paste_detail) = LAST_PASTE_STATUS
         .lock()
         .clone()
         .unwrap_or(("unknown".to_string(), String::new()));
@@ -106,5 +152,7 @@ pub fn support_info() -> serde_json::Value {
         "toggle_command": toggle_command,
         "hotkey_backend": hotkey_backend,
         "hotkey_detail": hotkey_detail,
+        "paste_backend": paste_backend,
+        "paste_detail": paste_detail,
     })
 }
