@@ -13,8 +13,9 @@ import ScratchpadView from "./views/ScratchpadView.jsx";
 import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
+import LinuxSupportBanner from "./LinuxSupportBanner.jsx";
 import { applyTheme } from "./theme.js";
-import { IS_MAC, RELAUNCH_HINT } from "./platform.js";
+import { IS_LINUX, IS_MAC, RELAUNCH_HINT } from "./platform.js";
 import "./App.css";
 
 const ICONS = {
@@ -316,6 +317,7 @@ function App() {
       </aside>
 
       <main className="content">
+        {IS_LINUX && <LinuxSupportBanner />}
         {stagedUpdate && (
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />

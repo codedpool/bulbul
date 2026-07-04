@@ -116,10 +116,95 @@ body, html, #root {
   padding-top: 60px;
 }
 
+/* ────────── Linux rounded shell ──────────
+   GTK draws borderless windows as sharp rectangles — the compositor
+   only rounds windows that keep server-side decorations, which we
+   dropped for the custom titlebar. The Linux window is created
+   transparent (tauri.linux.conf.json) and the radius lives here in
+   CSS, same trick as the Mac scratchpad. The 1px border stands in for
+   the compositor shadow a decorated window would get, so the edge
+   still reads against same-tone backgrounds. */
+.platform-linux body,
+.platform-linux html,
+.platform-linux #root {
+  background: transparent;
+}
+.platform-linux .app-shell {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--field);
+}
+
 .loading {
   color: var(--text-dim);
   text-align: center;
   padding: 80px;
+}
+
+/* ─────────── Linux support banner ───────────
+   Amber sibling of the update banner below: shows only when the Linux
+   session needs user action (Wayland hotkey fallback, missing paste
+   tool, GNOME tray extension). Same layout position, calmer urgency
+   than an error. */
+
+.linux-banner {
+  padding: 12px 16px;
+  margin: -16px -16px 16px;
+  background: linear-gradient(180deg, rgba(224, 170, 62, 0.16), rgba(224, 170, 62, 0.08));
+  border-bottom: 1px solid rgba(224, 170, 62, 0.35);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.linux-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.linux-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e0aa3e;
+  box-shadow: 0 0 0 3px rgba(224, 170, 62, 0.22);
+  flex-shrink: 0;
+}
+
+.linux-banner-dismiss {
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.linux-banner-dismiss:hover { color: var(--text); background: var(--fill); }
+
+.linux-banner-list {
+  margin: 8px 0 0;
+  padding-left: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.linux-banner-code {
+  display: block;
+  margin-top: 4px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--field);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  font-size: 12px;
+  color: var(--text);
+  -webkit-user-select: text;
+  user-select: text;
+  word-break: break-all;
 }
 
 /* ─────────── Update banner (Mode-B auto-update) ─────────── */

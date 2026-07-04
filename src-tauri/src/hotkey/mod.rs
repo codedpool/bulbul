@@ -37,6 +37,8 @@ use macos as native;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as native;
+#[cfg(target_os = "linux")]
+mod linux_portal;
 
 /// Minimum gap between two fires of the same hotkey. Guards against
 /// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
@@ -268,11 +270,39 @@ fn re_register(
 
     let snapshot = set.lock().clone();
 
+    // Linux Wayland: neither the plugin (X11 grabs are invisible to the
+    // compositor) nor the X11 polling watcher can see global key state,
+    // so dictation + polish go through the GlobalShortcuts portal
+    // instead. Transform slots still register with the plugin below —
+    // best-effort via XWayland. On X11 sessions this block is skipped
+    // and Linux uses the same paths as Windows.
+    #[cfg(target_os = "linux")]
+    let wayland_portal = crate::linux_env::is_wayland();
+    #[cfg(not(target_os = "linux"))]
+    let wayland_portal = false;
+
+    #[cfg(target_os = "linux")]
+    if wayland_portal {
+        linux_portal::register(
+            tx.clone(),
+            snapshot.dictation.clone(),
+            snapshot.polish_dictation.clone(),
+        );
+    } else {
+        // Session may have changed X11↔Wayland only across relogins, but
+        // a previous portal task could still be alive after a settings
+        // change if BULBUL_FORCE_X11 was toggled mid-run. Cheap no-op
+        // otherwise.
+        linux_portal::stop();
+    }
+
     // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
     // plugin's RegisterHotKey backend can't represent these, so we hand
     // off to the platform's native implementation (Windows uses the LL
     // keyboard hook; macOS/Linux use polling watchers).
-    if snapshot.dictation.is_modifier_chord() {
+    if wayland_portal {
+        // Handled by the portal above.
+    } else if snapshot.dictation.is_modifier_chord() {
         native::spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone());
     }
     // Dictation, branch B: regular combo with a non-modifier key
@@ -325,8 +355,18 @@ fn re_register(
             tracing::warn!(
                 "register dictation hotkey failed (combo unsupported by RegisterHotKey?): {e:#}"
             );
+            #[cfg(target_os = "linux")]
+            crate::linux_env::emit_hotkey_status(
+                "none",
+                format!("Couldn't register the dictation hotkey: {e}"),
+            );
         } else {
             tracing::info!("registered dictation shortcut: {:?}", snapshot.dictation);
+            #[cfg(target_os = "linux")]
+            crate::linux_env::emit_hotkey_status(
+                "x11",
+                "Dictation hotkey registered via X11.".to_string(),
+            );
         }
     }
 
@@ -334,8 +374,11 @@ fn re_register(
     // the orchestrator forces CleanupMode::Polished on the pipeline so the
     // output is rewritten-for-clarity regardless of the user's global
     // cleanup mode. Same press/release-poller pattern as dictation,
-    // parameterised on PolishDictationReleased.
-    if let Some(pol_sc) = parsed_to_shortcut(&snapshot.polish_dictation) {
+    // parameterised on PolishDictationReleased. On Wayland the portal
+    // registration above already covers polish.
+    if wayland_portal {
+        // Handled by the portal above.
+    } else if let Some(pol_sc) = parsed_to_shortcut(&snapshot.polish_dictation) {
         let tx_pol = tx.clone();
         let pol_parsed = snapshot.polish_dictation.clone();
         let pol_active = Arc::new(Mutex::new(false));

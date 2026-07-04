@@ -84,25 +84,29 @@ impl Combo {
     }
 }
 
-/// True when running inside a Wayland session. The X11 path still
-/// works on most Wayland sessions via XWayland, but we prefer native
-/// Wayland tools when they're available — pure-Wayland apps can't
-/// receive XWayland-injected keystrokes.
-fn is_wayland() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_some()
-}
+// Session detection + `which` live in crate::linux_env so the hotkey,
+// overlay, and banner code all agree on what kind of session this is.
+// The X11 path still works on most Wayland desktops via XWayland, but
+// we prefer native Wayland tools when installed — pure-Wayland apps
+// can't receive XWayland-injected keystrokes.
+use crate::linux_env::{is_wayland, which};
 
-/// Cheap `which` — returns true if the binary is on PATH and
-/// executable. Cached implicitly per-call; the install state of CLI
-/// tools doesn't change often enough to warrant a memo.
-fn which(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+/// The apt/dnf one-liner for the tool that actually works on this
+/// desktop. Mutter (GNOME) doesn't implement the virtual-keyboard
+/// protocol wtype needs, so GNOME users get pointed at ydotool
+/// (uinput-based — works everywhere, needs its daemon enabled).
+fn tool_install_hint() -> String {
+    if crate::linux_env::is_gnome() {
+        "GNOME's compositor doesn't support wtype — install ydotool instead \
+         (sudo apt install ydotool, then enable it: \
+         systemctl --user enable --now ydotool.service) \
+         or log into an \"Ubuntu on Xorg\" session."
+            .to_string()
+    } else {
+        "Install wtype (sudo apt install wtype) — or ydotool if your \
+         compositor lacks the virtual-keyboard protocol."
+            .to_string()
+    }
 }
 
 pub fn inject_text(text: &str) -> Result<()> {
@@ -111,10 +115,20 @@ pub fn inject_text(text: &str) -> Result<()> {
     }
 
     // On Wayland with at least one supported keystroke tool installed,
-    // take the native path. Otherwise fall through to X11 (which works
-    // via XWayland on Wayland sessions that have it).
+    // take the native path. Otherwise fall through to X11 — which only
+    // reaches XWayland windows, so if even that connection fails the
+    // user has no injection path at all and the error must say what to
+    // install, not just "connection refused".
     if is_wayland() && wayland_keystroke_tool().is_some() {
         inject_text_wayland(text)
+    } else if is_wayland() {
+        inject_text_x11(text).map_err(|e| {
+            anyhow!(
+                "No Wayland keystroke tool is installed and the XWayland \
+                 fallback failed ({e}). {}",
+                tool_install_hint()
+            )
+        })
     } else {
         inject_text_x11(text)
     }
@@ -240,7 +254,8 @@ fn send_combo_wayland(combo: Combo) -> Result<()> {
             Ok(())
         }
         None => Err(anyhow!(
-            "no Wayland keystroke tool available (install wtype or ydotool)"
+            "no Wayland keystroke tool available. {}",
+            tool_install_hint()
         )),
     }
 }
