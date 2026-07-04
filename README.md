@@ -75,7 +75,14 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 - An internet connection (Groq is cloud-hosted)
 - A microphone
 
-macOS and Linux are not currently supported.
+macOS and Linux support is in development on the `v1.1-port` branch (rolling dev builds via `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`). Stable releases are Windows-only for now.
+
+### Linux dev-build notes
+
+- **X11 sessions**: hotkey + paste work out of the box, same as Windows.
+- **Wayland sessions**: the dictation hotkey registers through the desktop's GlobalShortcuts portal (KDE shows a one-time approval dialog). If your desktop blocks the portal (GNOME does for non-sandboxed apps), bind any system keyboard shortcut to `bulbul --toggle-dictation` — press once to start, again to stop. `SIGUSR2` does the same for compositor keybindings.
+- **Pasting on Wayland** needs a keystroke tool: `wtype` on most desktops, `ydotool` on GNOME (whose compositor blocks wtype). The in-app banner tells you which one your session needs.
+- **GNOME tray**: install the "AppIndicator and KStatusNotifierItem" Shell extension to see Bulbul's tray icon; dictation works without it.
 
 ---
 

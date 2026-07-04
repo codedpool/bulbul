@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
 import { applyTheme } from "../theme.js";
-import { IS_MAC, META_KEY_NAME } from "../platform.js";
+import { IS_LINUX, IS_MAC, META_KEY_NAME } from "../platform.js";
 import "./onboarding.css";
 
 // The stored hotkey VALUES are platform-independent — Bulbul's parser maps
@@ -58,7 +58,32 @@ const HOTKEY_PRESETS_MAC = [
   },
 ];
 
-const HOTKEY_PRESETS = IS_MAC ? HOTKEY_PRESETS_MAC : HOTKEY_PRESETS_DESKTOP;
+// Linux presets skip modifier-only chords: the Super key belongs to the
+// compositor (GNOME Activities, KDE launcher), and Wayland's shortcut
+// portal can only bind combos that contain a real key.
+const HOTKEY_PRESETS_LINUX = [
+  {
+    value: "Ctrl+Alt+Space",
+    label: "Ctrl + Alt + Space",
+    detail: "Hold to dictate. Doesn't fight the Super key, and works on both X11 and Wayland.",
+  },
+  {
+    value: "Ctrl+Shift+Space",
+    label: "Ctrl + Shift + Space",
+    detail: "Same hold-to-talk feel, different fingers. Pick this if Ctrl + Alt + Space is taken.",
+  },
+  {
+    value: "custom",
+    label: "Custom combo…",
+    detail: "Capture any combination you like.",
+  },
+];
+
+const HOTKEY_PRESETS = IS_MAC
+  ? HOTKEY_PRESETS_MAC
+  : IS_LINUX
+    ? HOTKEY_PRESETS_LINUX
+    : HOTKEY_PRESETS_DESKTOP;
 
 const VIDEO_URL = "https://www.youtube.com/watch?v=9VDbhptCzlU";
 const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/9VDbhptCzlU";
@@ -1120,7 +1145,9 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
                   )}
                   {capturing && !captureError && (
                     <div className="onb-hotkey-hint">
-                      Modifier-only chords (Ctrl+Win, Alt+Win) work too — release to confirm.
+                      {IS_LINUX
+                        ? "Include a regular key (letter, Space, F-key) — modifier-only chords can't be bound on Wayland."
+                        : "Modifier-only chords (Ctrl+Win, Alt+Win) work too — release to confirm."}
                     </div>
                   )}
                 </div>

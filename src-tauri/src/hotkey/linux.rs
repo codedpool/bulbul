@@ -135,10 +135,19 @@ pub fn spawn_modifier_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotke
         let (conn, _) = match x11rb::connect(None) {
             Ok(c) => c,
             Err(e) => {
+                // No X server at all (pure Wayland without XWayland, or
+                // headless). Tell the user instead of dying silently —
+                // this was the "hotkey just doesn't work" black hole.
                 tracing::warn!(
                     "Linux modifier-chord watcher: x11rb::connect failed: {e}; \
-                     pure-Wayland session? Hotkey {:?} will not fire",
+                     hotkey {:?} will not fire",
                     hotkey
+                );
+                crate::linux_env::emit_hotkey_status(
+                    "none",
+                    "Couldn't reach an X server to watch the keyboard. \
+                     Bind a system shortcut to Bulbul's CLI toggle instead."
+                        .to_string(),
                 );
                 return;
             }
@@ -152,6 +161,10 @@ pub fn spawn_modifier_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotke
         let mut state = State::Idle;
         let mut last_fire: Option<Instant> = None;
         tracing::info!("Linux modifier-chord watcher started for {:?}", hotkey);
+        crate::linux_env::emit_hotkey_status(
+            "x11",
+            "Watching the keyboard via X11.".to_string(),
+        );
 
         while alive.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(RELEASE_POLL_MS));

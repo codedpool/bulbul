@@ -7,6 +7,8 @@ mod hotkey;
 mod inject;
 #[cfg(target_os = "windows")]
 mod keyboard_hook;
+#[cfg(target_os = "linux")]
+mod linux_env;
 mod telemetry;
 mod uia;
 mod window_info;
@@ -1181,6 +1183,15 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
             .title_bar_style(TitleBarStyle::Overlay)
             .hidden_title(true);
     }
+    // Linux: borderless GTK windows are sharp-cornered rectangles (the
+    // compositor only rounds server-side decorations, which we removed).
+    // Transparent surface + CSS border-radius on `.platform-linux
+    // .sp-shell` recreates the rounded shell Windows gets from DWM and
+    // Mac from native chrome.
+    #[cfg(target_os = "linux")]
+    {
+        builder = builder.transparent(true);
+    }
     let window = builder.build()?;
 
     // Intercept the close button (X on Win/Linux, red traffic light on
@@ -1314,6 +1325,22 @@ fn get_staged_update_version(state: tauri::State<'_, AppState>) -> Option<String
 ///
 /// Called both from the dashboard banner ("Install & restart") and from
 /// the tray Quit handler when an update is sitting in the slot.
+/// Linux-only: session facts for the dashboard's Linux-support banner
+/// (Wayland vs X11, installed injection tools, desktop environment, and
+/// the exact CLI-toggle command to bind). Null elsewhere — the frontend
+/// only calls it when running on Linux.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn get_linux_support_info() -> serde_json::Value {
+    linux_env::support_info()
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+fn get_linux_support_info() -> serde_json::Value {
+    serde_json::Value::Null
+}
+
 /// Mac-only: query whether Bulbul currently has Accessibility permission.
 /// Polled by the onboarding wizard's Permissions step to enable Continue
 /// once granted. On other platforms returns true unconditionally so the
@@ -1547,6 +1574,16 @@ async fn install_staged_update(app: AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // webkit2gtk's DMA-BUF renderer is a recurring source of blank or
+    // garbled windows on NVIDIA/driver-quirky Linux boxes, and of
+    // artifacts on transparent windows (which our rounded shell needs).
+    // Same workaround Handy and most shipping Tauri apps apply. Users
+    // can override by exporting the variable themselves before launch.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     // Write tracing to stderr (not stdout). stdout is block-buffered
     // when the process's stdout is piped (e.g. when running under
     // `cargo run` from a captured-output dev harness), which means logs
@@ -1600,8 +1637,19 @@ pub fn run() {
         // shared SQLite db, the tray, or the config file. Focusing the
         // existing main window gives the user visible feedback so the
         // double-launch doesn't feel like nothing happened.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // `bulbul --toggle-dictation` from a second process lands
+            // here inside the primary. This is the universal hotkey
+            // fallback for Linux desktops where no global-shortcut
+            // mechanism works (e.g. GNOME Wayland rejecting the portal):
+            // the user binds a DE-level custom shortcut to the command
+            // and it drives hold-to-talk as a toggle. Works on every
+            // platform, but only Linux docs advertise it.
+            if argv.iter().any(|a| a == "--toggle-dictation") {
+                cli_toggle_dictation(app, false);
+            } else if argv.iter().any(|a| a == "--toggle-polish") {
+                cli_toggle_dictation(app, true);
+            } else if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
@@ -1616,6 +1664,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            get_linux_support_info,
             check_accessibility_status_mac,
             prime_accessibility_mac,
             check_microphone_status_mac,
@@ -1668,6 +1717,15 @@ pub fn run() {
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            // Must precede install_global_shortcuts below — the Linux
+            // hotkey watchers (portal + X11) report their fate through
+            // linux_env::emit_hotkey_status, which needs the handle.
+            #[cfg(target_os = "linux")]
+            {
+                linux_env::set_app_handle(handle.clone());
+                spawn_signal_watcher(handle.clone());
+            }
 
             // Build tray-icon variants. Mac uses a dedicated monochrome
             // template asset (black silhouette on transparent) so the
@@ -1961,6 +2019,21 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
 }
 
 fn setup_overlay_window(app: &AppHandle) -> tauri::Result<()> {
+    // Wayland has no global window positioning — set_position is a
+    // no-op and the compositor drops new windows wherever it likes
+    // (usually dead center). A "bottom-center pill" that actually
+    // renders mid-screen looks like a bug (testers read it as "the
+    // tray is in the middle of my desktop"), and some compositors
+    // focus it on map, which would steal the paste target. Skip the
+    // pill entirely on Wayland until a gtk-layer-shell integration
+    // lands; every consumer (position/height/hover) already
+    // None-guards on the window lookup. X11 sessions keep the pill.
+    #[cfg(target_os = "linux")]
+    if linux_env::is_wayland() {
+        tracing::info!("Wayland session: overlay pill disabled (no global positioning)");
+        return Ok(());
+    }
+
     let overlay = WebviewWindowBuilder::new(
         app,
         "overlay",
@@ -1988,6 +2061,72 @@ fn show_settings(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+/// Toggle-mode dictation for external triggers (CLI re-invocation via
+/// single-instance, SIGUSR1/2 on Linux). Hold-to-talk needs a press AND
+/// a release, but a DE shortcut can only fire a command — so the first
+/// call starts recording, the second stops it. The orchestrator ignores
+/// a press while recording and a release while idle, so drift between
+/// this flag and actual recorder state (e.g. the user mixed hotkey and
+/// CLI mid-recording) self-corrects after one extra invocation.
+fn cli_toggle_dictation(app: &AppHandle, polish: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
+    static ACTIVE_IS_POLISH: AtomicBool = AtomicBool::new(false);
+
+    let Some(state) = app.try_state::<AppState>() else {
+        tracing::warn!("cli toggle before AppState ready — ignored");
+        return;
+    };
+    if !ACTIVE.swap(true, Ordering::SeqCst) {
+        ACTIVE_IS_POLISH.store(polish, Ordering::SeqCst);
+        let evt = if polish {
+            HotkeyEvent::PolishDictationPressed
+        } else {
+            HotkeyEvent::DictationPressed
+        };
+        tracing::info!("cli toggle: start (polish={polish})");
+        let _ = state.hotkey_tx.send(evt);
+    } else {
+        ACTIVE.store(false, Ordering::SeqCst);
+        // Release with the same flavor the recording started with; the
+        // orchestrator treats both release types identically anyway.
+        let evt = if ACTIVE_IS_POLISH.load(Ordering::SeqCst) {
+            HotkeyEvent::PolishDictationReleased
+        } else {
+            HotkeyEvent::DictationReleased
+        };
+        tracing::info!("cli toggle: stop");
+        let _ = state.hotkey_tx.send(evt);
+    }
+}
+
+/// SIGUSR2 toggles dictation, SIGUSR1 toggles polish dictation — the
+/// signal-level equivalent of `--toggle-dictation` for users who prefer
+/// `kill -USR2 $(pidof bulbul)` in a compositor keybinding (Sway,
+/// Hyprland) over spawning a second process.
+#[cfg(target_os = "linux")]
+fn spawn_signal_watcher(app: AppHandle) {
+    use signal_hook::consts::{SIGUSR1, SIGUSR2};
+    use signal_hook::iterator::Signals;
+
+    let mut signals = match Signals::new([SIGUSR1, SIGUSR2]) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("could not install SIGUSR handlers: {e:#}");
+            return;
+        }
+    };
+    thread::spawn(move || {
+        for sig in signals.forever() {
+            match sig {
+                SIGUSR2 => cli_toggle_dictation(&app, false),
+                SIGUSR1 => cli_toggle_dictation(&app, true),
+                _ => {}
+            }
+        }
+    });
 }
 
 fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEvent>) {

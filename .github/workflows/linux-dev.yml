@@ -86,9 +86,12 @@ jobs:
             curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh
             ```
 
-            The script picks the right AppImage for your architecture, verifies the minisign signature, and integrates with your desktop launcher.
+            On Ubuntu/Debian the script installs the `.deb` (which pulls the tray dependencies); elsewhere it falls back to the AppImage. Every artifact is minisign-verified before install, and the script prints Wayland/GNOME setup notes when they apply.
 
             Three formats produced per build: `.AppImage` (universal), `.deb` (Ubuntu/Debian), `.rpm` (Fedora/openSUSE). Each push to `v1.1-port` replaces this release.
           releaseDraft: false
           prerelease: true
           includeUpdaterJson: true
+          # Note: tauri-action signs every bundle (.deb.sig / .rpm.sig /
+          # .AppImage.sig are all attached) — install-dev.sh's deb route
+          # relies on the detached .deb.sig being present.
