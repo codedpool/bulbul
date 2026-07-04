@@ -103,13 +103,20 @@ core-foundation = "0.10"
 # - foreground-window discovery (window_info/linux.rs)
 # - XTest extension for synthetic keyboard events (inject/linux.rs)
 x11rb = { version = "0.13", features = ["xtest"] }
-# xdg-desktop-portal client. GlobalShortcuts portal gives us native
-# Wayland press/release hotkeys (hotkey/linux_portal.rs) — the only
-# sanctioned way to get global key events on Wayland. tokio backend
-# matches the tokio we already ship; each portal is feature-gated.
-ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts"] }
+# xdg-desktop-portal client. Two portals:
+#   - global_shortcuts: native Wayland press/release hotkeys
+#     (hotkey/linux_portal.rs)
+#   - remote_desktop: native keystroke injection for paste on Wayland
+#     (inject/linux_portal_paste.rs) — replaces needing wtype/ydotool
+# register_host_app (crate root) attaches our app id so GNOME's portal
+# stops rejecting requests with "an app id is required". tokio backend
+# matches the tokio we already ship.
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop"] }
 # StreamExt for the portal's Activated/Deactivated signal streams.
 futures-util = "0.3"
+# BitFlags<DeviceType> for the RemoteDesktop select_devices call. Pinned
+# to the version ashpd 0.13 already resolves so the flag types match.
+enumflags2 = "0.7"
 # SIGUSR1/SIGUSR2 handlers — DE-level custom shortcuts can `kill -USR2`
 # (or run `bulbul --toggle-dictation`) to drive dictation on compositors
 # without a working GlobalShortcuts portal.

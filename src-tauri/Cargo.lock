@@ -129,6 +129,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.2",
  "serde",
+ "serde_repr",
  "tokio",
  "zbus",
 ]
@@ -445,6 +446,7 @@ dependencies = [
  "cpal",
  "dirs 5.0.1",
  "enigo",
+ "enumflags2",
  "futures-util",
  "hound",
  "objc2",

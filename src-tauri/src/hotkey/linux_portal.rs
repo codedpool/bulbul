@@ -148,6 +148,11 @@ async fn run_session(
     polish: ParsedHotkey,
     stop_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), ashpd::Error> {
+    // Attach our app id first. GNOME's portal rejects bind_shortcuts
+    // with "an app id is required" (the exact error the tester saw)
+    // unless the process is registered via the Registry interface.
+    crate::linux_env::ensure_host_app_registered().await;
+
     let portal = GlobalShortcuts::new().await?;
     let session = portal.create_session(Default::default()).await?;
 

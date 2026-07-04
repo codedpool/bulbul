@@ -109,33 +109,43 @@ fn tool_install_hint() -> String {
     }
 }
 
+/// Can we inject natively on this Wayland session? True when the
+/// RemoteDesktop portal is live (no tool needed) OR a wtype/ydotool
+/// binary is installed. When false, only the XWayland best-effort path
+/// remains.
+fn wayland_can_inject() -> bool {
+    super::linux_portal_paste::is_ready() || wayland_keystroke_tool().is_some()
+}
+
 pub fn inject_text(text: &str) -> Result<()> {
     if text.is_empty() {
         return Ok(());
     }
 
-    // On Wayland with at least one supported keystroke tool installed,
-    // take the native path. Otherwise fall through to X11 — which only
+    // On Wayland, prefer the native path — RemoteDesktop portal first,
+    // then wtype/ydotool. Otherwise fall through to X11, which only
     // reaches XWayland windows, so if even that connection fails the
     // user has no injection path at all and the error must say what to
     // install, not just "connection refused".
-    if is_wayland() && wayland_keystroke_tool().is_some() {
-        inject_text_wayland(text)
-    } else if is_wayland() {
-        inject_text_x11(text).map_err(|e| {
-            anyhow!(
-                "No Wayland keystroke tool is installed and the XWayland \
-                 fallback failed ({e}). {}",
-                tool_install_hint()
-            )
-        })
+    if is_wayland() {
+        if wayland_can_inject() {
+            inject_text_wayland(text)
+        } else {
+            inject_text_x11(text).map_err(|e| {
+                anyhow!(
+                    "No native Wayland input path is available and the \
+                     XWayland fallback failed ({e}). {}",
+                    tool_install_hint()
+                )
+            })
+        }
     } else {
         inject_text_x11(text)
     }
 }
 
 pub fn send_ctrl_v() -> Result<()> {
-    if is_wayland() && wayland_keystroke_tool().is_some() {
+    if is_wayland() && wayland_can_inject() {
         send_combo_wayland(Combo::CtrlV)
     } else {
         post_x11_combo(Combo::CtrlV)
@@ -143,7 +153,7 @@ pub fn send_ctrl_v() -> Result<()> {
 }
 
 pub fn send_ctrl_c() -> Result<()> {
-    if is_wayland() && wayland_keystroke_tool().is_some() {
+    if is_wayland() && wayland_can_inject() {
         send_combo_wayland(Combo::CtrlC)
     } else {
         post_x11_combo(Combo::CtrlC)
@@ -222,6 +232,18 @@ fn inject_text_wayland(text: &str) -> Result<()> {
 }
 
 fn send_combo_wayland(combo: Combo) -> Result<()> {
+    // RemoteDesktop portal first — native, no external tool. Any error
+    // (revoked grant, timeout) falls through to the tool path below.
+    if super::linux_portal_paste::is_ready() {
+        let key = match combo {
+            Combo::CtrlV => super::linux_portal_paste::EV_V,
+            Combo::CtrlC => super::linux_portal_paste::EV_C,
+        };
+        match super::linux_portal_paste::send_combo(key) {
+            Ok(()) => return Ok(()),
+            Err(e) => tracing::warn!("portal paste failed, trying tools: {e}"),
+        }
+    }
     match wayland_keystroke_tool() {
         Some(WaylandTool::Wtype) => {
             // wtype -M ctrl -k v   (press Ctrl modifier, tap key, release)

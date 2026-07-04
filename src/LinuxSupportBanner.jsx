@@ -15,7 +15,8 @@ const DISMISS_KEY = "bulbul-linux-banner-dismissed";
 
 export default function LinuxSupportBanner() {
   const [info, setInfo] = useState(null);
-  const [status, setStatus] = useState(null); // {backend, detail}
+  const [status, setStatus] = useState(null); // hotkey {backend, detail}
+  const [paste, setPaste] = useState(null); // paste {backend, detail}
   const [dismissed, setDismissed] = useState(
     () => localStorage.getItem(DISMISS_KEY) || "",
   );
@@ -29,14 +30,24 @@ export default function LinuxSupportBanner() {
         if (v.hotkey_backend && v.hotkey_backend !== "unknown") {
           setStatus({ backend: v.hotkey_backend, detail: v.hotkey_detail });
         }
+        if (v.paste_backend && v.paste_backend !== "unknown") {
+          setPaste({ backend: v.paste_backend, detail: v.paste_detail });
+        }
       })
       .catch(() => {});
-    const un = listen("linux-hotkey-status", (e) => {
+    // Both backends can flip after the initial fetch — the Wayland
+    // portals resolve a beat after boot (permission dialogs, D-Bus
+    // round-trips), so keep listening and re-render when they land.
+    const unHotkey = listen("linux-hotkey-status", (e) => {
       if (mounted && e.payload) setStatus(e.payload);
+    });
+    const unPaste = listen("linux-paste-status", (e) => {
+      if (mounted && e.payload) setPaste(e.payload);
     });
     return () => {
       mounted = false;
-      un.then((f) => f()).catch(() => {});
+      unHotkey.then((f) => f()).catch(() => {});
+      unPaste.then((f) => f()).catch(() => {});
     };
   }, []);
 
@@ -54,12 +65,16 @@ export default function LinuxSupportBanner() {
     });
   }
 
-  if (info.wayland && !info.wtype && !info.ydotool) {
+  // Paste only needs user action when the RemoteDesktop portal isn't
+  // carrying it AND no keystroke tool is installed to fall back on.
+  const pasteWorks =
+    paste?.backend === "portal" || info.wtype || info.ydotool;
+  if (info.wayland && !pasteWorks) {
     issues.push({
       key: "paste",
       text: info.gnome
-        ? "Pasting into Wayland apps needs ydotool on GNOME (its compositor blocks the tool Bulbul prefers)."
-        : "Pasting into Wayland apps needs a keystroke tool.",
+        ? "Pasting isn’t working yet. Approve the “Remote control” prompt if you see one, or install ydotool as a fallback (GNOME blocks the lighter wtype tool)."
+        : "Pasting isn’t working yet. Approve the “Remote control” prompt if you see one, or install a keystroke tool as a fallback.",
       command: info.gnome
         ? "sudo apt install ydotool && systemctl --user enable --now ydotool.service"
         : "sudo apt install wtype",

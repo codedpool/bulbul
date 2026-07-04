@@ -80,8 +80,11 @@ macOS and Linux support is in development on the `v1.1-port` branch (rolling dev
 ### Linux dev-build notes
 
 - **X11 sessions**: hotkey + paste work out of the box, same as Windows.
-- **Wayland sessions**: the dictation hotkey registers through the desktop's GlobalShortcuts portal (KDE shows a one-time approval dialog). If your desktop blocks the portal (GNOME does for non-sandboxed apps), bind any system keyboard shortcut to `bulbul --toggle-dictation` — press once to start, again to stop. `SIGUSR2` does the same for compositor keybindings.
-- **Pasting on Wayland** needs a keystroke tool: `wtype` on most desktops, `ydotool` on GNOME (whose compositor blocks wtype). The in-app banner tells you which one your session needs.
+- **Wayland sessions**: Bulbul uses xdg-desktop-portal — no external tools required. On first launch it asks for two permissions via system dialogs (approve once, the grant is remembered):
+  - **Global shortcuts** — for the dictation hotkey.
+  - **Remote control** — for typing text into the focused app.
+- **If the hotkey doesn't fire** (some GNOME versions decline the shortcuts portal for non-sandboxed apps), bind any system keyboard shortcut to `bulbul --toggle-dictation` — press once to start, again to stop. `SIGUSR2` does the same for compositor keybindings.
+- **If pasting doesn't work** (you declined the Remote-control prompt, or your compositor lacks the portal), install a keystroke tool as a fallback: `wtype` on most desktops, `ydotool` on GNOME (whose compositor blocks wtype). The in-app banner tells you which.
 - **GNOME tray**: install the "AppIndicator and KStatusNotifierItem" Shell extension to see Bulbul's tray icon; dictation works without it.
 
 ---
