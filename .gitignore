@@ -27,3 +27,8 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+# Sibling repo — the bulbultypes.xyz marketing site lives here for local
+# convenience but is its own git repo and must NEVER be committed to the
+# bulbul app repo. Excluded so accidental `git add` can't pull it in.
+bulbultypes/
