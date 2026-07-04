@@ -63,10 +63,10 @@ body, html, #root {
 /* Wispr Flow-style sidebar toggle: sits inline with the traffic
    lights, immediately to their right. Overlay title bar mode extends
    window content up to Y=0, so we can place a fixed-position button
-   at (top: 14px, left: 90px) — 90px clears the ~78px cluster + 12px
-   breathing room. 14px icon in a 22×22 hit box matches the traffic
-   light diameter for visual balance; thin 1.5px stroke keeps it
-   feeling like chrome, not content. */
+   at (top: 10px, left: 84px) — 84px clears the ~78px cluster + a
+   small gap. 16px icon w/ 1.9px stroke in a 26×26 hit box matches
+   the visual mass of the filled traffic-light discs; anything
+   smaller reads as a thin wispy afterthought next to them. */
 .mac-floating-sidebar-toggle {
   display: none;
 }
@@ -75,22 +75,23 @@ body, html, #root {
   align-items: center;
   justify-content: center;
   position: fixed;
-  top: 14px;
-  left: 90px;
-  width: 22px;
-  height: 22px;
+  top: 10px;
+  left: 84px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: 4px;
-  color: var(--text-muted);
+  border-radius: 5px;
+  color: var(--text);
+  opacity: 0.7;
   cursor: pointer;
   z-index: 1002;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 120ms ease, opacity 120ms ease;
 }
 .platform-mac .mac-floating-sidebar-toggle:hover {
   background: var(--fill);
-  color: var(--text);
+  opacity: 1;
 }
 
 /* Mac sidebar: single-color bg matches main content (border-right
