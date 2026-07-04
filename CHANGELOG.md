@@ -4,6 +4,8 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-07-02
+
 ### Added
 
 - **Optional display name** — captured on the onboarding Welcome step (a single optional first-name field) and editable later in Settings → Personalization. Used to greet the user on the Home page (*"Welcome back, Roman"*) and to sign Compose drafts with their actual name instead of the model's `[Your Name]` placeholder. Stays in the local config file; never sent to any backend.
