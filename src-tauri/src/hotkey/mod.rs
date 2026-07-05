@@ -39,6 +39,8 @@ mod linux;
 use linux as native;
 #[cfg(target_os = "linux")]
 mod linux_portal;
+#[cfg(target_os = "linux")]
+mod linux_evdev;
 
 /// Minimum gap between two fires of the same hotkey. Guards against
 /// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
@@ -270,14 +272,35 @@ fn re_register(
 
     let snapshot = set.lock().clone();
 
-    // Linux Wayland: neither the plugin (X11 grabs are invisible to the
-    // compositor) nor the X11 polling watcher can see global key state,
-    // so dictation + polish go through the GlobalShortcuts portal
-    // instead. Transform slots still register with the plugin below —
-    // best-effort via XWayland. On X11 sessions this block is skipped
-    // and Linux uses the same paths as Windows.
+    // Linux: the best hotkey path is reading /dev/input directly (evdev)
+    // — instant, true hold-to-talk, works on every compositor. Available
+    // once the user has input-device access (the .deb's input-group
+    // grant + one relogin). When it's driving, it fully owns dictation +
+    // polish and we deliberately DON'T also run the portal or plugin
+    // watchers for them — running two mechanisms at once is what made the
+    // hotkey fire erratically before.
     #[cfg(target_os = "linux")]
-    let wayland_portal = crate::linux_env::is_wayland();
+    let evdev_driving = linux_evdev::available();
+    #[cfg(not(target_os = "linux"))]
+    let evdev_driving = false;
+
+    #[cfg(target_os = "linux")]
+    if evdev_driving {
+        linux_evdev::register(
+            tx.clone(),
+            snapshot.dictation.clone(),
+            snapshot.polish_dictation.clone(),
+        );
+    } else {
+        linux_evdev::stop();
+    }
+
+    // Linux Wayland WITHOUT evdev access (pre-relogin, AppImage): fall
+    // back to the GlobalShortcuts portal for dictation + polish. Neither
+    // the plugin nor the X11 poller can see global key state on Wayland.
+    // On X11 sessions this is skipped and Linux uses the Windows paths.
+    #[cfg(target_os = "linux")]
+    let wayland_portal = !evdev_driving && crate::linux_env::is_wayland();
     #[cfg(not(target_os = "linux"))]
     let wayland_portal = false;
 
@@ -289,10 +312,7 @@ fn re_register(
             snapshot.polish_dictation.clone(),
         );
     } else {
-        // Session may have changed X11↔Wayland only across relogins, but
-        // a previous portal task could still be alive after a settings
-        // change if BULBUL_FORCE_X11 was toggled mid-run. Cheap no-op
-        // otherwise.
+        // No portal when evdev drives (or on X11) — stop any prior task.
         linux_portal::stop();
     }
 
@@ -300,8 +320,8 @@ fn re_register(
     // plugin's RegisterHotKey backend can't represent these, so we hand
     // off to the platform's native implementation (Windows uses the LL
     // keyboard hook; macOS/Linux use polling watchers).
-    if wayland_portal {
-        // Handled by the portal above.
+    if evdev_driving || wayland_portal {
+        // Handled by evdev / portal above.
     } else if snapshot.dictation.is_modifier_chord() {
         native::spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone());
     }
@@ -374,10 +394,10 @@ fn re_register(
     // the orchestrator forces CleanupMode::Polished on the pipeline so the
     // output is rewritten-for-clarity regardless of the user's global
     // cleanup mode. Same press/release-poller pattern as dictation,
-    // parameterised on PolishDictationReleased. On Wayland the portal
-    // registration above already covers polish.
-    if wayland_portal {
-        // Handled by the portal above.
+    // parameterised on PolishDictationReleased. On Linux the evdev or
+    // portal registration above already covers polish.
+    if evdev_driving || wayland_portal {
+        // Handled by evdev / portal above.
     } else if let Some(pol_sc) = parsed_to_shortcut(&snapshot.polish_dictation) {
         let tx_pol = tx.clone();
         let pol_parsed = snapshot.polish_dictation.clone();
