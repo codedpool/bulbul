@@ -26,10 +26,9 @@
 //!
 //! History: an earlier hand-rolled CGEvent path silently no-op'd on
 //! some macOS versions, so the project moved to osascript (PR by
-//! @Pskuntal1248). enigo's CGEvent path is the production path in
-//! cjpais/handy (23k+ stars) and works across 10.15–Tahoe in the wild,
-//! so we now use it as the default and keep osascript only as an opt-in
-//! safety net.
+//! @Pskuntal1248). enigo's CGEvent path is well-proven across
+//! 10.15–Tahoe in the wild, so we now use it as the default and keep
+//! osascript only as an opt-in safety net.
 //!
 //! See:
 //!   <https://github.com/nicke5012/TransientPasteboardType>
@@ -81,9 +80,9 @@ const MOD_POLL_MAX_ATTEMPTS: u32 = 24; // = 600ms ceiling
 const POST_RELEASE_DELAY: Duration = Duration::from_millis(30);
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(40);
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(1000);
-/// How long Cmd stays held between press and release. Matches
-/// cjpais/handy. Below ~60ms some Electron apps drop the chord; 100ms
-/// is comfortably above that floor without being noticeable.
+/// How long Cmd stays held between press and release. Below ~60ms some
+/// Electron apps drop the chord; 100ms is comfortably above that floor
+/// without being noticeable.
 const CMD_HOLD: Duration = Duration::from_millis(100);
 
 // ----- FFI: CGEventSourceKeyState ------------------------------------------
@@ -200,9 +199,9 @@ fn enigo_handle() -> Result<&'static Mutex<Enigo>> {
 }
 
 /// Press Cmd, click the given keycode, hold 100ms with Cmd still down,
-/// then release Cmd. Mirrors cjpais/handy. The 100ms hold matters: some
-/// Electron-based apps (Slack, VS Code at one point) drop the chord if
-/// Cmd releases on the same frame the V keydown lands.
+/// then release Cmd. The 100ms hold matters: some Electron-based apps
+/// (Slack, VS Code at one point) drop the chord if Cmd releases on the
+/// same frame the V keydown lands.
 fn send_cmd_enigo(vkey: u16) -> Result<()> {
     let mu = enigo_handle()?;
     // Press + click are done while we hold the lock. We drop the lock

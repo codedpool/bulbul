@@ -70,7 +70,7 @@ features = [
 # osascript+System Events path that needed the AppleEvents TCC prompt;
 # enigo posts events directly through CGEventPost which only needs the
 # Accessibility permission we already require for the global hotkey
-# polling. Matches what cjpais/handy ships in production.
+# polling.
 enigo = "0.6.1"
 # NSWorkspace + NSRunningApplication for foreground-app detection
 # (window_info/macos.rs).

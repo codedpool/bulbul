@@ -1577,8 +1577,8 @@ pub fn run() {
     // webkit2gtk's DMA-BUF renderer is a recurring source of blank or
     // garbled windows on NVIDIA/driver-quirky Linux boxes, and of
     // artifacts on transparent windows (which our rounded shell needs).
-    // Same workaround Handy and most shipping Tauri apps apply. Users
-    // can override by exporting the variable themselves before launch.
+    // The standard workaround most shipping Tauri apps apply. Users can
+    // override by exporting the variable themselves before launch.
     #[cfg(target_os = "linux")]
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
