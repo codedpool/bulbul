@@ -372,6 +372,27 @@ fn wl_paste_read() -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+// --- Wayland clipboard access for callers outside this module (the
+// transform pipeline). arboard can't reliably read a selection another
+// app just copied on Wayland — wl-paste/wl-copy go through the same path
+// dictation already uses. ---
+
+/// True when clipboard access should go through wl-copy/wl-paste: a
+/// Wayland session with wl-clipboard installed (a .deb/.rpm dependency).
+pub fn wayland_clipboard_available() -> bool {
+    is_wayland() && which("wl-copy") && which("wl-paste")
+}
+
+/// Read the clipboard via wl-paste. `None` when empty or unreadable.
+pub fn wayland_clipboard_read() -> Option<String> {
+    wl_paste_read().ok().filter(|s| !s.is_empty())
+}
+
+/// Write text to the clipboard via wl-copy. Best-effort.
+pub fn wayland_clipboard_write(text: &str) -> Result<()> {
+    wl_copy_write(text)
+}
+
 // === X11 path =============================================================
 
 fn inject_text_x11(text: &str) -> Result<()> {

@@ -2337,33 +2337,46 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
         .map(|t| t.name.clone())
         .unwrap_or_else(|| "<fallback>".into());
     tracing::info!("transform_pipeline start: transform={transform_name}");
-    // Reuse a single Clipboard handle across save / clear / read / paste /
-    // restore. Repeatedly opening arboard on Windows triggers OLE init/teardown
+    // On Wayland, arboard can't reliably read a selection another app just
+    // copied (the same limitation that makes dictation use wl-copy/
+    // wl-paste), and opening it can fail outright — so route the pipeline's
+    // clipboard through wl-clipboard there and skip arboard entirely.
+    // Every other platform keeps a single reused arboard handle:
+    // repeatedly re-opening arboard on Windows triggers OLE init/teardown
     // cycles that can corrupt the heap when paired with rdev's keyboard hook.
-    let mut clipboard = match arboard::Clipboard::new() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("clipboard open failed: {e:#}");
-            emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
-            return;
+    #[cfg(target_os = "linux")]
+    let use_wl = inject::wayland_clipboard_available();
+    #[cfg(not(target_os = "linux"))]
+    let use_wl = false;
+
+    let mut clipboard: Option<arboard::Clipboard> = if use_wl {
+        None
+    } else {
+        match arboard::Clipboard::new() {
+            Ok(c) => Some(c),
+            Err(e) => {
+                tracing::error!("clipboard open failed: {e:#}");
+                emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
+                return;
+            }
         }
     };
 
-    let original = clipboard.get_text().ok();
-    let _ = clipboard.set_text(String::new());
+    let original = transform_clip_read(&mut clipboard, use_wl);
+    transform_clip_write(&mut clipboard, use_wl, "");
 
     let t_capture_start = Instant::now();
     if let Err(e) = inject::send_ctrl_c() {
         emit_status(&app, "error", Some(format!("Ctrl+C failed: {e:#}")));
         notify(&app, "Bulbul polish failed", &format!("{e:#}"));
-        restore_clipboard_with(&mut clipboard, original);
+        restore_clipboard_with(&mut clipboard, use_wl, original);
         return;
     }
 
     // Give the foreground app a moment to populate the clipboard.
     tokio::time::sleep(Duration::from_millis(220)).await;
 
-    let selected = clipboard.get_text().unwrap_or_default();
+    let selected = transform_clip_read(&mut clipboard, use_wl).unwrap_or_default();
     let t_capture_ms = t_capture_start.elapsed().as_millis() as u64;
 
     if selected.trim().is_empty() {
@@ -2374,7 +2387,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
             Some("No text selected — highlight something first.".into()),
         );
         notify(&app, "Bulbul polish", "No text selected — highlight some text and try again.");
-        restore_clipboard_with(&mut clipboard, original);
+        restore_clipboard_with(&mut clipboard, use_wl, original);
         return;
     }
     let input_chars = selected.chars().count();
@@ -2402,7 +2415,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
             tracing::error!("transform failed: {e:#}");
             emit_status(&app, "error", Some(format!("{e:#}")));
             notify(&app, "Bulbul transform failed", &format!("{e:#}"));
-            restore_clipboard_with(&mut clipboard, original);
+            restore_clipboard_with(&mut clipboard, use_wl, original);
             return;
         }
     };
@@ -2418,7 +2431,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
 
     if polished.trim().is_empty() {
         emit_status(&app, "error", Some("Transform returned empty text.".into()));
-        restore_clipboard_with(&mut clipboard, original);
+        restore_clipboard_with(&mut clipboard, use_wl, original);
         return;
     }
 
@@ -2430,18 +2443,24 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
-    if let Err(e) = clipboard.set_text(final_text.clone()) {
-        tracing::error!("clipboard write failed: {e:#}");
-        emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
-        restore_clipboard_with(&mut clipboard, original);
-        return;
-    }
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    if let Err(e) = inject::send_ctrl_v() {
-        tracing::error!("Ctrl+V failed: {e:#}");
-        emit_status(&app, "error", Some(format!("Paste: {e:#}")));
-        notify(&app, "Bulbul transform failed", &format!("{e:#}"));
-        restore_clipboard_with(&mut clipboard, original);
+    // Wayland: type the result straight in (uinput direct typing) — no
+    // clipboard write to lose to Wayland's unreliable background clipboard,
+    // and no flicker. Every other platform keeps the arboard + Ctrl+V path.
+    #[cfg(target_os = "linux")]
+    let inject_result: Result<(), String> = if use_wl {
+        inject::inject_text(&final_text).map_err(|e| format!("{e:#}"))
+    } else {
+        clipboard_set_and_paste(&mut clipboard, &final_text).await
+    };
+    #[cfg(not(target_os = "linux"))]
+    let inject_result: Result<(), String> =
+        clipboard_set_and_paste(&mut clipboard, &final_text).await;
+
+    if let Err(e) = inject_result {
+        tracing::error!("transform inject failed: {e}");
+        emit_status(&app, "error", Some(e.clone()));
+        notify(&app, "Bulbul transform failed", &e);
+        restore_clipboard_with(&mut clipboard, use_wl, original);
         return;
     }
     let t_inject_ms = t_inject_start.elapsed().as_millis() as u64;
@@ -2466,6 +2485,19 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     // guard: only restore if the clipboard still holds our paste — that
     // way nothing the user copies in between gets overwritten.
     drop(clipboard);
+    // Wayland: output was typed directly and never went through the
+    // clipboard, but we cleared the clipboard during capture — put the
+    // user's original contents back (best-effort, after a short delay).
+    #[cfg(target_os = "linux")]
+    if use_wl {
+        if let Some(orig) = original {
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(250));
+                let _ = inject::wayland_clipboard_write(&orig);
+            });
+        }
+        return;
+    }
     if let Some(orig) = original {
         let our_paste = final_text;
         thread::spawn(move || {
@@ -2483,9 +2515,53 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     }
 }
 
-fn restore_clipboard_with(clipboard: &mut arboard::Clipboard, original: Option<String>) {
+/// Read clipboard text for the transform pipeline. On Wayland uses
+/// wl-paste (arboard can't reliably read a selection another app just
+/// copied); elsewhere uses the reused arboard handle.
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+fn transform_clip_read(clipboard: &mut Option<arboard::Clipboard>, use_wl: bool) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    if use_wl {
+        return inject::wayland_clipboard_read();
+    }
+    clipboard.as_mut().and_then(|c| c.get_text().ok())
+}
+
+/// Write clipboard text for the transform pipeline (best-effort). On
+/// Wayland uses wl-copy; elsewhere the reused arboard handle.
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+fn transform_clip_write(clipboard: &mut Option<arboard::Clipboard>, use_wl: bool, text: &str) {
+    #[cfg(target_os = "linux")]
+    if use_wl {
+        let _ = inject::wayland_clipboard_write(text);
+        return;
+    }
+    if let Some(c) = clipboard.as_mut() {
+        let _ = c.set_text(text.to_string());
+    }
+}
+
+/// Non-Wayland transform output: write the result to the clipboard and
+/// fire the paste combo. Wayland types directly instead (see the pipeline).
+async fn clipboard_set_and_paste(
+    clipboard: &mut Option<arboard::Clipboard>,
+    text: &str,
+) -> Result<(), String> {
+    if let Some(c) = clipboard.as_mut() {
+        c.set_text(text.to_string())
+            .map_err(|e| format!("Clipboard: {e:#}"))?;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    inject::send_ctrl_v().map_err(|e| format!("Paste: {e:#}"))
+}
+
+fn restore_clipboard_with(
+    clipboard: &mut Option<arboard::Clipboard>,
+    use_wl: bool,
+    original: Option<String>,
+) {
     if let Some(orig) = original {
-        let _ = clipboard.set_text(orig);
+        transform_clip_write(clipboard, use_wl, &orig);
     }
 }
 
