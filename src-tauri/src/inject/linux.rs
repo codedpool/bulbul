@@ -388,6 +388,23 @@ pub fn wayland_clipboard_read() -> Option<String> {
     wl_paste_read().ok().filter(|s| !s.is_empty())
 }
 
+/// Read the PRIMARY selection (the currently highlighted text) via
+/// wl-paste --primary. Set whenever text is highlighted — by mouse drag
+/// or keyboard selection like Ctrl+A — so we can capture a selection
+/// without simulating Ctrl+C (whose copy gets corrupted when the
+/// transform hotkey's own modifier is still held). `None` when empty.
+pub fn wayland_primary_read() -> Option<String> {
+    let output = Command::new("wl-paste")
+        .args(["--primary", "--no-newline"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).into_owned();
+    (!s.is_empty()).then_some(s)
+}
+
 /// Write text to the clipboard via wl-copy. Best-effort.
 pub fn wayland_clipboard_write(text: &str) -> Result<()> {
     wl_copy_write(text)

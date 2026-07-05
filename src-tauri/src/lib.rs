@@ -2362,21 +2362,41 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
         }
     };
 
-    let original = transform_clip_read(&mut clipboard, use_wl);
-    transform_clip_write(&mut clipboard, use_wl, "");
-
     let t_capture_start = Instant::now();
-    if let Err(e) = inject::send_ctrl_c() {
-        emit_status(&app, "error", Some(format!("Ctrl+C failed: {e:#}")));
-        notify(&app, "Bulbul polish failed", &format!("{e:#}"));
-        restore_clipboard_with(&mut clipboard, use_wl, original);
-        return;
-    }
 
-    // Give the foreground app a moment to populate the clipboard.
-    tokio::time::sleep(Duration::from_millis(220)).await;
+    // On Wayland, prefer the PRIMARY selection — it holds whatever text is
+    // currently highlighted (set by mouse drag AND keyboard selection like
+    // Ctrl+A), so we read it directly instead of simulating Ctrl+C. The
+    // Ctrl+C copy was unreliable because the transform hotkey fires while
+    // its own modifier is still held, corrupting the combo. Fall back to
+    // Ctrl+C for apps that don't maintain a primary selection.
+    #[cfg(target_os = "linux")]
+    let selected_primary = if use_wl {
+        inject::wayland_primary_read().filter(|s| !s.trim().is_empty())
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "linux"))]
+    let selected_primary: Option<String> = None;
 
-    let selected = transform_clip_read(&mut clipboard, use_wl).unwrap_or_default();
+    // `original` is only saved/restored on the Ctrl+C fallback path, which
+    // clobbers the clipboard. The primary path never touches it.
+    let mut original: Option<String> = None;
+    let selected = if let Some(p) = selected_primary {
+        p
+    } else {
+        original = transform_clip_read(&mut clipboard, use_wl);
+        transform_clip_write(&mut clipboard, use_wl, "");
+        if let Err(e) = inject::send_ctrl_c() {
+            emit_status(&app, "error", Some(format!("Ctrl+C failed: {e:#}")));
+            notify(&app, "Bulbul polish failed", &format!("{e:#}"));
+            restore_clipboard_with(&mut clipboard, use_wl, original);
+            return;
+        }
+        // Give the foreground app a moment to populate the clipboard.
+        tokio::time::sleep(Duration::from_millis(220)).await;
+        transform_clip_read(&mut clipboard, use_wl).unwrap_or_default()
+    };
     let t_capture_ms = t_capture_start.elapsed().as_millis() as u64;
 
     if selected.trim().is_empty() {
