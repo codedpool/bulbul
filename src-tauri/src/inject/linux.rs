@@ -55,13 +55,13 @@ const YDOTOOL_KEY_C: &str = "46";
 
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(40);
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(250);
-// Wayland needs more slack than X11: the compositor propagates a
-// clipboard change asynchronously (especially through wl-copy's forked
-// selection owner), and the paste keystroke — whether via the portal's
-// async D-Bus Notify or an external tool — lands a beat after we fire
-// it. Under-waiting here is the classic "paste injected nothing" bug.
-const WL_CLIPBOARD_SETTLE: Duration = Duration::from_millis(120);
-const WL_CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(700);
+// Wayland paste timing. A short settle lets wl-copy's forked selection
+// owner take hold before we fire the combo; a short post-combo wait lets
+// the target app consume the paste before we restore the prior clipboard
+// inline. Kept tight on purpose — a long/delayed restore reads as a
+// screen flicker.
+const WL_CLIPBOARD_SETTLE: Duration = Duration::from_millis(60);
+const WL_POST_COMBO: Duration = Duration::from_millis(90);
 
 #[derive(Clone, Copy)]
 enum Combo {
@@ -215,12 +215,17 @@ fn inject_text_wayland(text: &str) -> Result<()> {
         clipboard.set_text(payload.clone()).context("arboard write")?;
     }
 
+    // A short settle before the combo, a short wait after for the app to
+    // consume the paste, then restore the clipboard SYNCHRONOUSLY. We
+    // used to restore 700ms later on a background thread — that delayed
+    // second clipboard change is what read as a "screen refresh a beat
+    // after the text lands." Doing it fast and inline blurs it into the
+    // paste.
     thread::sleep(WL_CLIPBOARD_SETTLE);
 
-    // Keystroke chain: portal → tools → XWayland XTest. The clipboard is
-    // already set (above) and XWayland apps read the bridged Wayland
-    // selection, so the XTest last resort only fires the combo — no
-    // clipboard rewrite.
+    // Keystroke chain: uinput → portal → tools → XWayland XTest. The
+    // clipboard is already set, and XWayland apps read the bridged
+    // Wayland selection, so the XTest last resort only fires the combo.
     send_combo_wayland(Combo::CtrlV)
         .or_else(|e| {
             tracing::warn!("Wayland Ctrl+V failed, trying XWayland XTest: {e:#}");
@@ -233,43 +238,28 @@ fn inject_text_wayland(text: &str) -> Result<()> {
             )
         })?;
 
-    // Background restore. Only restore if the clipboard still holds
-    // our paste — same guard as the X11 path so a user-initiated
-    // mid-paste copy isn't clobbered.
+    thread::sleep(WL_POST_COMBO);
+
+    // Restore the prior clipboard inline. No re-read guard / no delay —
+    // the window between our write and this restore is ~150ms, and
+    // keeping it inline avoids the extra wl-paste spawn and the
+    // delayed-flicker.
     if let Some(prev) = previous {
-        let payload_for_restore = payload.clone();
-        let use_wl_copy_for_restore = use_wl_copy;
-        thread::spawn(move || {
-            thread::sleep(WL_CLIPBOARD_RESTORE_DELAY);
-            let current = if use_wl_copy_for_restore {
-                wl_paste_read().ok()
-            } else {
-                arboard::Clipboard::new()
-                    .ok()
-                    .and_then(|mut c| c.get_text().ok())
-            };
-            if current.as_deref() == Some(payload_for_restore.as_str()) {
-                if use_wl_copy_for_restore {
-                    let _ = wl_copy_write(&prev);
-                } else if let Ok(mut cb) = arboard::Clipboard::new() {
-                    let _ = cb.set_text(prev);
-                }
-            }
-        });
+        if use_wl_copy {
+            let _ = wl_copy_write(&prev);
+        } else if let Ok(mut cb) = arboard::Clipboard::new() {
+            let _ = cb.set_text(prev);
+        }
     }
 
     Ok(())
 }
 
 fn send_combo_wayland(combo: Combo) -> Result<()> {
-    // Give the user's physical modifiers a moment to clear. The stop
-    // press is Ctrl+Alt+Space — if our synthetic Ctrl+V fires while Alt
-    // is still physically held, the app receives Ctrl+Alt+V and pastes
-    // nothing. macOS polls key state for this (inject/macos.rs step 3);
-    // Wayland has no global key query, so a fixed drain is the best we
-    // can do. Transcription latency usually covers it; this covers the
-    // fast-transcript case.
-    thread::sleep(Duration::from_millis(150));
+    // No modifier-drain sleep: with evdev hold-to-talk the paste only
+    // fires after the user has released the hotkey (release is what
+    // ends the recording), so their physical modifiers are already up
+    // by the time we get here. The old 150ms drain was dead latency.
 
     // uinput first — the kernel virtual keyboard is the only path Mutter
     // can't drop, so it's the reliable default when access is granted
