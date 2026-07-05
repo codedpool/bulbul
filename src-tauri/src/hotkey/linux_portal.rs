@@ -116,10 +116,12 @@ const MAX_HOLD_SECS: u64 = 45;
 
 /// Arm a cancellable timer that fires `release_evt` after MAX_HOLD_SECS
 /// unless cancelled first (via the returned sender) by a real
-/// Deactivated. Returns the cancel handle.
+/// Deactivated. Clears `active` when it fires so the event loop's
+/// toggle-tolerance doesn't misread the NEXT press as a release.
 fn arm_release_watchdog(
     tx: Sender<HotkeyEvent>,
     release_evt: HotkeyEvent,
+    active: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> tokio::sync::oneshot::Sender<()> {
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     tauri::async_runtime::spawn(async move {
@@ -129,6 +131,7 @@ fn arm_release_watchdog(
                     "portal Deactivated never arrived within {MAX_HOLD_SECS}s — \
                      force-releasing (GNOME release-signal quirk)"
                 );
+                active.store(false, std::sync::atomic::Ordering::SeqCst);
                 let _ = tx.send(release_evt);
             }
             _ = cancel_rx => { /* real release landed; nothing to do */ }
@@ -220,16 +223,24 @@ async fn run_session(
     futures_util::pin_mut!(activated, deactivated);
     let mut stop_rx = stop_rx;
 
-    // Release watchdog. GNOME's GlobalShortcuts implementation is
-    // documented as unreliable about the Deactivated (key-up) signal —
-    // it sometimes never arrives, so a held dictation shortcut records
-    // forever and the pill never turns off (the "listener stays on"
-    // symptom). For each press we arm a per-shortcut cancellable timer;
-    // if the real Deactivated lands first it cancels the timer, else the
-    // timer fires a synthetic Released so recording finalizes. Firing a
-    // release the orchestrator already saw is harmless (release-while-
-    // idle is a no-op there), so the belt-and-suspenders can't
-    // double-stop a legitimate recording.
+    // Release watchdog + toggle tolerance. GNOME's GlobalShortcuts
+    // implementation is documented as unreliable about the Deactivated
+    // (key-up) signal — on affected versions a held shortcut only ever
+    // emits Activated, so recording never stops until the user presses
+    // the hotkey AGAIN (which emits another Activated). Two defenses:
+    //
+    //   1. Toggle tolerance: an Activated that arrives while that
+    //      shortcut is already active is treated as the missing release.
+    //      On compositors with proper press/release (KDE) this branch
+    //      never triggers; on GNOME the hotkey degrades gracefully to
+    //      press-to-start / press-to-stop instead of press-and-pray.
+    //   2. Watchdog: per press, a cancellable timer force-releases after
+    //      MAX_HOLD_SECS in case neither Deactivated nor a second press
+    //      ever shows up. Double-releases are no-ops in the orchestrator.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let dict_active = Arc::new(AtomicBool::new(false));
+    let polish_active = Arc::new(AtomicBool::new(false));
     let mut dict_cancel: Option<tokio::sync::oneshot::Sender<()>> = None;
     let mut polish_cancel: Option<tokio::sync::oneshot::Sender<()>> = None;
 
@@ -244,18 +255,33 @@ async fn run_session(
                 let Some(ev) = ev else { break };
                 match ev.shortcut_id() {
                     ID_DICTATION => {
-                        let _ = tx.send(HotkeyEvent::DictationPressed);
-                        dict_cancel = Some(arm_release_watchdog(
-                            tx.clone(),
-                            HotkeyEvent::DictationReleased,
-                        ));
+                        if dict_active.swap(true, Ordering::SeqCst) {
+                            // Missing-release compositor: second press = stop.
+                            if let Some(c) = dict_cancel.take() { let _ = c.send(()); }
+                            dict_active.store(false, Ordering::SeqCst);
+                            let _ = tx.send(HotkeyEvent::DictationReleased);
+                        } else {
+                            let _ = tx.send(HotkeyEvent::DictationPressed);
+                            dict_cancel = Some(arm_release_watchdog(
+                                tx.clone(),
+                                HotkeyEvent::DictationReleased,
+                                dict_active.clone(),
+                            ));
+                        }
                     }
                     ID_POLISH => {
-                        let _ = tx.send(HotkeyEvent::PolishDictationPressed);
-                        polish_cancel = Some(arm_release_watchdog(
-                            tx.clone(),
-                            HotkeyEvent::PolishDictationReleased,
-                        ));
+                        if polish_active.swap(true, Ordering::SeqCst) {
+                            if let Some(c) = polish_cancel.take() { let _ = c.send(()); }
+                            polish_active.store(false, Ordering::SeqCst);
+                            let _ = tx.send(HotkeyEvent::PolishDictationReleased);
+                        } else {
+                            let _ = tx.send(HotkeyEvent::PolishDictationPressed);
+                            polish_cancel = Some(arm_release_watchdog(
+                                tx.clone(),
+                                HotkeyEvent::PolishDictationReleased,
+                                polish_active.clone(),
+                            ));
+                        }
                     }
                     other => tracing::debug!("portal activated unknown id: {other}"),
                 }
@@ -265,10 +291,12 @@ async fn run_session(
                 match ev.shortcut_id() {
                     ID_DICTATION => {
                         if let Some(c) = dict_cancel.take() { let _ = c.send(()); }
+                        dict_active.store(false, Ordering::SeqCst);
                         let _ = tx.send(HotkeyEvent::DictationReleased);
                     }
                     ID_POLISH => {
                         if let Some(c) = polish_cancel.take() { let _ = c.send(()); }
+                        polish_active.store(false, Ordering::SeqCst);
                         let _ = tx.send(HotkeyEvent::PolishDictationReleased);
                     }
                     _ => {}

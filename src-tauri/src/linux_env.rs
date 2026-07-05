@@ -98,6 +98,25 @@ pub fn which(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// ydotool is only usable when its daemon is running — the client
+/// hard-errors without the ydotoold socket. Checks the documented
+/// socket locations (env override, per-user runtime dir, system-daemon
+/// default).
+pub fn ydotool_ready() -> bool {
+    if !which("ydotool") {
+        return false;
+    }
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(s) = std::env::var_os("YDOTOOL_SOCKET") {
+        candidates.push(s.into());
+    }
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        candidates.push(std::path::PathBuf::from(dir).join(".ydotool_socket"));
+    }
+    candidates.push("/tmp/.ydotool_socket".into());
+    candidates.iter().any(|p| p.exists())
+}
+
 /// Report which backend ended up owning the dictation hotkey. The
 /// frontend banner listens for this; "none" means the user has to act
 /// (bind a DE shortcut to the CLI toggle) and the detail says so.
@@ -141,13 +160,18 @@ pub fn support_info() -> serde_json::Value {
         .lock()
         .clone()
         .unwrap_or(("unknown".to_string(), String::new()));
+    let gnome = is_gnome();
     serde_json::json!({
         "wayland": wayland,
         "x11_available": has_x11(),
         "desktop": desktop(),
-        "gnome": is_gnome(),
+        "gnome": gnome,
         "wtype": which("wtype"),
+        // wtype can't type on Mutter even when installed.
+        "wtype_usable": which("wtype") && !gnome,
         "ydotool": which("ydotool"),
+        // Installed-but-daemonless ydotool can't type either.
+        "ydotool_ready": ydotool_ready(),
         "wl_clipboard": which("wl-copy") && which("wl-paste"),
         "toggle_command": toggle_command,
         "hotkey_backend": hotkey_backend,

@@ -11,7 +11,9 @@ import { listen } from "@tauri-apps/api/event";
 //
 // Dismissal is remembered per issue-set: fixing one problem (or a
 // backend regression creating a new one) resurfaces the banner.
-const DISMISS_KEY = "bulbul-linux-banner-dismissed";
+// v2: guidance changed (portal-first paste, ydotool daemon detection) —
+// bumping the key resurfaces the banner for users who dismissed v1.
+const DISMISS_KEY = "bulbul-linux-banner-dismissed-v2";
 
 export default function LinuxSupportBanner() {
   const [info, setInfo] = useState(null);
@@ -66,18 +68,29 @@ export default function LinuxSupportBanner() {
   }
 
   // Paste only needs user action when the RemoteDesktop portal isn't
-  // carrying it AND no keystroke tool is installed to fall back on.
+  // carrying it AND no *working* keystroke tool can fall back in.
+  // (wtype doesn't work on GNOME's compositor even when installed, and
+  // ydotool without its daemon just errors — the raw installed flags
+  // lie, use the usability ones.)
   const pasteWorks =
-    paste?.backend === "portal" || info.wtype || info.ydotool;
+    paste?.backend === "portal" || info.wtype_usable || info.ydotool_ready;
   if (info.wayland && !pasteWorks) {
+    const portalWhy =
+      paste?.backend === "tools" && paste?.detail ? ` (${paste.detail})` : "";
     issues.push({
       key: "paste",
-      text: info.gnome
-        ? "Pasting isn’t working yet. Approve the “Remote control” prompt if you see one, or install ydotool as a fallback (GNOME blocks the lighter wtype tool)."
-        : "Pasting isn’t working yet. Approve the “Remote control” prompt if you see one, or install a keystroke tool as a fallback.",
-      command: info.gnome
-        ? "sudo apt install ydotool && systemctl --user enable --now ydotool.service"
-        : "sudo apt install wtype",
+      text:
+        info.ydotool && !info.ydotool_ready
+          ? `Pasting isn’t working: ydotool is installed but its background service isn’t running${portalWhy}. Start it once:`
+          : info.gnome
+            ? `Pasting isn’t working yet${portalWhy}. Approve the “Remote control” system prompt on the next dictation — or set up the ydotool fallback:`
+            : `Pasting isn’t working yet${portalWhy}. Approve the “Remote control” system prompt on the next dictation — or install a keystroke tool as a fallback:`,
+      command:
+        info.ydotool && !info.ydotool_ready
+          ? "systemctl --user enable --now ydotool.service"
+          : info.gnome
+            ? "sudo apt install ydotool && systemctl --user enable --now ydotool.service"
+            : "sudo apt install wtype",
     });
   }
 
