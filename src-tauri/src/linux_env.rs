@@ -167,8 +167,13 @@ pub fn support_info() -> serde_json::Value {
         "desktop": desktop(),
         "gnome": gnome,
         // Kernel virtual keyboard — the reliable primary. Ready means
-        // the .deb's setgid+udev grant is in place (or the user is root).
+        // the process can open /dev/uinput right now.
         "uinput_ready": crate::inject::linux_uinput::is_ready(),
+        // The .deb's udev rule is installed but uinput isn't ready yet →
+        // the user is in the group on disk but their session predates it,
+        // so one logout/login finishes the setup.
+        "uinput_grant_installed":
+            std::path::Path::new("/etc/udev/rules.d/70-bulbul-uinput.rules").exists(),
         "wtype": which("wtype"),
         // wtype can't type on Mutter even when installed.
         "wtype_usable": which("wtype") && !gnome,
