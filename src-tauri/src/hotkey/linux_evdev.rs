@@ -4,9 +4,8 @@
 //! `/dev/input/event*` below the compositor, so it works identically on
 //! GNOME, KDE, wlroots, and X11, and — crucially — it sees the real key
 //! DOWN and key UP. That gives true press-and-hold with no lag, no GNOME
-//! custom shortcut, and no toggle. It's the mechanism Handy's opt-in
-//! `handy-keys` path uses; here it's the default whenever we can read
-//! input devices.
+//! custom shortcut, and no toggle. It's the default hotkey path whenever
+//! we can read input devices.
 //!
 //! Access to input devices is the `input` group (the same grant the
 //! .deb sets up for uinput typing, one relogin). When we can't read any
