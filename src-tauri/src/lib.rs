@@ -1725,12 +1725,24 @@ pub fn run() {
             {
                 linux_env::set_app_handle(handle.clone());
                 spawn_signal_watcher(handle.clone());
-                // Wayland: bring up the RemoteDesktop paste portal now so
-                // its one-time "allow input" dialog appears at launch —
-                // or silently, if a prior grant's restore token is on
-                // disk — instead of interrupting the first dictation.
-                // No-op / graceful-fallback on X11 and toolless desktops.
-                if linux_env::is_wayland() {
+                // Kernel uinput virtual keyboard — the injection path that
+                // actually works on GNOME Wayland (below the compositor,
+                // so Mutter can't drop it). Ready immediately when the
+                // .deb granted access (setgid + udev rule); otherwise this
+                // fails quietly and the portal/tool/clipboard chain covers
+                // it. Works on every session type, so init unconditionally.
+                match inject::linux_uinput::init() {
+                    Ok(()) => linux_env::emit_paste_status(
+                        "uinput",
+                        "Typing via a kernel virtual keyboard — works in every app.".into(),
+                    ),
+                    Err(e) => tracing::info!("uinput not available ({e}); using fallbacks"),
+                }
+                // Wayland: also bring up the RemoteDesktop paste portal as
+                // a no-privilege fallback for when uinput access wasn't
+                // granted (e.g. AppImage). Its one-time dialog appears at
+                // launch. No-op on X11.
+                if linux_env::is_wayland() && !inject::linux_uinput::is_ready() {
                     inject::linux_portal_paste::spawn();
                 }
             }
@@ -2803,6 +2815,17 @@ async fn process_pipeline(
     } else if let Err(e) = inject::inject_text(&final_text) {
         tracing::error!("inject failed: {e:#}");
         emit_status(&app, "error", Some(format!("Inject: {e:#}")));
+        // On Linux every inject path writes the clipboard before the
+        // keystroke, so a failed auto-type still leaves the transcript
+        // one Ctrl+V away — say that instead of a dead-end error. The
+        // text is also always in the dashboard (logged above).
+        #[cfg(target_os = "linux")]
+        notify(
+            &app,
+            "Dictation copied — press Ctrl+V",
+            "Bulbul couldn't auto-type on this desktop; your text is on the clipboard.",
+        );
+        #[cfg(not(target_os = "linux"))]
         notify(&app, "Bulbul inject failed", &format!("{e:#}"));
         track_dictation_failed(&app, "inject", &meta.mode);
         return;

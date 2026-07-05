@@ -271,11 +271,23 @@ fn send_combo_wayland(combo: Combo) -> Result<()> {
     // fast-transcript case.
     thread::sleep(Duration::from_millis(150));
 
-    // Portal first — native, no external tool, and asking while it's
-    // down is what triggers its self-healing re-init (so a user who
-    // approves the permission dialog late still converges to the portal
-    // without restarting Bulbul). Any error falls through to the tool
-    // path below.
+    // uinput first — the kernel virtual keyboard is the only path Mutter
+    // can't drop, so it's the reliable default when access is granted
+    // (setgid .deb install). Works identically on KDE/wlroots/X11.
+    if super::linux_uinput::is_ready() {
+        let kc = match combo {
+            Combo::CtrlV => super::linux_uinput::KEY_V,
+            Combo::CtrlC => super::linux_uinput::KEY_C,
+        };
+        match super::linux_uinput::send_combo(kc) {
+            Ok(()) => return Ok(()),
+            Err(e) => tracing::warn!("uinput paste failed, trying portal: {e}"),
+        }
+    }
+
+    // Portal next — native, no privilege. Asking while it's down is what
+    // triggers its self-healing re-init, so a user who approves the
+    // permission dialog late still converges without restarting Bulbul.
     let key = match combo {
         Combo::CtrlV => super::linux_portal_paste::EV_V,
         Combo::CtrlC => super::linux_portal_paste::EV_C,

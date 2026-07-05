@@ -62,9 +62,10 @@
           "wl-clipboard"
         ],
         "recommends": [
-          "ydotool",
           "gnome-shell-extension-appindicator"
         ],
+        "postInstallScript": "deb/postinst.sh",
+        "postRemoveScript": "deb/postrm.sh",
         "section": "utility"
       },
       "rpm": {

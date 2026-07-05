@@ -166,6 +166,9 @@ pub fn support_info() -> serde_json::Value {
         "x11_available": has_x11(),
         "desktop": desktop(),
         "gnome": gnome,
+        // Kernel virtual keyboard — the reliable primary. Ready means
+        // the .deb's setgid+udev grant is in place (or the user is root).
+        "uinput_ready": crate::inject::linux_uinput::is_ready(),
         "wtype": which("wtype"),
         // wtype can't type on Mutter even when installed.
         "wtype_usable": which("wtype") && !gnome,
