@@ -55,6 +55,13 @@ const YDOTOOL_KEY_C: &str = "46";
 
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(40);
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(250);
+// Wayland needs more slack than X11: the compositor propagates a
+// clipboard change asynchronously (especially through wl-copy's forked
+// selection owner), and the paste keystroke — whether via the portal's
+// async D-Bus Notify or an external tool — lands a beat after we fire
+// it. Under-waiting here is the classic "paste injected nothing" bug.
+const WL_CLIPBOARD_SETTLE: Duration = Duration::from_millis(120);
+const WL_CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(700);
 
 #[derive(Clone, Copy)]
 enum Combo {
@@ -179,9 +186,22 @@ fn wayland_keystroke_tool() -> Option<WaylandTool> {
 
 fn inject_text_wayland(text: &str) -> Result<()> {
     // Clipboard via wl-copy if available, else fall back to arboard.
-    // arboard supports Wayland but has reported timing/encoding edge
-    // cases (esp. with umlauts); wl-copy is the canonical tool.
+    // This choice matters more than it looks: wl-copy forks a process
+    // that *holds* the Wayland selection, so the paste target can read
+    // it even though Bulbul's own window isn't focused. arboard sets and
+    // returns — and on Wayland a background app frequently loses the
+    // selection immediately, so the subsequent Ctrl+V pastes stale or
+    // empty content. That's the #1 cause of "dictation recorded but
+    // nothing got typed." We depend on wl-clipboard in the .deb/.rpm so
+    // this path is the norm; the arboard branch is a last resort and we
+    // log loudly when we're on it.
     let use_wl_copy = which("wl-copy") && which("wl-paste");
+    if !use_wl_copy {
+        tracing::warn!(
+            "wl-copy not found — using arboard, which is unreliable for \
+             background paste on Wayland. Install wl-clipboard for a fix."
+        );
+    }
 
     let previous = if use_wl_copy {
         wl_paste_read().ok()
@@ -199,7 +219,7 @@ fn inject_text_wayland(text: &str) -> Result<()> {
         clipboard.set_text(payload.clone()).context("arboard write")?;
     }
 
-    thread::sleep(CLIPBOARD_SETTLE);
+    thread::sleep(WL_CLIPBOARD_SETTLE);
 
     send_combo_wayland(Combo::CtrlV).context("posting Ctrl+V via Wayland tool")?;
 
@@ -210,7 +230,7 @@ fn inject_text_wayland(text: &str) -> Result<()> {
         let payload_for_restore = payload.clone();
         let use_wl_copy_for_restore = use_wl_copy;
         thread::spawn(move || {
-            thread::sleep(CLIPBOARD_RESTORE_DELAY);
+            thread::sleep(WL_CLIPBOARD_RESTORE_DELAY);
             let current = if use_wl_copy_for_restore {
                 wl_paste_read().ok()
             } else {

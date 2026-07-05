@@ -60,12 +60,20 @@
           "libgtk-3-0",
           "libayatana-appindicator3-1"
         ],
+        "recommends": [
+          "wl-clipboard",
+          "ydotool"
+        ],
         "section": "utility"
       },
       "rpm": {
         "depends": [
           "webkit2gtk4.1",
           "gtk3"
+        ],
+        "recommends": [
+          "wl-clipboard",
+          "ydotool"
         ]
       },
       "appimage": {

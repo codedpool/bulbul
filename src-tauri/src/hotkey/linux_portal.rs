@@ -108,6 +108,35 @@ fn preferred_trigger(h: &ParsedHotkey) -> Option<String> {
     Some(parts.join("+"))
 }
 
+/// Longest a single hold-to-talk recording can run before the watchdog
+/// force-releases it (guarding a lost Deactivated signal). Generous
+/// enough not to clip a real long dictation, bounded enough that a
+/// stuck listener recovers — and caps the audio sent to Groq.
+const MAX_HOLD_SECS: u64 = 45;
+
+/// Arm a cancellable timer that fires `release_evt` after MAX_HOLD_SECS
+/// unless cancelled first (via the returned sender) by a real
+/// Deactivated. Returns the cancel handle.
+fn arm_release_watchdog(
+    tx: Sender<HotkeyEvent>,
+    release_evt: HotkeyEvent,
+) -> tokio::sync::oneshot::Sender<()> {
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    tauri::async_runtime::spawn(async move {
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(MAX_HOLD_SECS)) => {
+                tracing::warn!(
+                    "portal Deactivated never arrived within {MAX_HOLD_SECS}s — \
+                     force-releasing (GNOME release-signal quirk)"
+                );
+                let _ = tx.send(release_evt);
+            }
+            _ = cancel_rx => { /* real release landed; nothing to do */ }
+        }
+    });
+    cancel_tx
+}
+
 /// Register dictation + polish with the portal and pump its signal
 /// streams into the orchestrator channel. Replaces any previous portal
 /// registration. Failures are reported via `linux-hotkey-status` —
@@ -191,6 +220,19 @@ async fn run_session(
     futures_util::pin_mut!(activated, deactivated);
     let mut stop_rx = stop_rx;
 
+    // Release watchdog. GNOME's GlobalShortcuts implementation is
+    // documented as unreliable about the Deactivated (key-up) signal —
+    // it sometimes never arrives, so a held dictation shortcut records
+    // forever and the pill never turns off (the "listener stays on"
+    // symptom). For each press we arm a per-shortcut cancellable timer;
+    // if the real Deactivated lands first it cancels the timer, else the
+    // timer fires a synthetic Released so recording finalizes. Firing a
+    // release the orchestrator already saw is harmless (release-while-
+    // idle is a no-op there), so the belt-and-suspenders can't
+    // double-stop a legitimate recording.
+    let mut dict_cancel: Option<tokio::sync::oneshot::Sender<()>> = None;
+    let mut polish_cancel: Option<tokio::sync::oneshot::Sender<()>> = None;
+
     loop {
         tokio::select! {
             _ = &mut stop_rx => {
@@ -201,16 +243,34 @@ async fn run_session(
             ev = activated.next() => {
                 let Some(ev) = ev else { break };
                 match ev.shortcut_id() {
-                    ID_DICTATION => { let _ = tx.send(HotkeyEvent::DictationPressed); }
-                    ID_POLISH => { let _ = tx.send(HotkeyEvent::PolishDictationPressed); }
+                    ID_DICTATION => {
+                        let _ = tx.send(HotkeyEvent::DictationPressed);
+                        dict_cancel = Some(arm_release_watchdog(
+                            tx.clone(),
+                            HotkeyEvent::DictationReleased,
+                        ));
+                    }
+                    ID_POLISH => {
+                        let _ = tx.send(HotkeyEvent::PolishDictationPressed);
+                        polish_cancel = Some(arm_release_watchdog(
+                            tx.clone(),
+                            HotkeyEvent::PolishDictationReleased,
+                        ));
+                    }
                     other => tracing::debug!("portal activated unknown id: {other}"),
                 }
             }
             ev = deactivated.next() => {
                 let Some(ev) = ev else { break };
                 match ev.shortcut_id() {
-                    ID_DICTATION => { let _ = tx.send(HotkeyEvent::DictationReleased); }
-                    ID_POLISH => { let _ = tx.send(HotkeyEvent::PolishDictationReleased); }
+                    ID_DICTATION => {
+                        if let Some(c) = dict_cancel.take() { let _ = c.send(()); }
+                        let _ = tx.send(HotkeyEvent::DictationReleased);
+                    }
+                    ID_POLISH => {
+                        if let Some(c) = polish_cancel.take() { let _ = c.send(()); }
+                        let _ = tx.send(HotkeyEvent::PolishDictationReleased);
+                    }
                     _ => {}
                 }
             }
