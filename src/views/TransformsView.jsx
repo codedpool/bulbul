@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import FeatureHero from "../components/FeatureHero.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
-import { IS_MAC } from "../platform.js";
+import { IS_MAC, IS_ANDROID } from "../platform.js";
 
 const TRANSFORMS_HERO_SAMPLES = [
   { trigger: "Polish", expansion: "Fix grammar, tighten flow, keep meaning." },
@@ -95,7 +95,9 @@ export default function TransformsView() {
         <div>
           <h1>Transforms</h1>
           <p className="muted small">
-            Select text anywhere, press {IS_MAC ? "⌘1 through ⌘6" : "Alt+1 through Alt+6"}, and Bulbul rewrites it — polish, retone, or restructure. The one marked default is what Bulbul uses everywhere else.
+            {IS_ANDROID
+              ? "One-tap rewrite styles — polish, retone, or restructure. The one marked default is what Bulbul uses everywhere else."
+              : `Select text anywhere, press ${IS_MAC ? "⌘1 through ⌘6" : "Alt+1 through Alt+6"}, and Bulbul rewrites it — polish, retone, or restructure. The one marked default is what Bulbul uses everywhere else.`}
           </p>
         </div>
         <div className="header-actions">

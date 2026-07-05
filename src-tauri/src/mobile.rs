@@ -112,22 +112,74 @@ fn set_tray_visible(_visible: bool) -> Result<(), String> {
 
 // ---------- Home + Insights (read-only stats) ----------
 
-/// Matches `db::HomeStats` shape — zeroed out until the on-device
-/// dictation history lands.
+/// One JSON object per line, appended by the Kotlin foreground service
+/// after each successful transcription (see recordHistory). File-as-IPC,
+/// same pattern as config.json.
+const HISTORY_FILE: &str = "history.jsonl";
+
+fn history_rows(app: &tauri::AppHandle) -> Vec<Value> {
+    let Ok(dir) = app.path().app_data_dir() else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(dir.join(HISTORY_FILE)) else { return Vec::new() };
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .collect()
+}
+
 #[tauri::command]
-fn get_home_stats() -> Value {
+fn get_home_stats(app: tauri::AppHandle) -> Value {
+    let rows = history_rows(&app);
+    let total_words: u64 = rows.iter().map(|r| r["word_count"].as_u64().unwrap_or(0)).sum();
+    let total_ms: u64 = rows.iter().map(|r| r["duration_ms"].as_u64().unwrap_or(0)).sum();
+    let wpm = if total_ms > 0 {
+        total_words as f64 / (total_ms as f64 / 60_000.0)
+    } else {
+        0.0
+    };
+    // Streak: consecutive UTC days with at least one dictation, counting
+    // back from today. Good enough without pulling in a timezone crate.
+    let mut days: Vec<i64> = rows
+        .iter()
+        .filter_map(|r| r["ts"].as_i64())
+        .map(|ts| ts / 86_400)
+        .collect();
+    days.sort_unstable();
+    days.dedup();
+    let today = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64 / 86_400)
+        .unwrap_or(0);
+    let mut streak = 0i64;
+    while days.binary_search(&(today - streak)).is_ok() {
+        streak += 1;
+    }
     json!({
-        "total_words": 0,
-        "total_dictations": 0,
+        "total_words": total_words,
+        "total_dictations": rows.len(),
         "total_fixes": 0,
-        "wpm": 0.0,
-        "day_streak": 0,
+        "wpm": wpm,
+        "day_streak": streak,
     })
 }
 
 #[tauri::command]
-fn get_recent_dictations(_limit: u32, _offset: u32) -> Vec<Value> {
-    Vec::new()
+fn get_recent_dictations(app: tauri::AppHandle, limit: u32, offset: u32) -> Vec<Value> {
+    let rows = history_rows(&app);
+    rows.iter()
+        .rev() // newest first
+        .skip(offset as usize)
+        .take(limit as usize)
+        .enumerate()
+        .map(|(i, r)| {
+            json!({
+                "id": (offset as usize + i) as i64,
+                "ts": r["ts"],
+                "cleaned_text": r["cleaned_text"],
+                "foreground_app": r.get("foreground_app").cloned().unwrap_or(Value::Null),
+                "mode": r.get("mode").cloned().unwrap_or(json!("clean")),
+                "word_count": r["word_count"],
+            })
+        })
+        .collect()
 }
 
 /// Matches `db::UsageStats` shape. All-zero defaults so the React

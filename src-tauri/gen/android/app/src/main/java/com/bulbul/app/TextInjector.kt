@@ -53,26 +53,112 @@ object TextInjector {
             Log.w(TAG, "no accessibility service bound; cannot inject")
             return false
         }
-        // findFocus walks every active window — the active app's
-        // input field, not the dashboard's. If the user moved focus
-        // while we were transcribing, this picks up the new target,
-        // which is the behaviour we want.
-        val node = svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: run {
-            Log.w(TAG, "no focused input — dropping transcript")
+        // Service-level findFocus is unreliable on several OEMs (returns
+        // null mid-typing — same failure that hid the bubble), so walk a
+        // fallback chain until we find an editable target.
+        val node = findTarget(svc) ?: run {
+            Log.w(TAG, "no editable target found — dropping transcript")
             return false
         }
         return try {
+            // SET_TEXT-first: it never touches the clipboard, so the user
+            // doesn't get Android 13's "app copied to clipboard" toast on
+            // every dictation (paste-first did). Two traps handled:
+            //   - apps like WhatsApp report their hint ("Message") through
+            //     node.text without setting isShowingHintText — text that
+            //     matches the hint counts as an empty field, else every
+            //     dictation started with the placeholder word;
+            //   - SET_TEXT replaces the whole field, so we append to the
+            //     real existing content rather than wiping it.
+            // Fields that refuse SET_TEXT (custom editors) fall back to
+            // clipboard + ACTION_PASTE, toast and all — better than
+            // dropping the transcript.
+            var existing =
+                if (android.os.Build.VERSION.SDK_INT >= 26 && node.isShowingHintText) ""
+                else node.text?.toString() ?: ""
+            if (android.os.Build.VERSION.SDK_INT >= 26 &&
+                existing.isNotEmpty() && existing == node.hintText?.toString()
+            ) {
+                existing = ""
+            }
+            val combined =
+                if (existing.isBlank()) text else existing.trimEnd() + " " + text
             val args = Bundle().apply {
                 putCharSequence(
                     AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    text,
+                    combined,
                 )
             }
-            val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-            if (!ok) Log.w(TAG, "performAction(SET_TEXT) returned false")
+            var ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            if (!ok) ok = pasteInto(svc, node, text)
+            if (!ok) Log.w(TAG, "SET_TEXT and PASTE both failed")
             ok
         } finally {
             node.recycle()
+        }
+    }
+
+    /// Focused-editable discovery, most-reliable first:
+    ///   1. service findFocus  2. per-window-root findFocus
+    ///   3. DFS for a focused editable  4. DFS for any editable.
+    private fun findTarget(svc: AccessibilityService): AccessibilityNodeInfo? {
+        try {
+            svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let {
+                if (it.isEditable) return it else it.recycle()
+            }
+        } catch (_: Throwable) {}
+        return try {
+            val windows = svc.windows ?: return null
+            for (w in windows) {
+                val root = w.root ?: continue
+                root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let {
+                    if (it.isEditable) return it else it.recycle()
+                }
+            }
+            for (w in windows) {
+                val root = w.root ?: continue
+                dfs(root, 0) { it.isEditable && it.isFocused }?.let { return it }
+            }
+            for (w in windows) {
+                val root = w.root ?: continue
+                dfs(root, 0) { it.isEditable }?.let { return it }
+            }
+            null
+        } catch (t: Throwable) {
+            Log.w(TAG, "window walk failed", t)
+            null
+        }
+    }
+
+    private fun dfs(
+        node: AccessibilityNodeInfo,
+        depth: Int,
+        match: (AccessibilityNodeInfo) -> Boolean,
+    ): AccessibilityNodeInfo? {
+        if (depth > 24) return null // runaway-tree guard
+        if (match(node)) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            dfs(child, depth + 1, match)?.let { return it }
+            child.recycle()
+        }
+        return null
+    }
+
+    private fun pasteInto(
+        svc: AccessibilityService,
+        node: AccessibilityNodeInfo,
+        text: String,
+    ): Boolean {
+        return try {
+            val cm = svc.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Bulbul", text))
+            if (!node.isFocused) node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        } catch (t: Throwable) {
+            Log.w(TAG, "paste fallback failed", t)
+            false
         }
     }
 }

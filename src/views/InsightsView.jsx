@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { IS_ANDROID } from "../platform.js";
 
 export default function InsightsView() {
   const [tab, setTab] = useState("usage");
@@ -167,6 +168,9 @@ function UsageTab() {
         </div>
       </div>
 
+      {/* Per-app usage is a desktop concept (window tracking) — hide the
+          whole panel on Android rather than show a permanently-empty box. */}
+      {!IS_ANDROID && (
       <div className="insight-panel panel-usage">
         <div className="panel-header">
           <h2>Desktop usage</h2>
@@ -193,6 +197,7 @@ function UsageTab() {
           </div>
         )}
       </div>
+      )}
 
       <div className="insight-panel panel-streak">
         <div className="panel-header">

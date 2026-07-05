@@ -110,25 +110,26 @@ class BulbulAccessibilityService : AccessibilityService() {
         }
     }
 
-    /// Bubble should be visible iff:
-    ///   (a) The IME (soft keyboard) is on screen — there's an
-    ///       AccessibilityWindowInfo of type TYPE_INPUT_METHOD.
-    ///   (b) The focused input is in another app (not Bulbul's own
-    ///       dashboard), so we don't pop the bubble on top of our own
-    ///       Settings text fields.
-    ///   (c) The focused node is actually editable — IMEs can stay up
-    ///       briefly after focus moves to a non-editable element; we
-    ///       don't want the bubble in those windows.
+    /// Bubble should be visible iff the IME (soft keyboard) is on
+    /// screen and the foreground app isn't Bulbul itself.
+    ///
+    /// We used to also require findFocus(FOCUS_INPUT) to return an
+    /// editable node, but on many devices/IMEs findFocus returns null
+    /// even while the user is actively typing — which meant the bubble
+    /// never appeared at all. The IME being up is already the signal
+    /// that the user is in a text context; the focused-node check only
+    /// ever removed correct showings, so it's gone.
     private fun shouldShowBubble(): Boolean {
         if (!isImeVisible()) return false
-        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        // Best-effort own-app check: if we can see the focused node and
+        // it's ours, don't cover our own Settings fields. When focus is
+        // unknowable, default to showing.
+        val focused = try {
+            findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        } catch (_: Throwable) { null } ?: return true
         return try {
-            val editable = focused.isEditable
-            val pkg = focused.packageName?.toString()
-            editable && pkg != packageName
+            focused.packageName?.toString() != packageName
         } finally {
-            // recycle() is no-op on API 33+ but harmless; older
-            // platforms leak the AccessibilityNodeInfo otherwise.
             focused.recycle()
         }
     }

@@ -147,15 +147,62 @@ class BulbulForegroundService : Service() {
             if (transcript != null) {
                 val injected = TextInjector.inject(transcript)
                 Log.i(TAG, "transcript len=${transcript.length} injected=$injected")
-                // If we couldn't inject (no focused field, A11y not
-                // bound), still save the WAV so the dictation isn't
-                // lost — but only when there's no transcript to fall
-                // back on either.
-                if (!injected) writeRecording(wav)
+                recordHistory(transcript, wavDurationMs(wav))
+                // Couldn't type it in (focus gone, A11y unbound) — put
+                // the words on the clipboard so they're one long-press
+                // away instead of silently lost.
+                if (!injected) clipboardFallback(transcript)
             } else {
                 Log.w(TAG, "transcription failed; saving WAV instead")
                 writeRecording(wav)
             }
+        }
+    }
+
+    /// Appends one dictation to filesDir/history.jsonl. The Rust side
+    /// (mobile.rs get_recent_dictations / get_home_stats) reads the same
+    /// file — file-as-IPC, same trick as config.json.
+    private fun recordHistory(text: String, durationMs: Long) {
+        try {
+            val words = text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+            val line = org.json.JSONObject().apply {
+                put("ts", System.currentTimeMillis() / 1000)
+                put("cleaned_text", text)
+                put("word_count", words)
+                put("mode", "clean")
+                put("duration_ms", durationMs)
+            }
+            // Same dir the Rust side reads (app_data_dir) — resolved, not
+            // assumed, for the same reason as getApiKey.
+            File(tauriDataDir(), HISTORY_FILE).appendText(line.toString() + "\n")
+        } catch (t: Throwable) {
+            Log.w(TAG, "history write failed", t)
+        }
+    }
+
+    /// Clip length from the WAV header's byte-rate field (offset 28,
+    /// little-endian) — avoids hardcoding the recorder's format here.
+    private fun wavDurationMs(wav: ByteArray): Long {
+        if (wav.size < 44) return 0
+        val byteRate = java.nio.ByteBuffer.wrap(wav, 28, 4)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+        return if (byteRate > 0) (wav.size - 44) * 1000L / byteRate else 0
+    }
+
+    private fun clipboardFallback(text: String) {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Bulbul", text))
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(
+                    this,
+                    "Bulbul: transcript copied — long-press the field to paste",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "clipboard fallback failed", t)
         }
     }
 
@@ -204,8 +251,11 @@ class BulbulForegroundService : Service() {
     /// becomes visible to this service without a JNI bridge.
     private fun getApiKey(): String {
         return try {
-            val file = File(filesDir, CONFIG_FILE)
-            if (!file.exists()) return ""
+            val file = File(tauriDataDir(), CONFIG_FILE)
+            if (!file.exists()) {
+                Log.w(TAG, "config.json not found at ${file.absolutePath}")
+                return ""
+            }
             val json = org.json.JSONObject(file.readText())
             json.optString("groq_api_key", "")
         } catch (t: Throwable) {
@@ -213,6 +263,35 @@ class BulbulForegroundService : Service() {
             ""
         }
     }
+
+    /// Tauri's app_data_dir on Android is NOT guaranteed to be filesDir —
+    /// on this device the Rust side writes config.json somewhere else
+    /// under dataDir. Rather than hardcode an assumption that already
+    /// bit us once, find where config.json actually lives and use that
+    /// directory for everything we share with the Rust side.
+    private fun tauriDataDir(): File {
+        cachedDataDir?.let { return it }
+        val candidates = listOf(filesDir, dataDir, File(dataDir, "files"))
+        for (c in candidates) {
+            if (File(c, CONFIG_FILE).exists()) {
+                Log.i(TAG, "tauri data dir resolved: ${c.absolutePath}")
+                cachedDataDir = c
+                return c
+            }
+        }
+        // Shallow walk as a last resort (covers future Tauri layouts).
+        dataDir.walkTopDown().maxDepth(3)
+            .firstOrNull { it.name == CONFIG_FILE }
+            ?.parentFile?.let {
+                Log.i(TAG, "tauri data dir found by walk: ${it.absolutePath}")
+                cachedDataDir = it
+                return it
+            }
+        Log.w(TAG, "config.json not found anywhere under ${dataDir.absolutePath}")
+        return filesDir
+    }
+
+    private var cachedDataDir: File? = null
 
     private fun writeRecording(wav: ByteArray) {
         try {
@@ -355,6 +434,9 @@ class BulbulForegroundService : Service() {
         // Mirrors MOBILE_CONFIG_FILE on the Rust side — same file,
         // both processes read/write JSON shaped like `Config`.
         private const val CONFIG_FILE = "config.json"
+        // Dictation history, one JSON object per line. Read by
+        // mobile.rs for the dashboard's Recent activity + stats.
+        private const val HISTORY_FILE = "history.jsonl"
         // Bubble position cache — separate from config.json because
         // it's a transient UI concern, not a setting the user
         // configures through the React Settings page.
@@ -399,11 +481,33 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = COLOR_IDLE
         style = Paint.Style.FILL
+        // Soft drop shadow so the bubble reads as floating above any
+        // background. Needs a software layer to render on all APIs.
+        setShadowLayer(10f, 0f, 4f, Color.argb(90, 0, 0, 0))
     }
-    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val micPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.STROKE
-        strokeWidth = 4f
+        strokeWidth = 5f
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val micFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+    /// Animated ring drawn while recording — alpha/radius driven by a
+    /// repeating animator so "live mic" is unmissable at a glance.
+    private val pulsePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = COLOR_RECORDING
+        style = Paint.Style.STROKE
+        strokeWidth = 6f
+    }
+    private var recording = false
+    private var pulse = 0f
+    private var pulser: android.animation.ValueAnimator? = null
+
+    init {
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
 
     private var params: WindowManager.LayoutParams? = null
@@ -444,15 +548,46 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     /// thread (the recorder lives off the main thread).
     fun setRecording(active: Boolean) {
         post {
+            recording = active
             fillPaint.color = if (active) COLOR_RECORDING else COLOR_IDLE
+            pulser?.cancel(); pulser = null
+            if (active) {
+                pulser = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 1100
+                    repeatCount = android.animation.ValueAnimator.INFINITE
+                    addUpdateListener { pulse = it.animatedValue as Float; invalidate() }
+                    start()
+                }
+            }
             invalidate()
         }
     }
 
     override fun onDraw(canvas: Canvas) {
-        val r = width / 2f
-        canvas.drawCircle(r, r, r - 2f, fillPaint)
-        canvas.drawCircle(r, r, r - 2f, ringPaint)
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = width / 2f - 8f // leave room for shadow + pulse ring
+        if (recording) {
+            pulsePaint.alpha = ((1f - pulse) * 160).toInt()
+            canvas.drawCircle(cx, cy, r + pulse * 7f, pulsePaint)
+        }
+        canvas.drawCircle(cx, cy, r, fillPaint)
+
+        // Mic glyph, scaled to the bubble: capsule body, cradle arc,
+        // stem and base — the universal "dictate here" symbol.
+        val u = r / 22f
+        val bodyW = 9f * u
+        val bodyTop = cy - 12f * u
+        val bodyBottom = cy + 1f * u
+        canvas.drawRoundRect(
+            cx - bodyW / 2, bodyTop, cx + bodyW / 2, bodyBottom,
+            bodyW / 2, bodyW / 2, micFillPaint,
+        )
+        micPaint.strokeWidth = 2.6f * u
+        val arc = android.graphics.RectF(cx - 8f * u, cy - 7f * u, cx + 8f * u, cy + 5f * u)
+        canvas.drawArc(arc, 20f, 140f, false, micPaint)
+        canvas.drawLine(cx, cy + 5f * u, cx, cy + 9f * u, micPaint)
+        canvas.drawLine(cx - 4.5f * u, cy + 10f * u, cx + 4.5f * u, cy + 10f * u, micPaint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {

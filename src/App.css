@@ -3368,103 +3368,304 @@ html.platform-android #root {
   overflow: hidden;
 }
 
-html.platform-android .app-shell {
+html.platform-android .m-shell {
+  display: flex;
   flex-direction: column;
   height: 100vh;
 }
 
-/* Sidebar collapses to a horizontal tab bar pinned at the bottom.
-   Brand mark + label hide (no space), sidebar-footer hides
-   (status pill + version are not load-bearing on mobile — they
-   live in Settings if the user wants them). */
-html.platform-android .sidebar {
-  width: 100%;
-  height: 64px;
-  flex-direction: row;
-  border-right: 0;
-  border-top: 1px solid var(--fill);
-  padding: 8px 6px;
-  order: 2; /* below content */
-  overflow-x: auto;
-  overflow-y: hidden;
+/* ── Top app bar: hamburger (menu sheet) · centered brand · status
+   dot. Fixed 34px top padding clears the status bar — the webview
+   reports env(safe-area-inset-top) as 0 on Android, so we can't rely
+   on it. ── */
+html.platform-android .m-appbar {
+  display: grid;
+  grid-template-columns: 52px 1fr 52px;
+  align-items: center;
+  padding: 38px 10px 12px;
+  background: var(--bg);
+  flex-shrink: 0;
+}
+html.platform-android .m-appbar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+html.platform-android .m-brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+/* Same wordmark as the desktop sidebar — Playfair italic lowercase. */
+html.platform-android .m-brand-text {
+  font-family: "Playfair Display", Georgia, "Cambria", serif;
+  font-style: italic;
+  font-size: 27px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  text-transform: lowercase;
+  color: var(--text-heading);
+  line-height: 1;
+}
+html.platform-android .m-icon-btn {
+  width: 52px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: 14px;
+  color: var(--text-2);
+}
+html.platform-android .m-icon-btn:active { background: var(--fill); }
+html.platform-android .m-status {
+  display: flex;
+  justify-content: center;
+}
+html.platform-android .m-status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: block;
+  background: var(--text-dim);
 }
 
-html.platform-android .brand,
-html.platform-android .sidebar-footer {
-  display: none;
-}
-
-html.platform-android .nav {
-  flex-direction: row;
-  gap: 4px;
+/* ── Content ── */
+html.platform-android .m-content {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 28px;
+}
+
+/* Readable phone typography: the desktop 13px base reads tiny on a
+   6-inch screen at arm's length. */
+html.platform-android body { font-size: 15px; }
+html.platform-android .muted.small,
+html.platform-android .small { font-size: 13px; }
+html.platform-android .page-header h1 {
+  font-size: 28px;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+html.platform-android .page-header p { font-size: 14px; line-height: 1.55; }
+
+/* Page headers stack: title + subtitle full-width, action buttons in
+   a row of their own beneath (they were overflowing off-screen when
+   forced beside the title). */
+html.platform-android .page-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+html.platform-android .header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+html.platform-android .header-actions button { flex: 1; justify-content: center; }
+
+html.platform-android .stat-cards { grid-template-columns: 1fr 1fr; gap: 10px; }
+html.platform-android .stat-card { padding: 14px 15px; }
+html.platform-android .stat-card .stat-value { font-size: 30px; }
+
+/* Comfortable touch targets everywhere. */
+html.platform-android button { min-height: 38px; }
+html.platform-android input,
+html.platform-android select,
+html.platform-android textarea { font-size: 15px; }
+
+/* ── Bottom tab bar: 4 fixed slots ── */
+html.platform-android .m-tabbar {
   display: flex;
   align-items: stretch;
+  flex-shrink: 0;
+  background: var(--bg);
+  border-top: 1px solid var(--fill);
+  padding: 6px 8px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
 }
-
-/* Tab buttons: icon stacked above a small label, equal-width along
-   the row so they read as a tab bar rather than a menu list. */
-html.platform-android .nav-item {
+html.platform-android .m-tab {
   flex: 1;
+  display: flex;
   flex-direction: column;
-  justify-content: center;
   align-items: center;
-  gap: 2px;
-  padding: 6px 4px;
-  min-width: 56px;
-  font-size: 10px;
+  gap: 3px;
+  padding: 6px 0 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
 }
+html.platform-android .m-tab .m-tab-icon,
+html.platform-android .m-tab .m-tab-icon svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+html.platform-android .m-tab.active { color: var(--text); }
+html.platform-android .m-tab.active .m-tab-icon {
+  background: var(--fill);
+  border-radius: 999px;
+  padding: 4px 14px;
+  width: auto;
+}
+html.platform-android .m-tab-label { line-height: 1; }
 
-html.platform-android .nav-icon,
-html.platform-android .nav-icon svg {
+/* ── "More" bottom sheet ── */
+html.platform-android .m-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 400;
+  display: flex;
+  align-items: flex-end;
+}
+html.platform-android .m-sheet {
+  width: 100%;
+  background: var(--surface-1, var(--bg));
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--border);
+  padding: 8px 14px;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  animation: m-sheet-up 180ms ease-out;
+}
+@keyframes m-sheet-up {
+  from { transform: translateY(24px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+html.platform-android .m-sheet-grab {
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  margin: 4px auto 10px;
+}
+html.platform-android .m-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 13px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+}
+html.platform-android .m-sheet-item:active { background: var(--fill); }
+html.platform-android .m-sheet-item.active { background: var(--fill); color: var(--text); }
+html.platform-android .m-sheet-icon,
+html.platform-android .m-sheet-icon svg {
   width: 20px;
   height: 20px;
+  display: block;
+  color: var(--text-muted);
+}
+html.platform-android .m-sheet-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 0;
+  border-top: 1px solid var(--fill);
+  margin-top: 8px;
+  font-size: 12px;
+}
+html.platform-android .m-sheet-foot .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-html.platform-android .nav-label {
-  flex: 0;
-  font-size: 10px;
-  text-align: center;
-  white-space: nowrap;
-}
-
-html.platform-android .nav-tag {
-  display: none;
-}
-
-/* Main content takes the rest of the height, with safe-area
-   padding so it doesn't slide under the status bar / system
-   gesture area. */
-html.platform-android .content {
-  order: 1;
-  padding: 16px 16px 16px;
-  padding-top: max(16px, env(safe-area-inset-top));
-  flex: 1;
-}
-
-html.platform-android .page-header h1 {
-  font-size: 22px;
-}
-
-html.platform-android .stat-cards {
-  grid-template-columns: 1fr 1fr;
-}
-
-/* Settings modal becomes full-screen — a small centred card is
-   cramped on a phone and the toolbar at the top of a real
-   settings page is a familiar pattern. */
+/* ── Modals go full-screen ── */
 html.platform-android .modal-overlay {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   background: var(--bg);
 }
-
 html.platform-android .modal {
   max-width: 100%;
   width: 100%;
   height: 100%;
+  max-height: 100%;
   border-radius: 0;
   border: 0;
   padding: 20px;
+  padding-top: max(20px, env(safe-area-inset-top));
   overflow-y: auto;
 }
+
+/* ── Per-view mobile layout ──
+   Every desktop multi-column grid stacks to one column so nothing
+   overlaps or overflows on a phone width. */
+
+/* Insights: the 6-col span dance becomes a simple stack; the tab row
+   scrolls sideways instead of wrapping awkwardly. */
+html.platform-android .insights-grid {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+html.platform-android .card-wpm,
+html.platform-android .card-fixes,
+html.platform-android .card-words,
+html.platform-android .panel-usage,
+html.platform-android .panel-streak {
+  grid-column: auto;
+}
+html.platform-android .insights-page .tabs {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+}
+html.platform-android .insights-page .heatmap {
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+html.platform-android .voice-grid {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+html.platform-android .voice-narrative-card,
+html.platform-android .voice-peak-card { padding: 16px; }
+
+/* Style: 3-col preset cards stack; override rows go vertical so the
+   inputs get full width instead of squeezing into 140px. */
+html.platform-android .style-cards {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+html.platform-android .style-override-row,
+html.platform-android .style-override-add {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+/* Scratchpad: notes list stacks above the editor instead of a fixed
+   280px side column. */
+html.platform-android .scratchpad-layout {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+html.platform-android .scratch-sidebar { max-height: 30vh; overflow-y: auto; }
+
+/* Cards and panels: tighter padding at phone width. */
+html.platform-android .insight-card,
+html.platform-android .insight-panel,
+html.platform-android .settings-card,
+html.platform-android .day-card { border-radius: 12px; }
+html.platform-android .insight-card,
+html.platform-android .insight-panel { padding: 14px; }
+html.platform-android .panel-header { flex-wrap: wrap; gap: 4px; }
+
+/* Long content never forces sideways scroll of the page itself. */
+html.platform-android .page { max-width: 100%; }
+html.platform-android .m-content > * { min-width: 0; }
+html.platform-android table { display: block; overflow-x: auto; }

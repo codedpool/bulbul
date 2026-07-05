@@ -91,6 +91,7 @@ const SECTIONS = [
 
 function App() {
   const [section, setSection] = useState("home");
+  const [moreOpen, setMoreOpen] = useState(false); // mobile "More" sheet
   // Settings now lives as a modal popup over the rest of the app, not
   // a routed page. The sidebar's Settings button toggles this; the
   // modal owns its own internal category sidebar + content pane.
@@ -211,6 +212,128 @@ function App() {
     );
   }
 
+  const mainView = (
+    <>
+      {section === "home" && <HomeView displayName={config.display_name} />}
+      {section === "dictionary" && <DictionaryView />}
+      {section === "insights" && <InsightsView />}
+      {section === "snippets" && <SnippetsView />}
+      {section === "transforms" && <TransformsView />}
+      {section === "style" && <StyleView config={config} updateConfig={updateConfig} />}
+      {section === "scratchpad" && <ScratchpadView />}
+      {!["home", "dictionary", "insights", "snippets", "transforms", "style", "scratchpad"].includes(section) && <ComingSoon id={section} />}
+    </>
+  );
+
+  // ── Mobile shell ──────────────────────────────────────────────
+  // Phones get their own idiom instead of a squeezed desktop: a slim
+  // app bar, content, a 4-slot bottom tab bar (the rest of the nav
+  // lives in a "More" bottom sheet so tabs stay thumb-sized).
+  if (IS_ANDROID) {
+    const primary = SECTIONS.filter((s) => ["home", "dictionary", "transforms", "insights"].includes(s.id));
+    const secondary = SECTIONS.filter((s) => !["home", "dictionary", "transforms", "insights"].includes(s.id));
+    return (
+      <>
+      <div className="app-shell m-shell">
+        {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
+        <header className="m-appbar">
+          <button
+            className="m-icon-btn"
+            aria-label="Menu"
+            onClick={() => setMoreOpen(true)}
+          >
+            <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+              <line x1="4" y1="7" x2="20" y2="7" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="17" x2="20" y2="17" />
+            </svg>
+          </button>
+          <div className="m-appbar-brand">
+            <img src={bulbulMark} alt="" className="m-brand-mark" aria-hidden />
+            <span className="m-brand-text">bulbul</span>
+          </div>
+          <div className={`m-status status-${status.state}`} title={statusLabel(status.state)}>
+            <span className="dot" />
+          </div>
+        </header>
+        <main className="content m-content">{mainView}</main>
+
+        <nav className="m-tabbar">
+          {primary.map((s) => (
+            <button
+              key={s.id}
+              className={`m-tab ${section === s.id && !moreOpen ? "active" : ""}`}
+              onClick={() => { setSection(s.id); setMoreOpen(false); }}
+            >
+              <span className="m-tab-icon">{ICONS[s.id]}</span>
+              <span className="m-tab-label">{s.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {moreOpen && (
+          <div className="m-sheet-overlay" onClick={() => setMoreOpen(false)}>
+            <div className="m-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="m-sheet-grab" />
+              {secondary.map((s) => {
+                const isSettings = s.id === "settings";
+                return (
+                  <button
+                    key={s.id}
+                    className={`m-sheet-item ${(!isSettings && section === s.id) ? "active" : ""}`}
+                    onClick={() => {
+                      if (isSettings) setSettingsOpen(true);
+                      else setSection(s.id);
+                      setMoreOpen(false);
+                    }}
+                  >
+                    <span className="m-sheet-icon">{ICONS[s.id]}</span>
+                    <span>{s.label}</span>
+                  </button>
+                );
+              })}
+              <button
+                className="m-sheet-item"
+                onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+              >
+                <span className="m-sheet-icon">
+                  {resolvedTheme === "dark" ? (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <circle cx="12" cy="12" r="4" />
+                      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                    </svg>
+                  )}
+                </span>
+                <span>{resolvedTheme === "dark" ? "Light mode" : "Dark mode"}</span>
+              </button>
+              <div className="m-sheet-foot">
+                <span className={`status status-${status.state}`}>
+                  <span className="dot" /> {statusLabel(status.state)}
+                </span>
+                <span className="muted small">v1.0.1 · MIT</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      <SettingsView
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        config={config}
+        updateConfig={updateConfig}
+        autostart={autostart}
+        onAutostartChange={toggleAutostart}
+        onHideTrayChange={toggleHideTray}
+      />
+      <TooltipProvider />
+      </>
+    );
+  }
+
   return (
     <>
     <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
@@ -305,14 +428,7 @@ function App() {
             </button>
           </div>
         )}
-        {section === "home" && <HomeView displayName={config.display_name} />}
-        {section === "dictionary" && <DictionaryView />}
-        {section === "insights" && <InsightsView />}
-        {section === "snippets" && <SnippetsView />}
-        {section === "transforms" && <TransformsView />}
-        {section === "style" && <StyleView config={config} updateConfig={updateConfig} />}
-        {section === "scratchpad" && <ScratchpadView />}
-        {!["home", "dictionary", "insights", "snippets", "transforms", "style", "scratchpad"].includes(section) && <ComingSoon id={section} />}
+        {mainView}
       </main>
     </div>
     <SettingsView
