@@ -111,7 +111,10 @@ x11rb = { version = "0.13", features = ["xtest"] }
 # register_host_app (crate root) attaches our app id so GNOME's portal
 # stops rejecting requests with "an app id is required". tokio backend
 # matches the tokio we already ship.
-ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop"] }
+# remote_desktop's module pulls in screencast::Stream, so the screencast
+# feature must ride along (ashpd 0.13 doesn't declare the inter-feature
+# dep itself — enabling remote_desktop alone fails to compile).
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast"] }
 # StreamExt for the portal's Activated/Deactivated signal streams.
 futures-util = "0.3"
 # BitFlags<DeviceType> for the RemoteDesktop select_devices call. Pinned
