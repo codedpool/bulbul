@@ -57,33 +57,46 @@ export default function LinuxSupportBanner() {
 
   const issues = [];
 
-  if (status?.backend === "none") {
-    issues.push({
-      key: "hotkey",
-      text: status.detail || "The dictation hotkey couldn't be registered.",
-      command: info.toggle_command,
-      commandHint:
-        "Bind this command to a keyboard shortcut in Settings → Keyboard → Custom Shortcuts — press once to start dictating, again to stop. (It signals the running app instantly — don’t use “bulbul --toggle-dictation”, which is laggy and steals focus.)",
-    });
-  }
+  // Highest priority: the .deb granted input access but this login
+  // session predates it. That one relogin switches on BOTH the instant
+  // hold-to-talk hotkey (evdev) and typing (uinput) — so collapse the
+  // separate hotkey/paste nags into a single clear instruction.
+  const needsRelogin = info.uinput_grant_installed && !info.uinput_ready;
 
-  // Typing works when the kernel virtual keyboard (uinput) is granted —
-  // the reliable primary — or a fallback path is live (portal / working
-  // tool). uinput_ready covers every compositor, so if it's on, no
-  // paste issue at all.
-  const pasteWorks =
-    info.uinput_ready ||
-    paste?.backend === "portal" ||
-    info.wtype_usable ||
-    info.ydotool_ready;
-  if (info.wayland && !pasteWorks) {
+  if (needsRelogin) {
     issues.push({
-      key: "paste",
-      text: info.uinput_grant_installed
-        ? "Almost there — log out and back in once to finish enabling auto-typing. Until then your dictation is copied to the clipboard, ready to paste with Ctrl+V."
-        : "Auto-typing into other apps isn’t enabled on this install. The .deb package sets it up (one logout/login) — with the AppImage, your dictation is copied to the clipboard instead, ready to paste with Ctrl+V.",
+      key: "relogin",
+      text: "Almost there — log out and back in once to finish setup. That turns on the instant hold-to-talk hotkey and typing into other apps. Until you do, dictation is copied to the clipboard (paste with Ctrl+V).",
       command: null,
     });
+  } else {
+    if (status?.backend === "none") {
+      issues.push({
+        key: "hotkey",
+        text:
+          (status.detail ||
+            "The dictation hotkey couldn't be registered on this desktop.") +
+          " For an instant hold-to-talk hotkey, install the .deb package (it reads the keyboard directly after one logout/login).",
+        command: info.toggle_command,
+        commandHint:
+          "Or bind this command to a shortcut in Settings → Keyboard → Custom Shortcuts — press once to start, again to stop. (It signals the running app instantly; don’t use “bulbul --toggle-dictation”, which is laggy.)",
+      });
+    }
+
+    // Typing works when uinput is granted (covers every compositor) or a
+    // fallback path is live (portal / working tool).
+    const pasteWorks =
+      info.uinput_ready ||
+      paste?.backend === "portal" ||
+      info.wtype_usable ||
+      info.ydotool_ready;
+    if (info.wayland && !pasteWorks) {
+      issues.push({
+        key: "paste",
+        text: "Auto-typing into other apps isn’t enabled on this install. The .deb package sets it up (one logout/login) — with the AppImage, dictation is copied to the clipboard instead, ready to paste with Ctrl+V.",
+        command: null,
+      });
+    }
   }
 
   if (info.gnome) {
