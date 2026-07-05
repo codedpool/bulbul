@@ -43,19 +43,10 @@ html, body, #root {
   padding-left: 96px; /* clear of the floating traffic lights (cluster ends ~78px in) */
 }
 
-/* Linux: same transparent-window + CSS-radius trick as the Mac rules
-   above — GTK borderless windows are sharp rectangles otherwise. The
-   window itself is created transparent in setup_scratchpad_window. */
-.platform-linux html,
-.platform-linux body,
-.platform-linux #root {
-  background: transparent;
-}
-.platform-linux .sp-shell {
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--field);
-}
+/* Linux: opaque square window. WebKitGTK transparency is unreliable
+   (and broken on some drivers/VMs), so we don't fake a rounded shell
+   the way the Mac rules above do — the window stays opaque with the
+   themed background from the base rule, and corners are square. */
 
 /* ─────────── Custom title bar (matches main app) ─────────── */
 
