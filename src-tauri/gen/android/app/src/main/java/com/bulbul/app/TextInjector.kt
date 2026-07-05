@@ -76,10 +76,24 @@ object TextInjector {
             var existing =
                 if (android.os.Build.VERSION.SDK_INT >= 26 && node.isShowingHintText) ""
                 else node.text?.toString() ?: ""
-            if (android.os.Build.VERSION.SDK_INT >= 26 &&
-                existing.isNotEmpty() && existing == node.hintText?.toString()
-            ) {
-                existing = ""
+            if (existing.isNotEmpty()) {
+                val hint =
+                    if (android.os.Build.VERSION.SDK_INT >= 26) node.hintText?.toString() else null
+                val matchesHint =
+                    hint != null && existing.trim().equals(hint.trim(), ignoreCase = true)
+                // Strongest hint signal: a field showing only its
+                // placeholder reports a cursor at 0 (or -1) while still
+                // claiming text. Real content keeps the cursor inside
+                // the text (usually at its end). WhatsApp trips the
+                // text-equals-hint check, so we need this too.
+                val cursorAtZero =
+                    node.textSelectionEnd <= 0 && node.textSelectionStart <= 0
+                Log.d(
+                    TAG,
+                    "target text.len=${existing.length} hint=$hint sel=" +
+                        "${node.textSelectionStart}..${node.textSelectionEnd}",
+                )
+                if (matchesHint || cursorAtZero) existing = ""
             }
             val combined =
                 if (existing.isBlank()) text else existing.trimEnd() + " " + text
