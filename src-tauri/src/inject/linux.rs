@@ -262,11 +262,20 @@ fn inject_text_wayland(text: &str) -> Result<()> {
 }
 
 fn send_combo_wayland(combo: Combo) -> Result<()> {
-    // RemoteDesktop portal first — native, no external tool, and asking
-    // while it's down is what triggers its self-healing re-init (so a
-    // user who approves the permission dialog late still converges to
-    // the portal without restarting Bulbul). Any error falls through to
-    // the tool path below.
+    // Give the user's physical modifiers a moment to clear. The stop
+    // press is Ctrl+Alt+Space — if our synthetic Ctrl+V fires while Alt
+    // is still physically held, the app receives Ctrl+Alt+V and pastes
+    // nothing. macOS polls key state for this (inject/macos.rs step 3);
+    // Wayland has no global key query, so a fixed drain is the best we
+    // can do. Transcription latency usually covers it; this covers the
+    // fast-transcript case.
+    thread::sleep(Duration::from_millis(150));
+
+    // Portal first — native, no external tool, and asking while it's
+    // down is what triggers its self-healing re-init (so a user who
+    // approves the permission dialog late still converges to the portal
+    // without restarting Bulbul). Any error falls through to the tool
+    // path below.
     let key = match combo {
         Combo::CtrlV => super::linux_portal_paste::EV_V,
         Combo::CtrlC => super::linux_portal_paste::EV_C,
