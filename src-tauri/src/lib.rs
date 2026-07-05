@@ -1183,15 +1183,12 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
             .title_bar_style(TitleBarStyle::Overlay)
             .hidden_title(true);
     }
-    // Linux: borderless GTK windows are sharp-cornered rectangles (the
-    // compositor only rounds server-side decorations, which we removed).
-    // Transparent surface + CSS border-radius on `.platform-linux
-    // .sp-shell` recreates the rounded shell Windows gets from DWM and
-    // Mac from native chrome.
-    #[cfg(target_os = "linux")]
-    {
-        builder = builder.transparent(true);
-    }
+    // Linux stays opaque: WebKitGTK window transparency is unreliable
+    // across stacks (and broken on some drivers/VMs), so we don't fake a
+    // rounded shell here the way Mac/Windows do — an un-composited
+    // transparent window just renders black/garbled corners. Borderless +
+    // opaque + our custom titlebar; square corners. See the
+    // `.platform-linux` note in App.css / ScratchpadWindow.css.
     let window = builder.build()?;
 
     // Intercept the close button (X on Win/Linux, red traffic light on

@@ -116,24 +116,16 @@ body, html, #root {
   padding-top: 60px;
 }
 
-/* ────────── Linux rounded shell ──────────
-   GTK draws borderless windows as sharp rectangles — the compositor
-   only rounds windows that keep server-side decorations, which we
-   dropped for the custom titlebar. The Linux window is created
-   transparent (tauri.linux.conf.json) and the radius lives here in
-   CSS, same trick as the Mac scratchpad. The 1px border stands in for
-   the compositor shadow a decorated window would get, so the edge
-   still reads against same-tone backgrounds. */
-.platform-linux body,
-.platform-linux html,
-.platform-linux #root {
-  background: transparent;
-}
-.platform-linux .app-shell {
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--field);
-}
+/* ────────── Linux: opaque square window ──────────
+   Unlike Mac (native chrome) and Windows (DWM rounds borderless
+   windows), Linux has no reliable way to round a borderless window:
+   the trick everywhere else needs a transparent window, and WebKitGTK
+   transparency is unavailable on many stacks (and outright broken on
+   some drivers/VMs — a transparent window that won't composite renders
+   black/garbled corners instead of see-through ones). So Linux stays
+   opaque and borderless with our custom titlebar; corners are square.
+   Body keeps the themed background from the base rule above — no
+   platform override needed. */
 
 .loading {
   color: var(--text-dim);
