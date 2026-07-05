@@ -121,6 +121,22 @@ pub fn inject_text(text: &str) -> Result<()> {
         return Ok(());
     }
 
+    // Fast path (any session, when uinput access was granted): type the
+    // characters straight through the kernel virtual keyboard. This never
+    // touches the clipboard, so there's no save → paste → restore
+    // round-trip — which is the source of the paste "flicker" — and no
+    // dependency on wl-clipboard. It only handles text that maps to a US
+    // layout; anything else (emoji, accents) returns Err and we fall
+    // through to the clipboard path below, which is layout/Unicode safe.
+    if super::linux_uinput::is_ready() {
+        match super::linux_uinput::type_text(text) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                tracing::info!("uinput direct typing unavailable ({e}); using clipboard paste");
+            }
+        }
+    }
+
     // On Wayland, always take the Wayland path: its clipboard write
     // (wl-copy) is the one that survives Bulbul being unfocused, and
     // its keystroke chain already ends in an XWayland last resort —
