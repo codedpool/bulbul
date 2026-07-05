@@ -79,7 +79,9 @@ export default function LinuxSupportBanner() {
   if (info.wayland && !pasteWorks) {
     issues.push({
       key: "paste",
-      text: "Auto-typing into other apps isn’t enabled on this install. The .deb package grants it automatically — with the AppImage, your dictation is copied to the clipboard instead, ready to paste with Ctrl+V.",
+      text: info.uinput_grant_installed
+        ? "Almost there — log out and back in once to finish enabling auto-typing. Until then your dictation is copied to the clipboard, ready to paste with Ctrl+V."
+        : "Auto-typing into other apps isn’t enabled on this install. The .deb package sets it up (one logout/login) — with the AppImage, your dictation is copied to the clipboard instead, ready to paste with Ctrl+V.",
       command: null,
     });
   }

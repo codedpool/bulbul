@@ -1,11 +1,13 @@
 #!/bin/sh
 # Grant Bulbul access to /dev/uinput so it can inject keystrokes on
 # Wayland (where the compositor blocks every user-space typing path).
-# Done narrowly: a dedicated system group owns the uinput node via a
-# udev rule, and the Bulbul binary is setgid to that group — so Bulbul
-# runs able to open uinput and nothing else. No relogin, no broad
-# capability, no user action. The `sudo` the user already gave apt is
-# the consent.
+#
+# We deliberately do NOT setgid the Bulbul binary: a setgid executable
+# runs under glibc "secure-execution mode" (AT_SECURE), which breaks the
+# WebKitGTK GUI — the app won't launch. Instead we add the installing
+# user to a dedicated group that owns /dev/uinput. That needs one
+# logout/login to take effect, then typing works everywhere with no
+# further prompts.
 set -e
 
 GROUP=bulbul-input
@@ -22,18 +24,18 @@ cat > "$RULE" <<EOF
 KERNEL=="uinput", GROUP="$GROUP", MODE="0660", OPTIONS+="static_node=uinput"
 EOF
 
-# 3. setgid the installed binary so the process's group can open uinput
-#    without the *user* being in the group (which would need a relogin).
-#    Tauri may install the binary as either name depending on version.
-for bin in /usr/bin/bulbul /usr/bin/Bulbul; do
-    if [ -x "$bin" ]; then
-        chgrp "$GROUP" "$bin" 2>/dev/null || true
-        chmod 2755 "$bin" 2>/dev/null || true
-    fi
-done
+# 3. Add the human who ran the install to the group. $SUDO_USER is set
+#    because the installer runs `sudo apt install`. Takes effect on their
+#    next login. (No reliable "installing user" exists under bare apt
+#    automation, so we no-op when $SUDO_USER is unset/root — those users
+#    can add themselves: `sudo usermod -aG bulbul-input $USER`.)
+if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+    usermod -aG "$GROUP" "$SUDO_USER" || true
+fi
 
-# 4. Make it effective this boot without a reboot: load the module,
-#    reload rules, and fix the live node's ownership.
+# 4. Make the rule effective this boot: load the module, reload rules,
+#    and fix the live node's ownership. (Group membership from step 3
+#    still needs the user's next login — nothing here can shortcut that.)
 modprobe uinput 2>/dev/null || true
 udevadm control --reload-rules 2>/dev/null || true
 udevadm trigger --subsystem-match=misc --attr-match=name=uinput 2>/dev/null \
