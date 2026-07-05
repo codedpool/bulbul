@@ -1,24 +1,25 @@
-//! RemoteDesktop-portal paste for Wayland.
+//! Portal-native paste keystrokes for Wayland — no external tools.
 //!
-//! The GlobalShortcuts portal gives us hotkeys; this gives us the other
-//! half — injecting the Ctrl+V (or Ctrl+C) keystroke that lands our
-//! transcribed text into the focused app, natively, with no wtype /
-//! ydotool install. The compositor shows a one-time "allow remote
-//! control" dialog; we persist the returned restore_token so it never
-//! asks again.
+//! Two backends, chosen by desktop at spawn():
 //!
-//! The portal is async and its session must stay alive, so it lives in
-//! a dedicated actor task: `spawn()` starts it eagerly at launch (the
-//! permission dialog lands at boot, not mid-dictation) and the
-//! synchronous inject path talks to it over a channel.
+//! **GNOME → enigo/EIS.** Mutter accepts the RemoteDesktop portal's
+//! legacy `NotifyKeyboardKeycode` D-Bus calls and returns success while
+//! injecting NOTHING — GNOME only delivers input over the newer EIS
+//! (libei) transport. enigo's libei backend does the full EIS handshake
+//! (its own RemoteDesktop session + ConnectToEIS via reis). Trade-off:
+//! enigo can't persist the permission grant yet (restore token is a
+//! TODO upstream), so GNOME shows one "remote control" approval per
+//! app launch. Annoying but working beats silent no-op.
 //!
-//! Self-healing: if session init fails (dialog declined, portal absent,
-//! D-Bus hiccup) the actor doesn't die — it parks, and the next paste
-//! request triggers a fresh init attempt (10s cooldown so a decline
-//! can't turn into dialog spam). A keystroke failure mid-session closes
-//! the session and goes back to the same park-and-retry state. Callers
-//! always get a reply — Ok, or an Err that tells them to use the
-//! wtype/ydotool/X11 fallback chain.
+//! **Everywhere else (KDE, wlroots) → Notify actor.** KDE implements
+//! the legacy Notify* methods properly, and our own ashpd session
+//! persists its restore token, so the approval dialog appears once
+//! ever. Session lives in a tokio actor task.
+//!
+//! Both backends are self-healing: failed init parks the backend, and
+//! each later paste request retries (10s cooldown so a declined dialog
+//! can't turn into dialog spam). Callers always get a reply — Ok, or an
+//! Err that sends them down the wtype/ydotool/XWayland fallback chain.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as std_mpsc;
@@ -27,8 +28,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 
-// evdev keycodes (Linux input-event-codes) — the space the RemoteDesktop
-// portal's notify_keyboard_keycode expects, same as ydotool uses.
+// evdev keycodes (Linux input-event-codes) — what the RemoteDesktop
+// portal's notify_keyboard_keycode expects, same space ydotool uses.
 pub const EV_V: i32 = 47;
 pub const EV_C: i32 = 46;
 const EV_LEFTCTRL: i32 = 29;
@@ -37,43 +38,191 @@ const EV_LEFTCTRL: i32 = 29;
 /// dialog shouldn't reappear on every dictation in quick succession.
 const REINIT_COOLDOWN: Duration = Duration::from_secs(10);
 
+/// Requests older than this are dropped unserved — the caller's
+/// send_combo timed out long ago and already took the fallback path, so
+/// executing the keystroke late would fire a phantom Ctrl+V into
+/// whatever the user is doing by then.
+const STALE_REQ: Duration = Duration::from_secs(5);
+
 struct PasteReq {
     key: i32, // EV_V or EV_C — pressed together with Left Ctrl
+    queued_at: Instant,
     reply: std_mpsc::Sender<Result<()>>,
 }
 
-static TX: OnceLock<tokio::sync::mpsc::UnboundedSender<PasteReq>> = OnceLock::new();
+/// Exactly one of these is populated by spawn().
+static NOTIFY_TX: OnceLock<tokio::sync::mpsc::UnboundedSender<PasteReq>> = OnceLock::new();
+static ENIGO_TX: OnceLock<std_mpsc::Sender<PasteReq>> = OnceLock::new();
 static READY: AtomicBool = AtomicBool::new(false);
 
-/// True once the portal session is live. Informational (status/banner);
-/// `send_combo` no longer gates on it — sending while not-ready is what
-/// triggers a re-init attempt.
+/// True once a portal/EIS session is live. Informational (status);
+/// `send_combo` doesn't gate on it — asking while down is what triggers
+/// the self-healing re-init.
 pub fn is_ready() -> bool {
     READY.load(Ordering::Relaxed)
 }
 
-/// Send Ctrl+<key> through the portal. Blocks the calling (sync) thread
-/// until the actor replies or a timeout elapses. An Err means "use the
-/// fallback chain" — and, as a side effect, may have kicked off a portal
-/// re-init so the NEXT dictation can go native again.
+/// Send Ctrl+<key> through the active backend. Blocks the calling
+/// (sync) thread until the backend replies or a timeout elapses. An Err
+/// means "use the fallback chain".
 pub fn send_combo(key: i32) -> Result<()> {
-    let tx = TX.get().ok_or_else(|| anyhow!("paste actor not spawned"))?;
     let (rtx, rrx) = std_mpsc::channel();
-    tx.send(PasteReq { key, reply: rtx })
-        .map_err(|_| anyhow!("paste actor gone"))?;
-    // Steady-state round trip is sub-100ms. The generous timeout covers
-    // a re-init attempt that pops the permission dialog: if the user is
-    // staring at it, this dictation falls back, and the approval fixes
+    let req = PasteReq {
+        key,
+        queued_at: Instant::now(),
+        reply: rtx,
+    };
+    if let Some(tx) = ENIGO_TX.get() {
+        tx.send(req).map_err(|_| anyhow!("paste backend gone"))?;
+    } else if let Some(tx) = NOTIFY_TX.get() {
+        tx.send(req).map_err(|_| anyhow!("paste backend gone"))?;
+    } else {
+        return Err(anyhow!("paste backend not spawned"));
+    }
+    // Steady-state round trip is fast; the generous timeout covers a
+    // re-init attempt that pops the permission dialog. If the user is
+    // staring at it, this dictation falls back and the approval fixes
     // the next one.
     rrx.recv_timeout(Duration::from_secs(5))
         .map_err(|_| anyhow!("portal paste timed out"))?
 }
 
-/// Spawn the actor and eagerly initialize the RemoteDesktop session.
-/// Wayland only; call once at setup. No-op if already spawned.
+/// Spawn the paste backend for this desktop. Wayland only; call once at
+/// setup. No-op if already spawned.
 pub fn spawn() {
+    if crate::linux_env::is_gnome() {
+        spawn_enigo_backend();
+    } else {
+        spawn_notify_backend();
+    }
+}
+
+// === GNOME backend: enigo → EIS ============================================
+
+fn spawn_enigo_backend() {
+    let (tx, rx) = std_mpsc::channel::<PasteReq>();
+    if ENIGO_TX.set(tx).is_err() {
+        return;
+    }
+
+    // Dedicated OS thread: enigo's libei backend spins its own
+    // current-thread tokio runtime internally (custom_block_on), which
+    // must not run inside tauri's async runtime.
+    std::thread::Builder::new()
+        .name("bulbul-eis-paste".into())
+        .spawn(move || {
+            use enigo::{
+                Direction::{Press, Release},
+                Enigo, Key, Keyboard, Settings,
+            };
+
+            let mut enigo: Option<Enigo> = None;
+            let mut last_attempt: Option<Instant> = None;
+            let mut pending: Option<PasteReq> = None;
+
+            loop {
+                // Eager first init at boot (permission dialog lands at
+                // launch); afterwards, park until a request justifies a
+                // retry.
+                if last_attempt.is_some() && enigo.is_none() && pending.is_none() {
+                    match rx.recv() {
+                        Ok(req) => pending = Some(req),
+                        Err(_) => return,
+                    }
+                }
+
+                if enigo.is_none() {
+                    if let Some(t) = last_attempt {
+                        if t.elapsed() < REINIT_COOLDOWN {
+                            if let Some(req) = pending.take() {
+                                let _ = req
+                                    .reply
+                                    .send(Err(anyhow!("EIS recently failed — using fallback")));
+                            }
+                            continue;
+                        }
+                    }
+                    last_attempt = Some(Instant::now());
+                    match Enigo::new(&Settings::default()) {
+                        Ok(e) => {
+                            enigo = Some(e);
+                            READY.store(true, Ordering::Relaxed);
+                            crate::linux_env::emit_paste_status(
+                                "portal",
+                                "Typing through the desktop's input portal (EIS) — \
+                                 no extra tools needed."
+                                    .to_string(),
+                            );
+                            tracing::info!("enigo EIS paste backend ready");
+                        }
+                        Err(e) => {
+                            READY.store(false, Ordering::Relaxed);
+                            tracing::warn!("enigo EIS init failed: {e}");
+                            crate::linux_env::emit_paste_status(
+                                "tools",
+                                format!(
+                                    "The desktop's input portal isn't available ({e}). \
+                                     Falling back to ydotool if installed. The next \
+                                     dictation retries the portal."
+                                ),
+                            );
+                            if let Some(req) = pending.take() {
+                                let _ = req.reply.send(Err(anyhow!("EIS init failed: {e}")));
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                let req = match pending.take() {
+                    Some(r) => r,
+                    None => match rx.recv() {
+                        Ok(r) => r,
+                        Err(_) => return,
+                    },
+                };
+                if req.queued_at.elapsed() > STALE_REQ {
+                    continue; // caller gave up long ago — don't fire a phantom paste
+                }
+
+                let key_char = if req.key == EV_C { 'c' } else { 'v' };
+                let e = enigo.as_mut().expect("enigo present in serve state");
+                let res = (|| -> Result<()> {
+                    e.key(Key::Control, Press).map_err(|e| anyhow!("ctrl press: {e}"))?;
+                    e.key(Key::Unicode(key_char), enigo::Direction::Click)
+                        .map_err(|e| anyhow!("key click: {e}"))?;
+                    e.key(Key::Control, Release)
+                        .map_err(|e| anyhow!("ctrl release: {e}"))?;
+                    Ok(())
+                })();
+
+                match res {
+                    Ok(()) => {
+                        let _ = req.reply.send(Ok(()));
+                    }
+                    Err(err) => {
+                        tracing::warn!("EIS keystroke failed: {err:#}");
+                        READY.store(false, Ordering::Relaxed);
+                        crate::linux_env::emit_paste_status(
+                            "tools",
+                            "Lost the input-portal connection — falling back to \
+                             ydotool if installed. The next dictation retries."
+                                .to_string(),
+                        );
+                        let _ = req.reply.send(Err(err));
+                        enigo = None; // drop closes the EIS session; re-init on demand
+                    }
+                }
+            }
+        })
+        .expect("spawn EIS paste thread");
+}
+
+// === Non-GNOME backend: RemoteDesktop Notify* ==============================
+
+fn spawn_notify_backend() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<PasteReq>();
-    if TX.set(tx).is_err() {
+    if NOTIFY_TX.set(tx).is_err() {
         return;
     }
 
@@ -173,6 +322,9 @@ pub fn spawn() {
                         None => return,
                     },
                 };
+                if req.queued_at.elapsed() > STALE_REQ {
+                    continue;
+                }
                 let res = async {
                     rd.notify_keyboard_keycode(
                         &session,
