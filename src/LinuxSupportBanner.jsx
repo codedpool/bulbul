@@ -63,7 +63,7 @@ export default function LinuxSupportBanner() {
       text: status.detail || "The dictation hotkey couldn't be registered.",
       command: info.toggle_command,
       commandHint:
-        "Bind this command to a keyboard shortcut in your system settings — press once to start dictating, again to stop.",
+        "Bind this command to a keyboard shortcut in Settings → Keyboard → Custom Shortcuts — press once to start dictating, again to stop. (It signals the running app instantly — don’t use “bulbul --toggle-dictation”, which is laggy and steals focus.)",
     });
   }
 
