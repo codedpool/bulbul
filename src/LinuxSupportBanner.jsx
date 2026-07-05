@@ -67,30 +67,20 @@ export default function LinuxSupportBanner() {
     });
   }
 
-  // Paste only needs user action when the RemoteDesktop portal isn't
-  // carrying it AND no *working* keystroke tool can fall back in.
-  // (wtype doesn't work on GNOME's compositor even when installed, and
-  // ydotool without its daemon just errors — the raw installed flags
-  // lie, use the usability ones.)
+  // Typing works when the kernel virtual keyboard (uinput) is granted —
+  // the reliable primary — or a fallback path is live (portal / working
+  // tool). uinput_ready covers every compositor, so if it's on, no
+  // paste issue at all.
   const pasteWorks =
-    paste?.backend === "portal" || info.wtype_usable || info.ydotool_ready;
+    info.uinput_ready ||
+    paste?.backend === "portal" ||
+    info.wtype_usable ||
+    info.ydotool_ready;
   if (info.wayland && !pasteWorks) {
-    const portalWhy =
-      paste?.backend === "tools" && paste?.detail ? ` (${paste.detail})` : "";
     issues.push({
       key: "paste",
-      text:
-        info.ydotool && !info.ydotool_ready
-          ? `Pasting isn’t working: ydotool is installed but its background service isn’t running${portalWhy}. Start it once:`
-          : info.gnome
-            ? `Pasting isn’t working yet${portalWhy}. Approve the “Remote control” system prompt on the next dictation — or set up the ydotool fallback:`
-            : `Pasting isn’t working yet${portalWhy}. Approve the “Remote control” system prompt on the next dictation — or install a keystroke tool as a fallback:`,
-      command:
-        info.ydotool && !info.ydotool_ready
-          ? "systemctl --user enable --now ydotool.service"
-          : info.gnome
-            ? "sudo apt install ydotool && systemctl --user enable --now ydotool.service"
-            : "sudo apt install wtype",
+      text: "Auto-typing into other apps isn’t enabled on this install. The .deb package grants it automatically — with the AppImage, your dictation is copied to the clipboard instead, ready to paste with Ctrl+V.",
+      command: null,
     });
   }
 
