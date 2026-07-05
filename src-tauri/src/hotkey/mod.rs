@@ -284,16 +284,21 @@ fn re_register(
     #[cfg(not(target_os = "linux"))]
     let evdev_driving = false;
 
+    // Transform ids the evdev reader is watching (Linux/evdev only). Used
+    // below to report slot status instead of the global-shortcut plugin,
+    // which can't see keys on Wayland.
     #[cfg(target_os = "linux")]
-    if evdev_driving {
+    let evdev_transform_ids: Vec<i64> = if evdev_driving {
         linux_evdev::register(
             tx.clone(),
             snapshot.dictation.clone(),
             snapshot.polish_dictation.clone(),
-        );
+            &snapshot.transform_bindings,
+        )
     } else {
         linux_evdev::stop();
-    }
+        Vec::new()
+    };
 
     // Linux Wayland WITHOUT evdev access (pre-relogin, AppImage): fall
     // back to the GlobalShortcuts portal for dictation + polish. Neither
@@ -456,6 +461,28 @@ fn re_register(
     for (transform_id, hk) in &snapshot.transform_bindings {
         let slot = derive_slot_number(hk).unwrap_or(0);
         let combo = format_combo(hk);
+
+        // Linux with evdev driving: the transform chord is watched by the
+        // evdev reader (registered above), not the global-shortcut plugin
+        // — on Wayland the plugin registers "successfully" but never
+        // fires. Report status from what evdev actually resolved.
+        #[cfg(target_os = "linux")]
+        if evdev_driving {
+            let registered = evdev_transform_ids.contains(transform_id);
+            statuses.push(TransformSlotStatus {
+                transform_id: *transform_id,
+                slot,
+                combo,
+                registered,
+                error: if registered {
+                    None
+                } else {
+                    Some("Transform needs a chord ending in a non-modifier key".into())
+                },
+            });
+            continue;
+        }
+
         let Some(shortcut) = parsed_to_shortcut(hk) else {
             statuses.push(TransformSlotStatus {
                 transform_id: *transform_id,
