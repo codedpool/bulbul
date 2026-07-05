@@ -65,7 +65,7 @@ export default function HomeView({ displayName }) {
         <h1>
           Welcome back{displayName && displayName.trim() ? `, ${displayName.trim()}` : ""}
         </h1>
-        <p className="muted small">Your dictation activity, all local. No data leaves your machine except to Groq.</p>
+        <p className="muted small">Your dictation activity stays on your machine. Audio goes to Groq via your API key for transcription; history, dictionary, and snippets all live locally.</p>
       </header>
 
       <FeatureHero

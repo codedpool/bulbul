@@ -419,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "bulbul"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "accessibility-sys",
  "anyhow",

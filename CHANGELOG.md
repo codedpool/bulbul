@@ -4,6 +4,8 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-07-02
+
 ### Added
 
 - **macOS support** — full hold-to-talk dictation on macOS 11+, including modifier-chord hotkeys (⌃⌘, ⌥⌘, ⌃⇧Space), retina-aware menu-bar tray icon with template-image dark-mode tinting, native NSPasteboard paste with transient/concealed markers (so clipboard managers skip the entry), AppleScript-driven Cmd+V keystroke through System Events (more reliable across macOS versions than CGEvent posting, especially on Tahoe), TIS/UCKeyTranslate-aware modifier polling, AXIsProcessTrusted accessibility-permission detection, AVFoundation mic-permission status check + programmatic request, NSAppleEventsUsageDescription declared, ad-hoc signing with hardened-runtime entitlement. Universal binary covers Apple Silicon + Intel.

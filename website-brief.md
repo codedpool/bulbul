@@ -67,7 +67,7 @@ Total turnaround is typically sub-second because Groq is fast. The user feels it
 
 **vs. Windows built-in voice typing**: Bulbul cleans up the raw transcript (no "um, uh, like" carry-through), learns the user's corrections, and styles per-app. Built-in does none of that.
 
-**vs. SaaS dictation apps**: Bulbul is **BYOK** and **local-first**. No subscription, no Bulbul-hosted account, no audio routed through a vendor. The Groq API key belongs to the user; the transcript and audio never touch Bulbul-controlled infrastructure.
+**vs. SaaS dictation apps**: Bulbul is **BYOK**. Your Groq key handles transcription; history, snippets, and settings all live in a local SQLite file. No subscription, no Bulbul-hosted account, no audio routed through a vendor. The Groq API key belongs to the user; the transcript and audio never touch Bulbul-controlled infrastructure.
 
 **vs. MacWhisper / WhisperWriter and similar Whisper wrappers**: Bulbul is hotkey-first — there's no app window to focus during dictation. Cleanup is automatic, not a manual second step. Plus per-app context, correction memory, and transforms aren't in those tools.
 
@@ -77,7 +77,7 @@ Total turnaround is typically sub-second because Groq is fast. The user feels it
 
 - **BYOK**: User's Groq API key, user's Groq account. Audio goes directly machine → Groq.
 - **No Bulbul servers**: The only network calls Bulbul makes are (a) to Groq with the user's key, and (b) to GitHub Releases for update checks. There is no Bulbul-operated backend.
-- **Local-first storage**: SQLite on disk. Correction memory, snippets, settings, usage stats — all local.
+- **Local storage**: SQLite on disk. Correction memory, snippets, settings, usage stats — all local. Audio and transcript payloads flow through Groq using the user's own key.
 - **Signed releases**: Every binary signed with minisign. Installer and auto-updater both verify signatures. Public key is shipped with the app and visible in the repo.
 - **Opt-in telemetry**: Off by default. When on, anonymous counters only — no audio, no transcripts, no API payload content.
 - **Open distribution**: Source at `github.com/codedpool/bulbul`. Reproducible via documented Tauri build flow.
@@ -137,7 +137,7 @@ The site should serve both: clean three-second pitch up top, with depth availabl
 1. **Hero** — name, one-line pitch, install command (copy button), short loop showing dictation into VS Code or Gmail.
 2. **Three-column "what it does"** — hold-to-talk in any app · auto-cleanup · learns your corrections.
 3. **Live demo or animated GIF** — same hotkey, three different apps, identical result. Sells the system-wide angle.
-4. **Privacy / trust section** — BYOK, local-first, signed releases, link to source. Short and direct.
+4. **Privacy / trust section** — BYOK Groq key, local storage, signed releases, link to source. Short and direct.
 5. **Comparison** — small table vs Windows built-in / MacWhisper / commercial alternatives. Optional but high-conversion for the power-user persona.
 6. **Install** — repeat the one-liner, with GitHub Releases link as fallback.
 7. **Footer** — GitHub, current version, "signed by minisign key `RWTLvdvs...`", contact email, MIT/license badge if applicable.
@@ -145,7 +145,7 @@ The site should serve both: clean three-second pitch up top, with depth availabl
 ## Copy guardrails (things to NOT say)
 
 - ❌ "Voice commands" / "Say 'delete that' to..." — Bulbul has zero spoken commands by design. False-positive risk outweighs the convenience.
-- ❌ "Cloud-based" or "AI in the cloud" — frames the app wrong. It's local-first with user-authorized API calls.
+- ❌ "Cloud-based" or "AI in the cloud" — frames the app wrong. It's a BYOK app: your Groq key does transcription and cleanup, and everything else lives on your machine.
 - ❌ "Free trial," "subscription," "plan tiers" — there's no SaaS layer. The app is free; Groq usage is the user's own (and Groq has a generous free tier).
 - ❌ Generic AI buzzwords ("AI-powered," "revolutionary AI") — be specific: name the models, name the providers.
 - ❌ "Competes with ChatGPT" — wrong category. Bulbul is an input method, not a chatbot.

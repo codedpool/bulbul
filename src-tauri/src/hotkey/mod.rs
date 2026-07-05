@@ -215,19 +215,36 @@ fn re_register(
         tracing::warn!("unregister_all failed: {e:#}");
     }
 
-    // Stop any platform-specific watchers from the previous registration
-    // (Windows: the modifier-chord polling thread; macOS: future
-    // CGEventTap teardown). Always run, even if the new dictation hotkey
-    // is also a modifier chord — a fresh watcher with the up-to-date
-    // spec gets spawned below.
+    // Stop the previous registration's watchers. Non-Windows uses native
+    // polling threads; Windows drives modifier chords through the
+    // low-level keyboard hook, so also clear its chord mask (that fires a
+    // synthetic Released if a chord was mid-press, so the orchestrator
+    // doesn't get stuck). Always run, even if the new dictation hotkey is
+    // also a modifier chord — a fresh registration is applied below.
     native::stop_native_watchers();
+    #[cfg(target_os = "windows")]
+    crate::keyboard_hook::set_chord_mask(0);
 
     let snapshot = set.lock().clone();
 
     // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
-    // plugin's RegisterHotKey backend can't represent these, so we hand
-    // off to the platform's native polling implementation.
+    // plugin's RegisterHotKey backend can't represent these. On Windows,
+    // route the chord through the low-level keyboard hook — it intercepts
+    // the events before the shell sees them, so tap detection never fires
+    // for the held Win key (no Start-menu pop on release). Other platforms
+    // use the native polling watcher.
     if snapshot.dictation.is_modifier_chord() {
+        #[cfg(target_os = "windows")]
+        {
+            let mask = crate::keyboard_hook::chord_mask_for(&snapshot.dictation);
+            crate::keyboard_hook::set_chord_mask(mask);
+            tracing::info!(
+                "registered dictation (LL keyboard hook): {:?} mask=0b{:04b}",
+                snapshot.dictation,
+                mask
+            );
+        }
+        #[cfg(not(target_os = "windows"))]
         native::spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone());
     }
     // Dictation, branch B: regular combo with a non-modifier key

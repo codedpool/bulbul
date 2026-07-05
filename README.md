@@ -2,7 +2,7 @@
 
 **Free, open-source Windows voice dictation. Hold a hotkey, talk anywhere, watch the text appear.**
 
-Bulbul is a local-first dictation app powered by [Groq](https://groq.com). Bring your own API key — there are no servers, no subscriptions, no usage caps beyond Groq's own free tier.
+Bulbul talks directly to [Groq](https://groq.com) using your own API key — no Bulbul-owned server in between, no subscription, no usage caps beyond Groq's own free tier. Your dictation history, dictionary, snippets, and settings all live in a local SQLite file on your machine.
 
 ---
 
@@ -37,7 +37,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 | **Source of truth for your data** | Your machine | Vendor |
 | **Latency** | ~600ms typical | similar |
 | **Custom hotkeys** | Any combo, including modifier-only chords | Limited |
-| **Dictionary / snippets / transforms** | Yes, all local | Some, gated by tier |
+| **Dictionary / snippets / transforms** | Yes, stored locally | Some, gated by tier |
 
 ---
 

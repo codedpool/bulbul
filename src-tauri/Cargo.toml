@@ -1,6 +1,6 @@
 [package]
 name = "bulbul"
-version = "1.0.0"
+version = "1.0.1"
 description = "Free, open-source Windows voice dictation powered by Groq"
 authors = ["Bulbul contributors"]
 edition = "2021"
@@ -87,6 +87,7 @@ features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Accessibility",
     "Win32_Foundation",
+    "Win32_System_LibraryLoader",
     "Win32_System_Threading",
     "Win32_System_Com",
 ]

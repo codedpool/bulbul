@@ -835,6 +835,7 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
     !matchPreset(config.hotkey).match ? config.hotkey : ""
   );
   const [capturing, setCapturing] = useState(false);
+  const [captureError, setCaptureError] = useState("");
   const [transcript, setTranscript] = useState("");
   // Set of canonical key names ("Ctrl", "Win", "Space"…) currently held
   // down inside the wizard window. We track this purely so we can light
@@ -962,34 +963,92 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
     setTimeout(() => textareaRef.current?.focus(), 50);
   }
 
+  // Same state machine as SettingsView's recorder — see comment there
+  // for the full reasoning. Short version: support modifier-only chords
+  // (Ctrl+Win) by waiting for the final keyup, surface unsupported keys
+  // inline via setCaptureError instead of silently aborting, and never
+  // commit a single-modifier "tap" (would register a useless hotkey
+  // that fires on every plain Ctrl press).
   useEffect(() => {
     if (!capturing) return;
-    const handler = (e) => {
+    setCaptureError("");
+    let peak = { ctrl: false, shift: false, alt: false, meta: false };
+    let nonModPressed = false;
+
+    const reset = () => {
+      peak = { ctrl: false, shift: false, alt: false, meta: false };
+      nonModPressed = false;
+    };
+
+    const commit = (combo) => {
+      setCustomCombo(combo);
+      setCapturing(false);
+      setCaptureError("");
+      updateConfig({ ...config, hotkey: combo });
+      setTranscript("");
+    };
+
+    const onKeyDown = (e) => {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopImmediatePropagation();
         setCapturing(false);
+        setCaptureError("");
         return;
       }
-      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      const parts = [];
-      if (e.ctrlKey) parts.push("Ctrl");
-      if (e.shiftKey) parts.push("Shift");
-      if (e.altKey) parts.push("Alt");
-      if (e.metaKey) parts.push("Win");
+      peak = {
+        ctrl: e.ctrlKey || peak.ctrl,
+        shift: e.shiftKey || peak.shift,
+        alt: e.altKey || peak.alt,
+        meta: e.metaKey || peak.meta,
+      };
+      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+      nonModPressed = true;
       const k = domKeyToName(e.code);
-      if (!k) { setCapturing(false); return; }
+      if (!k) {
+        setCaptureError(
+          `"${e.key || e.code}" isn't supported. Try a letter, digit, function key, arrow, or punctuation.`,
+        );
+        return;
+      }
+      const parts = [];
+      if (peak.ctrl) parts.push("Ctrl");
+      if (peak.shift) parts.push("Shift");
+      if (peak.alt) parts.push("Alt");
+      if (peak.meta) parts.push("Win");
       parts.push(k);
-      const combo = parts.join("+");
-      setCustomCombo(combo);
-      setCapturing(false);
-      updateConfig({ ...config, hotkey: combo });
-      setTranscript("");
+      commit(parts.join("+"));
     };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+
+    const onKeyUp = (e) => {
+      if (nonModPressed) return;
+      const stillHeld = e.ctrlKey || e.shiftKey || e.altKey || e.metaKey;
+      if (stillHeld) return;
+      const count =
+        (peak.ctrl ? 1 : 0) +
+        (peak.shift ? 1 : 0) +
+        (peak.alt ? 1 : 0) +
+        (peak.meta ? 1 : 0);
+      if (count < 2) {
+        reset();
+        return;
+      }
+      const parts = [];
+      if (peak.ctrl) parts.push("Ctrl");
+      if (peak.shift) parts.push("Shift");
+      if (peak.alt) parts.push("Alt");
+      if (peak.meta) parts.push("Win");
+      commit(parts.join("+"));
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
   }, [capturing, config, updateConfig]);
 
   function clearTest() {
@@ -1027,10 +1086,22 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
                   <button
                     className="onb-btn ghost small"
                     type="button"
-                    onClick={(e) => { e.preventDefault(); setCapturing(true); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setCaptureError("");
+                      setCapturing(true);
+                    }}
                   >
                     {capturing ? "Press keys…" : "Record"}
                   </button>
+                  {capturing && captureError && (
+                    <div className="onb-hotkey-error">{captureError}</div>
+                  )}
+                  {capturing && !captureError && (
+                    <div className="onb-hotkey-hint">
+                      Modifier-only chords (Ctrl+Win, Alt+Win) work too — release to confirm.
+                    </div>
+                  )}
                 </div>
               )}
             </label>
@@ -1422,16 +1493,42 @@ function KeyCap({ part, pressed }) {
   );
 }
 
+// Mirror of SettingsView.jsx's domKeyToName. Kept in sync because the
+// onboarding wizard records hotkeys before the user has access to the
+// Settings UI. Any name returned here must round-trip through the
+// backend's normalize_key_name in hotkey.rs.
 function domKeyToName(code) {
+  if (!code) return null;
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
-  if (code.startsWith("F") && /^F\d+$/.test(code)) return code;
-  const map = {
-    Space: "Space",
-    Tab: "Tab",
-    Enter: "Enter",
-    Escape: "Escape",
-    Backspace: "Backspace",
-  };
-  return map[code] || null;
+  if (/^F\d+$/.test(code)) return code;
+  switch (code) {
+    case "Space": return "Space";
+    case "Tab": return "Tab";
+    case "Enter": return "Enter";
+    case "Escape": return "Escape";
+    case "Backspace": return "Backspace";
+    case "ArrowUp": return "Up";
+    case "ArrowDown": return "Down";
+    case "ArrowLeft": return "Left";
+    case "ArrowRight": return "Right";
+    case "Insert": return "Insert";
+    case "Delete": return "Delete";
+    case "Home": return "Home";
+    case "End": return "End";
+    case "PageUp": return "PageUp";
+    case "PageDown": return "PageDown";
+    case "Semicolon": return ";";
+    case "Quote": return "'";
+    case "Comma": return ",";
+    case "Period": return ".";
+    case "Slash": return "/";
+    case "Backslash": return "\\";
+    case "BracketLeft": return "[";
+    case "BracketRight": return "]";
+    case "Minus": return "-";
+    case "Equal": return "=";
+    case "Backquote": return "`";
+    default: return null;
+  }
 }

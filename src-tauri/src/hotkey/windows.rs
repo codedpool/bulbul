@@ -104,6 +104,11 @@ pub fn stop_native_watchers() {
 /// DictationReleased the instant either is released. Stops when the
 /// AtomicBool stored in `modifier_chord_alive_slot()` flips to false
 /// (next re_register swaps it).
+///
+/// Retained for parity with the macOS/Linux native modules, but unused on
+/// Windows itself: modifier-only chords go through the low-level keyboard
+/// hook (see `keyboard_hook`) so the Start menu can't pop on Win release.
+#[allow(dead_code)]
 pub fn spawn_modifier_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
     let alive = Arc::new(AtomicBool::new(true));
     *modifier_chord_alive_slot().lock() = Some(alive.clone());

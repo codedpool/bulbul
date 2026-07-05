@@ -5,6 +5,8 @@ mod db;
 mod groq;
 mod hotkey;
 mod inject;
+#[cfg(target_os = "windows")]
+mod keyboard_hook;
 mod telemetry;
 mod uia;
 mod window_info;
@@ -1472,7 +1474,15 @@ async fn install_staged_update(app: AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Write tracing to stderr (not stdout). stdout is block-buffered
+    // when the process's stdout is piped (e.g. when running under
+    // `cargo run` from a captured-output dev harness), which means logs
+    // can sit in a buffer for minutes before being flushed — and any
+    // unflushed bytes are lost if the process exits abnormally. stderr
+    // is line-buffered/unbuffered in those same conditions, so dev
+    // sessions get real-time visibility.
     let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,bulbul_lib=debug")),
@@ -1489,6 +1499,25 @@ pub fn run() {
     let hotkey_mutex = Arc::new(Mutex::new(initial_set));
     let (hotkey_tx, hotkey_rx) = hotkey::make_channel();
     let hotkey_rx_for_setup = Mutex::new(Some(hotkey_rx));
+
+    // Install the global low-level keyboard hook BEFORE any Tauri plugin
+    // touches the shortcut subsystem. The hook is what makes modifier-only
+    // chords (Ctrl+Win, Alt+Win) work without triggering Start menu /
+    // browser-menubar focus on release — it intercepts the keystrokes
+    // upstream of Windows's shell. set_chord_mask is later called by
+    // re_register whenever the user's dictation hotkey is itself a
+    // modifier-only chord; otherwise the hook stays dormant.
+    #[cfg(target_os = "windows")]
+    keyboard_hook::install(hotkey_tx.clone());
+
+    // Pre-warm the cpal/WASAPI input stream during startup so the first
+    // dictation doesn't pay the device-open cost (200–700ms on observed
+    // hardware). Done off-thread because the WASAPI handshake blocks for
+    // ~300ms and we don't want to slow the visible launch.
+    std::thread::Builder::new()
+        .name("bulbul-audio-prewarm".into())
+        .spawn(|| audio::prewarm())
+        .expect("spawn audio prewarm thread");
 
     tauri::Builder::default()
         // Single-instance MUST be the first plugin registered. When a second
@@ -1851,6 +1880,8 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
         for evt in rx {
             match evt {
                 HotkeyEvent::DictationPressed | HotkeyEvent::PolishDictationPressed => {
+                    let press_received_at = Instant::now();
+                    tracing::debug!("orchestrator: received DictationPressed");
                     // Cross-key race guard: only one recording in flight at
                     // a time. (Each hotkey's plugin handler has its own
                     // auto-repeat guard; this catches near-simultaneous
@@ -1875,10 +1906,22 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                     } else {
                         cfg.mode.clone()
                     };
+                    let pre_recorder = Instant::now();
                     match Recorder::start() {
                         Ok(rec) => {
-                            tracing::info!("recording started (mode={cleanup_mode:?})");
+                            let recorder_ready = Instant::now();
+                            tracing::info!(
+                                "recording started (mode={cleanup_mode:?}) — config_lock+mode={}µs Recorder::start={}ms",
+                                pre_recorder.duration_since(press_received_at).as_micros(),
+                                recorder_ready.duration_since(pre_recorder).as_millis(),
+                            );
                             emit_status(&handle, "listening", None);
+                            let after_emit = Instant::now();
+                            tracing::debug!(
+                                "orchestrator: emit_status(listening) took {}µs; total press→listening={}ms",
+                                after_emit.duration_since(recorder_ready).as_micros(),
+                                after_emit.duration_since(press_received_at).as_millis(),
+                            );
                             let meta = PendingDictation {
                                 started_at: Instant::now(),
                                 foreground_app: window_info::foreground_app(),
@@ -1926,28 +1969,46 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                     // Energy gate: drop near-silent clips before they reach
                     // Whisper — otherwise it hallucinates "thank you" / "you" /
                     // "thanks for watching" / Hindi-equivalent phrases that
-                    // can slip past the post-STT denylist. We require BOTH a
-                    // tolerable peak AND a tolerable RMS: peak alone misses
-                    // "quiet room with a brief click" (a single mouse click
-                    // can push peak above -55 dBFS while average energy stays
-                    // at room-tone), and RMS alone misses sustained low drones.
-                    // Real speech has both; ambient noise has only one.
+                    // can slip past the post-STT denylist.
                     //
-                    // Thresholds tuned conservatively so quiet-but-real speech
-                    // still passes: normal speech is ~-25 dBFS RMS, soft
-                    // speech ~-35 dBFS, true ambient room noise ~-50 dBFS.
-                    const SILENCE_PEAK_DBFS: f32 = -50.0;
-                    const SILENCE_RMS_DBFS: f32 = -42.0;
+                    // We look at TWO numbers:
+                    //   1. peak across the whole clip — a safety floor so a
+                    //      completely silent capture (mic muted, wrong input
+                    //      device) can't get through on a fluke.
+                    //   2. RMS of the loudest 30 ms window — the actual
+                    //      "is there speech in here?" signal. Clip-wide RMS
+                    //      used to live here, but it punished slow speakers
+                    //      and distant talkers: a 4 s clip with 1 s of
+                    //      leading silence + 3 s of quiet speech has its
+                    //      average dragged 6+ dB below the real speech
+                    //      level, so even clearly audible voice got
+                    //      rejected. The per-window max ignores dead air
+                    //      and tracks the loudest actual moment.
+                    //
+                    // Thresholds:
+                    //   peak ≥ -55 dBFS — anything quieter is genuinely empty.
+                    //   max_window_rms ≥ -50 dBFS — covers normal speech
+                    //     (~-25), soft speech (~-35), and far-field /
+                    //     across-the-room speech (~-45 to -48). AGC
+                    //     downstream still amplifies whisper-level audio
+                    //     up to +30 dB before it reaches Whisper.
+                    const SILENCE_PEAK_DBFS: f32 = -55.0;
+                    const SILENCE_WINDOW_RMS_DBFS: f32 = -50.0;
                     if result.peak_dbfs < SILENCE_PEAK_DBFS
-                        || result.rms_dbfs < SILENCE_RMS_DBFS
+                        || result.max_window_rms_dbfs < SILENCE_WINDOW_RMS_DBFS
                     {
                         tracing::info!(
-                            "discarding silent clip (peak={:.1} dBFS, rms={:.1} dBFS, {:.2}s)",
+                            "discarding silent clip (peak={:.1} dBFS, rms={:.1} dBFS, max_window_rms={:.1} dBFS, {:.2}s)",
                             result.peak_dbfs,
                             result.rms_dbfs,
+                            result.max_window_rms_dbfs,
                             result.seconds
                         );
-                        emit_status(&handle, "idle", Some("Silence — nothing to transcribe.".into()));
+                        emit_status(
+                            &handle,
+                            "idle",
+                            Some("Too quiet to transcribe — speak closer to the mic.".into()),
+                        );
                         continue;
                     }
                     let duration_ms = meta.started_at.elapsed().as_millis() as u64;
