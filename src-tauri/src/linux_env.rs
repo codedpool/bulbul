@@ -149,9 +149,17 @@ pub fn emit_paste_status(backend: &str, detail: String) {
 /// Command-invoked from the dashboard on Linux only.
 pub fn support_info() -> serde_json::Value {
     let wayland = is_wayland();
-    let toggle_command = std::env::current_exe()
-        .map(|p| format!("{} --toggle-dictation", p.display()))
-        .unwrap_or_else(|_| "bulbul --toggle-dictation".into());
+    // Prefer a signal over `bulbul --toggle-dictation`: the CLI form
+    // launches a whole second webview process on every press (~hundreds
+    // of ms of lag, and GNOME steals focus to the launching process,
+    // yanking it off the text box). SIGUSR2 hits the already-running
+    // instance instantly with no new process and no focus change. The
+    // signal handler ships in every build (spawn_signal_watcher).
+    let exe_name = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "bulbul".into());
+    let toggle_command = format!("pkill -USR2 {exe_name}");
     let (hotkey_backend, hotkey_detail) = LAST_STATUS
         .lock()
         .clone()
