@@ -58,22 +58,24 @@
         "depends": [
           "libwebkit2gtk-4.1-0",
           "libgtk-3-0",
-          "libayatana-appindicator3-1"
+          "libayatana-appindicator3-1",
+          "wl-clipboard"
         ],
         "recommends": [
-          "wl-clipboard",
-          "ydotool"
+          "ydotool",
+          "gnome-shell-extension-appindicator"
         ],
         "section": "utility"
       },
       "rpm": {
         "depends": [
           "webkit2gtk4.1",
-          "gtk3"
+          "gtk3",
+          "wl-clipboard"
         ],
         "recommends": [
-          "wl-clipboard",
-          "ydotool"
+          "ydotool",
+          "gnome-shell-extension-appindicator"
         ]
       },
       "appimage": {

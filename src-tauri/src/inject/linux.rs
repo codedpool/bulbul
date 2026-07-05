@@ -116,52 +116,41 @@ fn tool_install_hint() -> String {
     }
 }
 
-/// Can we inject natively on this Wayland session? True when the
-/// RemoteDesktop portal is live (no tool needed) OR a wtype/ydotool
-/// binary is installed. When false, only the XWayland best-effort path
-/// remains.
-fn wayland_can_inject() -> bool {
-    super::linux_portal_paste::is_ready() || wayland_keystroke_tool().is_some()
-}
-
 pub fn inject_text(text: &str) -> Result<()> {
     if text.is_empty() {
         return Ok(());
     }
 
-    // On Wayland, prefer the native path — RemoteDesktop portal first,
-    // then wtype/ydotool. Otherwise fall through to X11, which only
-    // reaches XWayland windows, so if even that connection fails the
-    // user has no injection path at all and the error must say what to
-    // install, not just "connection refused".
+    // On Wayland, always take the Wayland path: its clipboard write
+    // (wl-copy) is the one that survives Bulbul being unfocused, and
+    // its keystroke chain already ends in an XWayland last resort —
+    // see inject_text_wayland. Re-running the full X11 path out here
+    // would rewrite the clipboard via arboard and clobber the good
+    // wl-copy selection, so we don't.
     if is_wayland() {
-        if wayland_can_inject() {
-            inject_text_wayland(text)
-        } else {
-            inject_text_x11(text).map_err(|e| {
-                anyhow!(
-                    "No native Wayland input path is available and the \
-                     XWayland fallback failed ({e}). {}",
-                    tool_install_hint()
-                )
-            })
-        }
+        inject_text_wayland(text)
     } else {
         inject_text_x11(text)
     }
 }
 
 pub fn send_ctrl_v() -> Result<()> {
-    if is_wayland() && wayland_can_inject() {
-        send_combo_wayland(Combo::CtrlV)
+    if is_wayland() {
+        send_combo_wayland(Combo::CtrlV).or_else(|e| {
+            tracing::warn!("Wayland Ctrl+V failed, trying XWayland: {e:#}");
+            post_x11_combo(Combo::CtrlV)
+        })
     } else {
         post_x11_combo(Combo::CtrlV)
     }
 }
 
 pub fn send_ctrl_c() -> Result<()> {
-    if is_wayland() && wayland_can_inject() {
-        send_combo_wayland(Combo::CtrlC)
+    if is_wayland() {
+        send_combo_wayland(Combo::CtrlC).or_else(|e| {
+            tracing::warn!("Wayland Ctrl+C failed, trying XWayland: {e:#}");
+            post_x11_combo(Combo::CtrlC)
+        })
     } else {
         post_x11_combo(Combo::CtrlC)
     }
@@ -175,9 +164,16 @@ enum WaylandTool {
 }
 
 fn wayland_keystroke_tool() -> Option<WaylandTool> {
-    if which("wtype") {
+    // Mutter (GNOME) doesn't implement the virtual-keyboard protocol
+    // wtype needs — it "succeeds" while typing nothing, or errors.
+    // Skip it there so an installed wtype can't shadow ydotool/XWayland.
+    // ydotool only counts when its daemon socket exists: the client
+    // hard-errors without ydotoold, which was surfacing as a paste
+    // failure on installs where the package landed via Recommends but
+    // the service was never enabled.
+    if which("wtype") && !crate::linux_env::is_gnome() {
         Some(WaylandTool::Wtype)
-    } else if which("ydotool") {
+    } else if crate::linux_env::ydotool_ready() {
         Some(WaylandTool::Ydotool)
     } else {
         None
@@ -221,7 +217,21 @@ fn inject_text_wayland(text: &str) -> Result<()> {
 
     thread::sleep(WL_CLIPBOARD_SETTLE);
 
-    send_combo_wayland(Combo::CtrlV).context("posting Ctrl+V via Wayland tool")?;
+    // Keystroke chain: portal → tools → XWayland XTest. The clipboard is
+    // already set (above) and XWayland apps read the bridged Wayland
+    // selection, so the XTest last resort only fires the combo — no
+    // clipboard rewrite.
+    send_combo_wayland(Combo::CtrlV)
+        .or_else(|e| {
+            tracing::warn!("Wayland Ctrl+V failed, trying XWayland XTest: {e:#}");
+            post_x11_combo(Combo::CtrlV)
+        })
+        .map_err(|e| {
+            anyhow!(
+                "couldn't deliver the paste keystroke on any path ({e}). {}",
+                tool_install_hint()
+            )
+        })?;
 
     // Background restore. Only restore if the clipboard still holds
     // our paste — same guard as the X11 path so a user-initiated
@@ -252,17 +262,18 @@ fn inject_text_wayland(text: &str) -> Result<()> {
 }
 
 fn send_combo_wayland(combo: Combo) -> Result<()> {
-    // RemoteDesktop portal first — native, no external tool. Any error
-    // (revoked grant, timeout) falls through to the tool path below.
-    if super::linux_portal_paste::is_ready() {
-        let key = match combo {
-            Combo::CtrlV => super::linux_portal_paste::EV_V,
-            Combo::CtrlC => super::linux_portal_paste::EV_C,
-        };
-        match super::linux_portal_paste::send_combo(key) {
-            Ok(()) => return Ok(()),
-            Err(e) => tracing::warn!("portal paste failed, trying tools: {e}"),
-        }
+    // RemoteDesktop portal first — native, no external tool, and asking
+    // while it's down is what triggers its self-healing re-init (so a
+    // user who approves the permission dialog late still converges to
+    // the portal without restarting Bulbul). Any error falls through to
+    // the tool path below.
+    let key = match combo {
+        Combo::CtrlV => super::linux_portal_paste::EV_V,
+        Combo::CtrlC => super::linux_portal_paste::EV_C,
+    };
+    match super::linux_portal_paste::send_combo(key) {
+        Ok(()) => return Ok(()),
+        Err(e) => tracing::warn!("portal paste failed, trying tools: {e}"),
     }
     match wayland_keystroke_tool() {
         Some(WaylandTool::Wtype) => {
