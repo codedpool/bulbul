@@ -72,10 +72,12 @@ struct Spec {
     meta: bool,
     key: u16,
     pressed: HotkeyEvent,
-    released: HotkeyEvent,
+    /// Fired on chord release. `None` for tap-to-trigger hotkeys
+    /// (transform slots), which act on press only.
+    released: Option<HotkeyEvent>,
 }
 
-fn resolve(hk: &ParsedHotkey, pressed: HotkeyEvent, released: HotkeyEvent) -> Option<Spec> {
+fn resolve(hk: &ParsedHotkey, pressed: HotkeyEvent, released: Option<HotkeyEvent>) -> Option<Spec> {
     let key = hk.key.as_deref().and_then(key_name_to_evdev)?.code();
     Some(Spec {
         ctrl: hk.ctrl,
@@ -97,37 +99,55 @@ fn chord_held(spec: &Spec, held: &HashSet<u16>) -> bool {
         && held.contains(&spec.key)
 }
 
-/// Register dictation + polish for direct reading. Replaces any previous
-/// registration. Non-fatal: if nothing resolves or no keyboards are
-/// readable, it just doesn't start (the caller already checked
-/// `available()`).
-pub fn register(tx: Sender<HotkeyEvent>, dictation: ParsedHotkey, polish: ParsedHotkey) {
+/// Register dictation + polish + transform slots for direct reading.
+/// Replaces any previous registration. Returns the transform ids that
+/// resolved to a watchable chord, so the caller can report slot status to
+/// the UI (the evdev reader replaces the global-shortcut plugin on
+/// Wayland, where the plugin can't see keys). Non-fatal: if nothing
+/// resolves or no keyboards are readable, it just doesn't start (the
+/// caller already checked `available()`).
+pub fn register(
+    tx: Sender<HotkeyEvent>,
+    dictation: ParsedHotkey,
+    polish: ParsedHotkey,
+    transforms: &[(i64, ParsedHotkey)],
+) -> Vec<i64> {
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
 
     let mut specs: Vec<Spec> = Vec::new();
     if let Some(s) = resolve(
         &dictation,
         HotkeyEvent::DictationPressed,
-        HotkeyEvent::DictationReleased,
+        Some(HotkeyEvent::DictationReleased),
     ) {
         specs.push(s);
     }
     if let Some(s) = resolve(
         &polish,
         HotkeyEvent::PolishDictationPressed,
-        HotkeyEvent::PolishDictationReleased,
+        Some(HotkeyEvent::PolishDictationReleased),
     ) {
         specs.push(s);
     }
+    // Transform slots are tap-to-trigger: fire TransformTriggered(id) on
+    // press, nothing on release (released = None). The FIRE_COOLDOWN in
+    // reader_loop debounces auto-repeat while the chord is held.
+    let mut registered_ids: Vec<i64> = Vec::new();
+    for (id, hk) in transforms {
+        if let Some(s) = resolve(hk, HotkeyEvent::TransformTriggered(*id), None) {
+            specs.push(s);
+            registered_ids.push(*id);
+        }
+    }
     if specs.is_empty() {
         tracing::warn!("evdev: no keyed hotkey to watch (modifier-only?)");
-        return;
+        return registered_ids;
     }
     let specs = Arc::new(specs);
 
     let devices = keyboards();
     if devices.is_empty() {
-        return;
+        return registered_ids;
     }
     let count = devices.len();
     for (path, device) in devices {
@@ -138,11 +158,15 @@ pub fn register(tx: Sender<HotkeyEvent>, dictation: ParsedHotkey, polish: Parsed
             .spawn(move || reader_loop(device, path, specs, tx, generation))
             .ok();
     }
-    tracing::info!("evdev hotkey watcher started on {count} keyboard(s)");
+    tracing::info!(
+        "evdev hotkey watcher started on {count} keyboard(s), {} transform slot(s)",
+        registered_ids.len()
+    );
     crate::linux_env::emit_hotkey_status(
         "evdev",
         "Reading the keyboard directly — instant hold-to-talk.".to_string(),
     );
+    registered_ids
 }
 
 fn reader_loop(
@@ -196,7 +220,9 @@ fn reader_loop(
                         firing[i] = true;
                     }
                 } else if !now_held && firing[i] {
-                    let _ = tx.send(spec.released.clone());
+                    if let Some(ev) = &spec.released {
+                        let _ = tx.send(ev.clone());
+                    }
                     firing[i] = false;
                 }
             }
