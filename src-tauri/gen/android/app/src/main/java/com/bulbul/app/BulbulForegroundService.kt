@@ -64,6 +64,18 @@ class BulbulForegroundService : Service() {
     private var bubbleParams: WindowManager.LayoutParams? = null
     private var recorder: AudioRecorder? = null
 
+    /// The foreground app captured when the current recording started, so
+    /// the transcript is tagged with the app it was dictated into even if
+    /// focus shifts by the time transcription returns.
+    private var pendingAppPackage: String? = null
+
+    /// The snooze drop-target shown at the bottom of the screen while the
+    /// bubble is being dragged; dropping the bubble onto it snoozes Bulbul.
+    /// Its center (screen px) is cached so the drag-end hit-test is cheap.
+    private var snoozeTargetView: SnoozeTargetView? = null
+    private var snoozeCenterX = 0
+    private var snoozeCenterY = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -108,6 +120,7 @@ class BulbulForegroundService : Service() {
         } else {
             val ok = r.start()
             if (ok) {
+                pendingAppPackage = BulbulAccessibilityService.targetPackage
                 bubbleView?.setRecording(true)
             } else {
                 Log.w(TAG, "recorder failed to start — RECORD_AUDIO probably not granted")
@@ -121,7 +134,10 @@ class BulbulForegroundService : Service() {
     private fun onBubbleLongPress() {
         val r = recorder ?: return
         if (!r.isRecording()) {
-            if (r.start()) bubbleView?.setRecording(true)
+            if (r.start()) {
+                pendingAppPackage = BulbulAccessibilityService.targetPackage
+                bubbleView?.setRecording(true)
+            }
         }
     }
 
@@ -140,6 +156,7 @@ class BulbulForegroundService : Service() {
     /// survive — they'll lose the convenience of auto-paste but not
     /// the audio itself.
     private fun processCapturedAudio(wav: ByteArray) {
+        val appPkg = pendingAppPackage
         thread(name = "BulbulTranscribe", isDaemon = true) {
             val apiKey = getApiKey()
             val transcript = if (apiKey.isNotBlank()) {
@@ -151,10 +168,21 @@ class BulbulForegroundService : Service() {
                 // expand snippets — same order as desktop — before injecting.
                 // Count dictionary fixes so Insights can report them.
                 val (corrected, fixes) = BulbulConfig.applyDictionary(this, transcript)
-                val finalText = BulbulConfig.applySnippets(this, corrected)
+                var finalText = BulbulConfig.applySnippets(this, corrected)
+
+                // Per-app Style: reformat the tone to match the app being
+                // dictated into (WhatsApp → casual, Outlook → formal, …).
+                // Deterministic string transform — no LLM, so it's instant
+                // and can never "reply" to the dictation.
+                val friendly = friendlyAppName(appPkg)
+                val styleId = BulbulConfig.styleForApp(this, appPkg, friendly)
+                if (styleId != null) {
+                    finalText = AppStyle.applyStyle(styleId, finalText)
+                }
+
                 val injected = TextInjector.inject(finalText)
-                Log.i(TAG, "transcript len=${finalText.length} fixes=$fixes injected=$injected")
-                recordHistory(finalText, wavDurationMs(wav), fixes)
+                Log.i(TAG, "transcript len=${finalText.length} fixes=$fixes app=$friendly injected=$injected")
+                recordHistory(finalText, wavDurationMs(wav), fixes, friendly)
                 // Couldn't type it in (focus gone, A11y unbound) — put
                 // the words on the clipboard so they're one long-press
                 // away instead of silently lost.
@@ -166,10 +194,23 @@ class BulbulForegroundService : Service() {
         }
     }
 
+    /// Resolves a package name to its user-visible app label ("com.whatsapp"
+    /// → "WhatsApp") via PackageManager. Falls back to the raw package if the
+    /// label can't be read, or null if we never captured a package.
+    private fun friendlyAppName(pkg: String?): String? {
+        if (pkg.isNullOrBlank()) return null
+        return try {
+            val pm = packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        } catch (t: Throwable) {
+            pkg
+        }
+    }
+
     /// Appends one dictation to filesDir/history.jsonl. The Rust side
     /// (mobile.rs get_recent_dictations / get_home_stats) reads the same
     /// file — file-as-IPC, same trick as config.json.
-    private fun recordHistory(text: String, durationMs: Long, fixCount: Int) {
+    private fun recordHistory(text: String, durationMs: Long, fixCount: Int, app: String?) {
         try {
             val words = text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
             val line = org.json.JSONObject().apply {
@@ -179,6 +220,9 @@ class BulbulForegroundService : Service() {
                 put("mode", "clean")
                 put("duration_ms", durationMs)
                 put("fix_count", fixCount)
+                // Which app the dictation landed in — powers the dashboard's
+                // per-row app badge (Rust get_recent_dictations reads this key).
+                if (!app.isNullOrBlank()) put("foreground_app", app)
             }
             // Same dir the Rust side reads (app_data_dir) — resolved, not
             // assumed, for the same reason as getApiKey.
@@ -362,7 +406,9 @@ class BulbulForegroundService : Service() {
             onTap = ::onBubbleTap,
             onLongPressDown = ::onBubbleLongPress,
             onLongPressUp = ::onBubbleHoldReleased,
-            onDragEnd = ::saveBubblePosition,
+            onDragStart = ::showSnoozeTarget,
+            onDragMove = ::onBubbleDragMove,
+            onDragEnd = ::onBubbleDragEnd,
         ))
         val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -425,6 +471,7 @@ class BulbulForegroundService : Service() {
         (value * resources.displayMetrics.density).toInt()
 
     private fun hideBubble() {
+        hideSnoozeTarget()
         val v = bubbleView ?: return
         try {
             windowManager?.removeView(v)
@@ -438,11 +485,105 @@ class BulbulForegroundService : Service() {
         windowManager = null
     }
 
+    // ---- Snooze: drag the bubble onto the bottom target to mute it ----
+
+    /// Reveals the snooze drop-target at the bottom-center of the screen
+    /// when a drag begins. It's a display-only overlay (not touchable) —
+    /// the hit-test lives in the bubble's drag-end, so the keyboard beneath
+    /// stays fully usable and the target can safely render above it.
+    private fun showSnoozeTarget() {
+        if (snoozeTargetView != null) return
+        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val size = dp(SNOOZE_TARGET_DP)
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        snoozeCenterX = screenW / 2
+        snoozeCenterY = screenH - dp(96) - size / 2
+        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+        val params = WindowManager.LayoutParams(
+            size, size, overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = snoozeCenterX - size / 2
+            y = snoozeCenterY - size / 2
+        }
+        try {
+            val view = SnoozeTargetView(this)
+            wm.addView(view, params)
+            snoozeTargetView = view
+        } catch (t: Throwable) {
+            Log.w(TAG, "snooze target addView failed", t)
+        }
+    }
+
+    private fun onBubbleDragMove(x: Int, y: Int) {
+        snoozeTargetView?.setActive(isOverSnooze(x, y))
+    }
+
+    private fun onBubbleDragEnd(x: Int, y: Int) {
+        val over = isOverSnooze(x, y)
+        hideSnoozeTarget()
+        if (over) snoozeNow() else saveBubblePosition(x, y)
+    }
+
+    /// True when the dragged bubble's center is within the snooze target.
+    private fun isOverSnooze(bubbleX: Int, bubbleY: Int): Boolean {
+        if (snoozeTargetView == null) return false
+        val bs = bubbleParams?.width ?: dp(BUBBLE_SIZE_DP)
+        val bcx = bubbleX + bs / 2
+        val bcy = bubbleY + bs / 2
+        val dx = (bcx - snoozeCenterX).toDouble()
+        val dy = (bcy - snoozeCenterY).toDouble()
+        val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+        return dist < dp(SNOOZE_TARGET_DP) / 2.0 + bs / 2.0 + dp(12)
+    }
+
+    private fun hideSnoozeTarget() {
+        val v = snoozeTargetView ?: return
+        try {
+            (getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(v)
+        } catch (t: Throwable) {
+            Log.w(TAG, "snooze target removeView failed", t)
+        }
+        snoozeTargetView = null
+    }
+
+    /// Snooze for the configured duration: persist the deadline, tell the
+    /// a11y service to forget it was showing the bubble, and stop — the
+    /// bubble stays gone until the deadline passes (shouldShowBubble checks
+    /// isSnoozed on the next IME event).
+    private fun snoozeNow() {
+        val minutes = BulbulConfig.snoozeMinutes(this)
+        val untilSecs = System.currentTimeMillis() / 1000 + minutes * 60L
+        BulbulConfig.setSnoozedUntil(this, untilSecs)
+        android.widget.Toast.makeText(
+            this, "Bulbul snoozed for ${snoozeLabel(minutes)}", android.widget.Toast.LENGTH_SHORT,
+        ).show()
+        BulbulAccessibilityService.notifySnoozed()
+        stopSelf()
+    }
+
+    private fun snoozeLabel(min: Int): String = when {
+        min < 60 -> "${min}m"
+        min % 60 == 0 -> "${min / 60}h"
+        else -> "${min / 60}h ${min % 60}m"
+    }
+
     companion object {
         private const val TAG = "BulbulFG"
         private const val CHANNEL_ID = "bulbul.bubble"
         private const val NOTIFICATION_ID = 1001
         private const val BUBBLE_SIZE_DP = 56
+        private const val SNOOZE_TARGET_DP = 68
         // Mirrors MOBILE_CONFIG_FILE on the Rust side — same file,
         // both processes read/write JSON shaped like `Config`.
         private const val CONFIG_FILE = "config.json"
@@ -481,6 +622,8 @@ private data class BubbleCallbacks(
     val onTap: () -> Unit,
     val onLongPressDown: () -> Unit,
     val onLongPressUp: () -> Unit,
+    val onDragStart: () -> Unit,
+    val onDragMove: (x: Int, y: Int) -> Unit,
     val onDragEnd: (x: Int, y: Int) -> Unit,
 )
 
@@ -637,6 +780,7 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
                 val dy = event.rawY - dragInitialTouchY
                 if (!dragging && (kotlin.math.abs(dx) > TOUCH_SLOP_PX || kotlin.math.abs(dy) > TOUCH_SLOP_PX)) {
                     dragging = true
+                    cb.onDragStart() // reveal the snooze drop-target
                 }
                 if (dragging) {
                     p.x = dragInitialX + dx.toInt()
@@ -646,6 +790,7 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
                     } catch (t: Throwable) {
                         Log.w(TAG, "updateViewLayout failed", t)
                     }
+                    cb.onDragMove(p.x, p.y)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -679,6 +824,64 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
         // Cherry red for the recording border, so a glance tells you
         // whether audio is live.
         private val COLOR_RECORDING = Color.parseColor("#EF4444")
+    }
+}
+
+/// The snooze drop-target: a soft circle with a crescent-moon glyph that
+/// sits at the bottom of the screen while the bubble is dragged. Idle it's
+/// a muted dark disc with a teal moon; when the bubble hovers over it, it
+/// grows and flips to a teal disc with a dark moon, so the drop is obvious.
+private class SnoozeTargetView(context: Context) : View(context) {
+    private var active = false
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        setShadowLayer(12f, 0f, 4f, Color.argb(120, 0, 0, 0))
+    }
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
+    private val moonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    init {
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
+    }
+
+    fun setActive(a: Boolean) {
+        if (a == active) return
+        active = a
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = (width / 2f - 10f) * (if (active) 1f else 0.86f)
+
+        bgPaint.color = if (active) COLOR_ACTIVE else COLOR_IDLE
+        canvas.drawCircle(cx, cy, r, bgPaint)
+        ringPaint.color = if (active) Color.WHITE else COLOR_ACTIVE
+        ringPaint.strokeWidth = if (active) 4f else 3f
+        canvas.drawCircle(cx, cy, r, ringPaint)
+
+        // Crescent moon = "snooze". Carve a circle out of a circle.
+        moonPaint.color = if (active) COLOR_ON_ACTIVE else COLOR_ACTIVE
+        val mr = r * 0.42f
+        val moon = android.graphics.Path().apply {
+            addCircle(cx, cy, mr, android.graphics.Path.Direction.CW)
+        }
+        val cut = android.graphics.Path().apply {
+            addCircle(cx + mr * 0.55f, cy - mr * 0.35f, mr * 0.95f, android.graphics.Path.Direction.CW)
+        }
+        moon.op(cut, android.graphics.Path.Op.DIFFERENCE)
+        canvas.drawPath(moon, moonPaint)
+    }
+
+    companion object {
+        private val COLOR_IDLE = Color.parseColor("#22262B")
+        private val COLOR_ACTIVE = Color.parseColor("#5EC8C0")
+        private val COLOR_ON_ACTIVE = Color.parseColor("#0A1716")
     }
 }
 

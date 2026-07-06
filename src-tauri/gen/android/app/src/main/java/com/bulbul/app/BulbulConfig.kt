@@ -21,6 +21,7 @@ object BulbulConfig {
     private const val CONFIG_FILE = "config.json"
     private const val DICTIONARY_FILE = "dictionary.json"
     private const val SNIPPETS_FILE = "snippets.json"
+    private const val OVERLAY_FILE = "overlay.json"
     private const val DEFAULT_CHAT_MODEL = "llama-3.1-8b-instant"
 
     private var cachedDir: File? = null
@@ -65,6 +66,43 @@ object BulbulConfig {
     fun apiKey(context: Context): String =
         read(context)?.optString("groq_api_key", "").orEmpty()
 
+    /// Whether the per-app Style feature is on (Style page master toggle).
+    /// Defaults true to match the desktop Config default.
+    fun styleEnabled(context: Context): Boolean =
+        read(context)?.optBoolean("style_enabled", true) ?: true
+
+    /// Resolves the tone style ("formal" | "casual" | "very_casual") to apply
+    /// for the app being dictated into, or null if Style is off. Combines the
+    /// per-category picks (style_personal/work/email/other) with the app's
+    /// resolved category (see AppStyle), honoring the user's custom overrides.
+    fun styleForApp(context: Context, pkg: String?, friendly: String?): String? {
+        val cfg = read(context) ?: return null
+        if (!cfg.optBoolean("style_enabled", true)) return null
+        val category = AppStyle.categoryForApp(pkg, friendly, parseOverrides(cfg))
+        val (field, fallback) = when (category) {
+            "personal" -> "style_personal" to "casual"
+            "work" -> "style_work" to "casual"
+            "email" -> "style_email" to "formal"
+            else -> "style_other" to "casual"
+        }
+        return cfg.optString(field, fallback).ifBlank { fallback }
+    }
+
+    /// Parses style_app_overrides ([{exe, category}, …]) into (key, category)
+    /// pairs. "exe" is the desktop field name; on Android the user types an
+    /// app name or package and AppStyle matches it loosely.
+    private fun parseOverrides(cfg: JSONObject): List<Pair<String, String>> {
+        val arr = cfg.optJSONArray("style_app_overrides") ?: return emptyList()
+        val out = ArrayList<Pair<String, String>>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val key = o.optString("exe").trim()
+            val cat = o.optString("category").trim()
+            if (key.isNotEmpty() && cat.isNotEmpty()) out.add(key to cat)
+        }
+        return out
+    }
+
     fun chatModel(context: Context): String =
         read(context)?.optString("chat_model", "").orEmpty().ifBlank { DEFAULT_CHAT_MODEL }
 
@@ -77,6 +115,42 @@ object BulbulConfig {
     /// Overlay bubble opacity 0.3–1.0 (Settings → Overlay).
     fun overlayOpacity(context: Context): Float =
         (read(context)?.optDouble("overlay_opacity", 0.65) ?: 0.65).toFloat().coerceIn(0.3f, 1.0f)
+
+    /// How long the overlay stays snoozed when dropped on the snooze target,
+    /// in minutes (Settings → Overlay). Default 1 hour; clamped 5 min–24 h.
+    fun snoozeMinutes(context: Context): Int =
+        (read(context)?.optInt("overlay_snooze_minutes", 60) ?: 60).coerceIn(5, 1440)
+
+    /// Snooze deadline lives in overlay.json (NOT config.json), so the React
+    /// settings save — which overwrites the whole config — can't clobber it.
+    /// Rust's resume_overlay / get_overlay_snoozed_until read the same file.
+    fun isSnoozed(context: Context): Boolean =
+        snoozedUntilSecs(context) > System.currentTimeMillis() / 1000
+
+    private fun snoozedUntilSecs(context: Context): Long {
+        val f = File(dataDir(context), OVERLAY_FILE)
+        return try {
+            if (f.exists()) JSONObject(f.readText()).optLong("snoozed_until", 0L) else 0L
+        } catch (t: Throwable) {
+            0L
+        }
+    }
+
+    /// Writes the snooze deadline (unix seconds; 0 = active) to overlay.json.
+    fun setSnoozedUntil(context: Context, secs: Long) {
+        val f = File(dataDir(context), OVERLAY_FILE)
+        val obj = try {
+            if (f.exists()) JSONObject(f.readText()) else JSONObject()
+        } catch (t: Throwable) {
+            JSONObject()
+        }
+        obj.put("snoozed_until", secs)
+        try {
+            f.writeText(obj.toString())
+        } catch (t: Throwable) {
+            Log.w(TAG, "writing overlay.json failed", t)
+        }
+    }
 
     /// Applies the user's dictionary to a transcript: whole-word substitution
     /// of each `from_word` → `to_word` (case-insensitive unless the entry is

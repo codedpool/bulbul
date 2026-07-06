@@ -3761,6 +3761,65 @@ html.platform-android .settings-slider-val {
   font-size: 13px;
 }
 
+/* "Beta" pill — small caps tag next to a feature title. */
+.beta-badge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(94, 200, 192, 0.4);
+  background: rgba(94, 200, 192, 0.12);
+  color: #5ec8c0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: "DM Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  font-style: normal;
+}
+
+/* Segmented picker (snooze duration). Works on both platforms; Android
+   gets taller hit targets. */
+.settings-segment {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.settings-seg-btn {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--fill);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+.settings-seg-btn.active {
+  border-color: #5ec8c0;
+  background: rgba(94, 200, 192, 0.1);
+  color: #5ec8c0;
+}
+html.platform-android .settings-seg-btn {
+  padding: 11px 20px;
+  font-size: 14px;
+}
+
+/* Snooze status + Resume button row. */
+.settings-resume {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.settings-resume .primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ── Modals go full-screen ── */
 html.platform-android .modal-overlay {
   -webkit-backdrop-filter: none;
@@ -3830,11 +3889,47 @@ html.platform-android .voice-grid {
 html.platform-android .voice-narrative-card,
 html.platform-android .voice-peak-card { padding: 16px; }
 
-/* Style: 3-col preset cards stack; override rows go vertical so the
-   inputs get full width instead of squeezing into 140px. */
+/* Style page, adapted for a phone. Header stacks the title above the
+   master toggle; the banner goes vertical with its app chips wrapping
+   below; the category tabs scroll horizontally instead of wrapping into
+   a ragged block; the 3-col preset cards stack; and the override rows go
+   vertical so inputs get full width instead of squeezing into 140px. */
+html.platform-android .style-page .dictionary-header {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+html.platform-android .style-master-toggle {
+  align-self: flex-start;
+}
+html.platform-android .style-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+html.platform-android .style-tabs::-webkit-scrollbar {
+  display: none;
+}
+html.platform-android .style-tabs .tab {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+html.platform-android .style-banner {
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 16px;
+}
+html.platform-android .style-banner-apps {
+  justify-content: flex-start;
+  max-width: none;
+}
 html.platform-android .style-cards {
   grid-template-columns: 1fr;
   gap: 12px;
+}
+html.platform-android .style-card {
+  padding: 18px 18px 20px;
+  gap: 14px;
 }
 html.platform-android .style-override-row,
 html.platform-android .style-override-add {

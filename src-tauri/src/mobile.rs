@@ -235,6 +235,30 @@ fn write_json_object(app: &tauri::AppHandle, file: &str, obj: &Value) -> Result<
     std::fs::write(dir.join(file), json).map_err(|e| e.to_string())
 }
 
+// Overlay runtime state shared with the Kotlin side (file-as-IPC, same as
+// history/dictionary). Kept OUT of config.json so it isn't clobbered by the
+// React settings save, which overwrites the whole config object. Holds the
+// snooze deadline: `snoozed_until` is a unix-seconds timestamp (0 = active).
+const OVERLAY_FILE: &str = "overlay.json";
+
+/// Seconds-since-epoch until which the overlay bubble is snoozed (0/none if
+/// not snoozed). The Kotlin service writes this when the user drops the bubble
+/// on the snooze target; the Settings page reads it to show the state.
+#[tauri::command]
+fn get_overlay_snoozed_until(app: tauri::AppHandle) -> i64 {
+    read_json_object(&app, OVERLAY_FILE)
+        .and_then(|v| v.get("snoozed_until").and_then(Value::as_i64))
+        .unwrap_or(0)
+}
+
+/// Resume the overlay immediately — clears any active snooze so the bubble
+/// reappears the next time the user focuses a text field. Wired to the
+/// "Resume now" button in Settings → Overlay.
+#[tauri::command]
+fn resume_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    write_json_object(&app, OVERLAY_FILE, &json!({ "snoozed_until": 0 }))
+}
+
 /// One-shot Groq chat completion. Mirrors `groq::chat` on desktop but kept
 /// inline so the mobile build doesn't pull the whole desktop groq module.
 async fn groq_chat(
@@ -1208,6 +1232,8 @@ pub fn run() {
             // Settings + updater
             validate_api_key,
             check_for_updates,
+            get_overlay_snoozed_until,
+            resume_overlay,
             // Overlay / scratchpad windows
             set_overlay_height,
             open_scratchpad,

@@ -241,6 +241,10 @@ pub struct Config {
     pub overlay_opacity: f32,
     #[serde(default = "default_overlay_size")]
     pub overlay_size: u32,
+    /// How long the overlay stays snoozed when dropped on the snooze target,
+    /// in minutes (Android only). Default 1 hour.
+    #[serde(default = "default_overlay_snooze_minutes")]
+    pub overlay_snooze_minutes: u32,
 }
 
 fn default_polish_hotkey() -> String {
@@ -290,6 +294,7 @@ fn default_theme() -> String { "light".to_string() }
 fn default_telemetry_enabled() -> bool { true }
 fn default_overlay_opacity() -> f32 { 0.65 }
 fn default_overlay_size() -> u32 { 52 }
+fn default_overlay_snooze_minutes() -> u32 { 60 }
 fn default_style_personal() -> String { "casual".to_string() }
 fn default_style_work() -> String { "casual".to_string() }
 fn default_style_email() -> String { "formal".to_string() }
@@ -501,6 +506,7 @@ impl Default for Config {
             telemetry_enabled: default_telemetry_enabled(),
             overlay_opacity: default_overlay_opacity(),
             overlay_size: default_overlay_size(),
+            overlay_snooze_minutes: default_overlay_snooze_minutes(),
         }
     }
 }

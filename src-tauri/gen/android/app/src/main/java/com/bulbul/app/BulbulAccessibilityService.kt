@@ -19,6 +19,7 @@ package com.bulbul.app
 import android.accessibilityservice.AccessibilityService
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -47,6 +48,7 @@ class BulbulAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.i(TAG, "Bulbul accessibility service connected")
+        instance = this
         TextInjector.bind(this)
         // Initial evaluation — if the user enables Bulbul while
         // they're already in a text field with the keyboard up, we
@@ -55,6 +57,7 @@ class BulbulAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
+        instance = null
         TextInjector.unbind()
         // Whatever state we were in, hide the bubble immediately
         // (no grace period — accessibility is off, we have no
@@ -73,9 +76,32 @@ class BulbulAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED
+                ) {
+                    trackForegroundApp(event.packageName?.toString())
+                }
                 reevaluateBubble()
             }
         }
+    }
+
+    /// Remembers the last real foreground app package so the foreground
+    /// service can, at record time, tag the dictation with which app it
+    /// went into (dashboard badge + per-app Style). We filter out our own
+    /// package, the soft keyboard, and the system UI so the "target app"
+    /// stays the thing the user is actually typing into.
+    private fun trackForegroundApp(pkg: String?) {
+        if (pkg.isNullOrBlank()) return
+        if (pkg == packageName || pkg == "com.android.systemui" || pkg == currentImePackage()) return
+        targetPackage = pkg
+    }
+
+    private fun currentImePackage(): String? = try {
+        Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.substringBefore('/')
+    } catch (t: Throwable) {
+        null
     }
 
     override fun onInterrupt() {
@@ -124,7 +150,15 @@ class BulbulAccessibilityService : AccessibilityService() {
     /// expect the same bubble. So the bubble now shows over our own app
     /// too; the injector appends into whatever field is focused.
     private fun shouldShowBubble(): Boolean {
-        return isImeVisible()
+        return isImeVisible() && !BulbulConfig.isSnoozed(this)
+    }
+
+    /// Called by the foreground service when the user snoozes: forget that
+    /// we were showing the bubble so that, once the snooze expires, the next
+    /// IME event cleanly re-shows it (rather than us thinking it's still up).
+    private fun onSnoozed() {
+        handler.removeCallbacks(hideRunnable)
+        bubbleRequested = false
     }
 
     private fun isImeVisible(): Boolean {
@@ -141,6 +175,24 @@ class BulbulAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "BulbulA11y"
+
+        /// The last real foreground-app package (not Bulbul, the IME, or
+        /// system UI). Read by the foreground service at record time to tag
+        /// the dictation with its target app. Volatile: written on the
+        /// a11y thread, read on the recorder thread.
+        @Volatile
+        var targetPackage: String? = null
+
+        /// Live instance, so the foreground service can notify us of a snooze.
+        @Volatile
+        private var instance: BulbulAccessibilityService? = null
+
+        /// Foreground service → a11y service hook: reset our bubble state when
+        /// the user snoozes, so it re-shows cleanly once the snooze expires.
+        fun notifySnoozed() {
+            instance?.onSnoozed()
+        }
+
         // Just long enough to absorb a one-frame IME teardown/rebuild
         // flicker during a keyboard animation, but short enough that
         // closing the keyboard hides the bubble near-instantly. 500 ms

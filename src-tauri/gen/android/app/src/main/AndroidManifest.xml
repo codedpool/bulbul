@@ -18,6 +18,19 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- Package visibility (Android 11+). Without this, PackageManager can't
+         read another app's label, so the dashboard showed the raw package
+         id ("com.whatsapp") instead of its name ("WhatsApp"). Declaring the
+         MAIN/LAUNCHER query makes all user-facing (launchable) apps visible
+         — enough to resolve names — without the sensitive QUERY_ALL_PACKAGES
+         permission that Play Store restricts. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

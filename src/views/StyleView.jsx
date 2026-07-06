@@ -83,9 +83,11 @@ export default function StyleView({ config, updateConfig }) {
     <div className="page style-page">
       <header className="page-header dictionary-header">
         <div>
-          <h1>Style</h1>
+          <h1>
+            Style <span className="beta-badge">Beta</span>
+          </h1>
           <p className="muted small">
-            Apply a per-app tone to your cleaned transcripts. Bulbul detects the foreground app and quietly hints the cleanup model.
+            Apply a per-app tone to your transcripts. Bulbul detects the app you're dictating into and adjusts the tone to match.
           </p>
         </div>
         <label className="style-master-toggle">
@@ -195,8 +197,8 @@ function AppOverrides({ overrides, onChange, disabled }) {
       <header className="style-overrides-header">
         <h3>Custom apps</h3>
         <p className="muted small">
-          Map a specific executable to a category. Overrides Bulbul's built-in
-          mappings — useful when an app you use (e.g. Cursor, Notion, Obsidian)
+          Map a specific app to a category. Overrides Bulbul's built-in
+          mappings — useful when an app you use (e.g. Notion, Obsidian, Cursor)
           doesn't fit the defaults.
         </p>
       </header>
@@ -209,7 +211,7 @@ function AppOverrides({ overrides, onChange, disabled }) {
                 type="text"
                 value={ov.exe}
                 onChange={(e) => updateRow(i, { exe: e.target.value })}
-                placeholder="App.exe"
+                placeholder="App name"
                 disabled={disabled}
               />
               <Combobox
@@ -246,7 +248,7 @@ function AppOverrides({ overrides, onChange, disabled }) {
               add();
             }
           }}
-          placeholder="e.g. Cursor.exe"
+          placeholder="e.g. WhatsApp, Notion"
           disabled={disabled}
         />
         <Combobox

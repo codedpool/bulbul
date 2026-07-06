@@ -596,9 +596,35 @@ function PaneHotkeys({
 // Android-only. The floating dictation bubble's look: how see-through it is
 // and how big. Both persist to config.json; the Kotlin foreground service
 // reads them the next time it draws the bubble.
+const SNOOZE_OPTIONS = [
+  { label: "30m", mins: 30 },
+  { label: "1h", mins: 60 },
+  { label: "2h", mins: 120 },
+  { label: "4h", mins: 240 },
+];
+
 function PaneOverlay({ config, updateConfig }) {
   const opacityPct = Math.round((config.overlay_opacity ?? 0.65) * 100);
   const size = config.overlay_size ?? 52;
+  const snoozeMins = config.overlay_snooze_minutes ?? 60;
+
+  // Snooze deadline lives in overlay.json (native writes it on drag-snooze),
+  // read here so we can show status + offer an immediate resume.
+  const [snoozedUntil, setSnoozedUntil] = useState(0);
+  useEffect(() => {
+    invoke("get_overlay_snoozed_until").then(setSnoozedUntil).catch(() => {});
+  }, []);
+  const isSnoozed = snoozedUntil > Math.floor(Date.now() / 1000);
+
+  async function resumeOverlay() {
+    try {
+      await invoke("resume_overlay");
+      setSnoozedUntil(0);
+    } catch (e) {
+      console.error("resume_overlay failed", e);
+    }
+  }
+
   return (
     <>
       <Row
@@ -633,6 +659,48 @@ function PaneOverlay({ config, updateConfig }) {
             aria-label="Bubble size"
           />
           <span className="settings-slider-val">{size}px</span>
+        </div>
+      </Row>
+      <Row
+        title="Snooze duration"
+        hint="Drag the bubble down onto the snooze circle to hide it for this long."
+        stack
+      >
+        <div className="settings-segment">
+          {SNOOZE_OPTIONS.map((o) => (
+            <button
+              key={o.mins}
+              type="button"
+              className={`settings-seg-btn ${snoozeMins === o.mins ? "active" : ""}`}
+              onClick={() => updateConfig({ ...config, overlay_snooze_minutes: o.mins })}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </Row>
+      <Row
+        title="Overlay status"
+        hint="Resume the bubble immediately instead of waiting for a snooze to end."
+        stack
+      >
+        <div className="settings-resume">
+          <span className="muted small">
+            {isSnoozed
+              ? `Snoozed until ${new Date(snoozedUntil * 1000).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}`
+              : "Overlay is active."}
+          </span>
+          <button
+            type="button"
+            className="primary"
+            onClick={resumeOverlay}
+            disabled={!isSnoozed}
+          >
+            Resume now
+          </button>
         </div>
       </Row>
       <p className="muted small settings-note">
