@@ -94,6 +94,13 @@ fn set_autostart(_enabled: bool) -> Result<(), String> {
 
 /// No in-app updater on Android yet — distribution is sideloaded APK.
 /// Returning None means the React updater banner stays hidden.
+///
+/// TODO(release): before the public GitHub release, wire the Android
+/// updater to GitHub Releases. `check_for_updates` below should query the
+/// latest release tag and compare it to CARGO_PKG_VERSION; on a newer tag
+/// these two should surface the version and deep-link the user to the APK
+/// download (Android can't self-install a staged binary the way desktop
+/// does, so "install" means opening the APK, not applying it in-process).
 #[tauri::command]
 fn get_staged_update_version() -> Option<String> {
     None
@@ -1148,6 +1155,14 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
     }
 }
 
+/// Always reports "up to date" on Android today — there is no server to
+/// check against while distribution is a hand-shared APK.
+///
+/// TODO(release): before the public GitHub release, replace the stub with
+/// a GitHub Releases check — GET the `releases/latest` tag for the repo,
+/// parse the version, and return Some(version) when it's newer than
+/// CARGO_PKG_VERSION so the Settings ▸ About check offers the new APK.
+/// See the matching TODO on get_staged_update_version above.
 #[tauri::command]
 async fn check_for_updates() -> Result<Option<String>, String> {
     Ok(None)
