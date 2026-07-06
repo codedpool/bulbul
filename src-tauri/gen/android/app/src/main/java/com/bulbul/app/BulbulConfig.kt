@@ -66,6 +66,16 @@ object BulbulConfig {
     fun apiKey(context: Context): String =
         read(context)?.optString("groq_api_key", "").orEmpty()
 
+    /// Opt-in telemetry gate (Settings ▸ Privacy / onboarding toggle).
+    /// Defaults true to match the desktop Config default.
+    fun telemetryEnabled(context: Context): Boolean =
+        read(context)?.optBoolean("telemetry_enabled", true) ?: true
+
+    /// Dictation language code ("auto" | "en" | "hi" | …). Sent (coarsely) in
+    /// telemetry; defaults to "auto".
+    fun language(context: Context): String =
+        read(context)?.optString("language", "auto").orEmpty().ifBlank { "auto" }
+
     /// Whether the per-app Style feature is on (Style page master toggle).
     /// Defaults true to match the desktop Config default.
     fun styleEnabled(context: Context): Boolean =

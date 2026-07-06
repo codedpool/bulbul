@@ -27,6 +27,8 @@ class MainActivity : TauriActivity() {
     // app's white top — the "notification bar hidden in the whites" bug.
     applyBarAppearance()
     startConfigWatch()
+    // Opt-in engagement ping (no content). No-ops unless telemetry is on.
+    Telemetry.track(this, "app_opened", org.json.JSONObject())
     // Launch the setup walker on top of the Tauri webview if any of
     // the three system permissions Bulbul depends on aren't granted.
     // Doing this in onCreate (not onResume) means the webview keeps

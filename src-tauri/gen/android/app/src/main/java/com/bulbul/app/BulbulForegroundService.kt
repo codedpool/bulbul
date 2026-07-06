@@ -182,7 +182,18 @@ class BulbulForegroundService : Service() {
 
                 val injected = TextInjector.inject(finalText)
                 Log.i(TAG, "transcript len=${finalText.length} fixes=$fixes app=$friendly injected=$injected")
-                recordHistory(finalText, wavDurationMs(wav), fixes, friendly)
+                val durationMs = wavDurationMs(wav)
+                recordHistory(finalText, durationMs, fixes, friendly)
+
+                // Opt-in telemetry: coarse buckets only — no text, no app name.
+                val words = finalText.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+                Telemetry.track(this, "dictation_completed", org.json.JSONObject().apply {
+                    put("mode", "clean")
+                    put("language", BulbulConfig.language(this@BulbulForegroundService))
+                    put("duration_bucket", Telemetry.durationBucket(durationMs))
+                    put("word_count_bucket", Telemetry.wordCountBucket(words))
+                    put("had_fixes", fixes > 0)
+                })
                 // Couldn't type it in (focus gone, A11y unbound) — put
                 // the words on the clipboard so they're one long-press
                 // away instead of silently lost.
