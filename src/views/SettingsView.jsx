@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
-import { AUTOSTART_LABEL, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
+import { AUTOSTART_LABEL, IS_ANDROID, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
 
 const MODES = [
   { value: "raw", label: "Raw", hint: "Fix obvious errors only. Keeps every word." },
@@ -55,6 +55,17 @@ const CATEGORIES = [
   { id: "about", label: "About" },
 ];
 
+// Android settings sections (drill-down list). Each row's hint previews what's
+// inside so the list reads as a menu, not a wall of controls.
+const M_SECTIONS = [
+  { id: "general", label: "General", hint: "Cleanup mode, language, appearance" },
+  { id: "account", label: "Account", hint: "Your Groq API key" },
+  { id: "overlay", label: "Overlay", hint: "Dictation bubble opacity and size" },
+  { id: "personalization", label: "Personalization", hint: "Your name and cleanup preferences" },
+  { id: "privacy", label: "Privacy", hint: "Anonymous usage stats" },
+  { id: "about", label: "About", hint: "Updates, help, and version" },
+];
+
 /**
  * Settings popup. Mount it once near the root; render is conditional
  * on `open`. The popup owns its own internal category nav (left) +
@@ -69,6 +80,10 @@ export default function SettingsView({
   autostart,
   onAutostartChange,
   onHideTrayChange,
+  // Android drill-down nav is lifted to App so the hardware-back handler can
+  // step through it. null = the section list; a section id = its detail.
+  section: mSection = null,
+  onSectionChange: setMSection = () => {},
 }) {
   const [active, setActive] = useState("general");
   const [draftKey, setDraftKey] = useState(config?.groq_api_key || "");
@@ -249,6 +264,92 @@ export default function SettingsView({
     } catch (e) {
       setUpdateState({ state: "error", message: String(e) });
     }
+  }
+
+  // Android: Settings is a full-screen page (not a centered popup) that opens
+  // to a LIST of sections; tapping one drills into just that section's
+  // controls, so the user isn't hit with every option at once. Hotkeys
+  // becomes Overlay (opacity + size); Startup is dropped (autostart/tray/
+  // open-on-launch are all desktop-only — Android restarts the accessibility
+  // service on boot on its own).
+  if (IS_ANDROID) {
+    const current = M_SECTIONS.find((s) => s.id === mSection) || null;
+
+    const renderPane = (id) => {
+      switch (id) {
+        case "general":
+          return <PaneGeneral config={config} updateConfig={updateConfig} />;
+        case "account":
+          return (
+            <PaneAccount
+              hasKey={hasKey}
+              draftKey={draftKey}
+              setDraftKey={setDraftKey}
+              saveKey={saveKey}
+              keyState={keyState}
+              keyError={keyError}
+              setKeyState={setKeyState}
+            />
+          );
+        case "overlay":
+          return <PaneOverlay config={config} updateConfig={updateConfig} />;
+        case "personalization":
+          return <PanePersonalization config={config} updateConfig={updateConfig} />;
+        case "privacy":
+          return <PanePrivacy config={config} updateConfig={updateConfig} />;
+        case "about":
+          return (
+            <PaneAbout
+              checkUpdates={checkUpdates}
+              updateState={updateState}
+              onResetSetup={() => updateConfig({ ...config, onboarding_completed: false })}
+            />
+          );
+        default:
+          return null;
+      }
+    };
+
+    return createPortal(
+      <div className="m-settings-page" role="dialog" aria-modal="true" aria-label="Settings">
+        <header className="m-settings-head">
+          <button
+            type="button"
+            className="m-icon-btn"
+            onClick={() => (current ? setMSection(null) : onClose())}
+            aria-label="Back"
+          >
+            <BackIcon />
+          </button>
+          <span className="m-settings-title">{current ? current.label : "Settings"}</span>
+          <span className="m-settings-head-spacer" />
+        </header>
+        {current ? (
+          <div className="m-settings-scroll">
+            <div className="m-settings-section-body">{renderPane(current.id)}</div>
+          </div>
+        ) : (
+          <div className="m-settings-list">
+            {M_SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className="m-settings-row"
+                onClick={() => setMSection(s.id)}
+              >
+                <span className="m-settings-row-icon"><CategoryIcon id={s.id} /></span>
+                <span className="m-settings-row-text">
+                  <span className="m-settings-row-label">{s.label}</span>
+                  <span className="m-settings-row-hint">{s.hint}</span>
+                </span>
+                <span className="m-settings-row-chev"><ChevronIcon /></span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>,
+      document.body,
+    );
   }
 
   return createPortal(
@@ -492,6 +593,55 @@ function PaneHotkeys({
   );
 }
 
+// Android-only. The floating dictation bubble's look: how see-through it is
+// and how big. Both persist to config.json; the Kotlin foreground service
+// reads them the next time it draws the bubble.
+function PaneOverlay({ config, updateConfig }) {
+  const opacityPct = Math.round((config.overlay_opacity ?? 0.65) * 100);
+  const size = config.overlay_size ?? 52;
+  return (
+    <>
+      <Row
+        title="Bubble opacity"
+        hint="How see-through the floating dictation bubble is."
+        stack
+      >
+        <div className="settings-slider">
+          <input
+            type="range"
+            min="30"
+            max="100"
+            step="5"
+            value={opacityPct}
+            onChange={(e) =>
+              updateConfig({ ...config, overlay_opacity: Number(e.target.value) / 100 })
+            }
+            aria-label="Bubble opacity"
+          />
+          <span className="settings-slider-val">{opacityPct}%</span>
+        </div>
+      </Row>
+      <Row title="Bubble size" hint="Diameter of the floating dictation bubble." stack>
+        <div className="settings-slider">
+          <input
+            type="range"
+            min="44"
+            max="96"
+            step="4"
+            value={size}
+            onChange={(e) => updateConfig({ ...config, overlay_size: Number(e.target.value) })}
+            aria-label="Bubble size"
+          />
+          <span className="settings-slider-val">{size}px</span>
+        </div>
+      </Row>
+      <p className="muted small settings-note">
+        Changes take effect the next time the bubble appears.
+      </p>
+    </>
+  );
+}
+
 function PanePersonalization({ config, updateConfig }) {
   return (
     <>
@@ -698,6 +848,23 @@ function CloseIcon() {
   );
 }
 
+function BackIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
+    </svg>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
 function CategoryIcon({ id }) {
   const props = { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true };
   switch (id) {
@@ -723,6 +890,13 @@ function CategoryIcon({ id }) {
           <line x1="14" y1="10" x2="14" y2="10" />
           <line x1="18" y1="10" x2="18" y2="10" />
           <line x1="7" y1="14" x2="17" y2="14" />
+        </svg>
+      );
+    case "overlay":
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="3" />
         </svg>
       );
     case "personalization":

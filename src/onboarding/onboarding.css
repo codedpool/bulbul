@@ -449,6 +449,44 @@
   min-width: 260px;
 }
 
+/* On a phone the 260px segmented control overflows the card. Stack the label
+   above it and let the control fill the width. */
+html.platform-android .onb-theme-block {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+html.platform-android .onb-theme-seg {
+  width: 100%;
+  min-width: 0;
+}
+
+/* ─────────── Android wizard layout ─────────── */
+
+/* Top bar: edge-to-edge draws under the status bar and Android reports the
+   safe-area inset as 0, so the brand collided with the notification bar.
+   Give it the same generous top clearance as the dashboard banner. */
+html.platform-android .onb-top {
+  height: auto;
+  padding: max(52px, calc(env(safe-area-inset-top) + 18px)) 18px 12px;
+  border-bottom: 1px solid var(--fill);
+}
+
+/* Even side gutters so nothing (e.g. the Verify button on the API-key step)
+   sits flush against the screen edge — the desktop 48px gutter is replaced
+   with a comfortable, symmetric mobile margin. */
+html.platform-android .onb-page {
+  padding: 18px 18px 0;
+}
+html.platform-android .onb-page-inner {
+  gap: 16px;
+}
+
+/* Action row buttons breathe and reach a proper tap size. */
+html.platform-android .onb-actions .onb-btn {
+  min-height: 44px;
+}
+
 /* ─────────── Hotkey step ─────────── */
 .onb-hotkey-grid {
   display: grid;

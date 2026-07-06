@@ -24,7 +24,10 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -91,44 +94,84 @@ class SetupActivity : Activity() {
         accessibilityRow.setGranted(accessibilityGranted())
     }
 
+    // ---------------- Theme ----------------
+    //
+    // Mirrors Bulbul's own palette (mint accent, slate text) and follows the
+    // system light/dark setting, so this native first-launch screen reads as
+    // part of the app instead of a raw white system dialog.
+
+    private val night: Boolean
+        get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    private fun col(light: Int, dark: Int): Int = if (night) dark else light
+
+    private val bgColor get() = col(0xFFFFFFFF.toInt(), 0xFF101318.toInt())
+    // Not "titleColor" — Activity already has a (deprecated) getTitleColor().
+    private val headingColor get() = col(0xFF0F172A.toInt(), 0xFFF1F5F9.toInt())
+    private val bodyColor get() = col(0xFF475569.toInt(), 0xFF94A3B8.toInt())
+    private val mutedColor get() = col(0xFF94A3B8.toInt(), 0xFF6B7280.toInt())
+    private val accentColor get() = col(0xFF12A594.toInt(), 0xFF5EC8C0.toInt())
+
     // ---------------- Layout (code-built) ----------------
 
     private fun buildLayout(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(36), dp(24), dp(24))
-            setBackgroundColor(Color.WHITE)
+            setPadding(dp(24), dp(40), dp(24), dp(24))
+            setBackgroundColor(bgColor)
         }
+
+        // Brand header — launcher icon + wordmark, so setup feels on-brand.
+        val brand = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(20))
+        }
+        brand.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.mipmap.ic_launcher)
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply {
+                rightMargin = dp(10)
+            }
+        })
+        brand.addView(TextView(this).apply {
+            text = "bulbul"
+            textSize = 22f
+            setTypeface(Typeface.create(Typeface.SERIF, Typeface.ITALIC))
+            setTextColor(headingColor)
+        })
+        root.addView(brand)
 
         root.addView(TextView(this).apply {
             text = "Set up Bulbul"
             textSize = 24f
-            setTextColor(Color.BLACK)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(headingColor)
             setPadding(0, 0, 0, dp(8))
         })
         root.addView(TextView(this).apply {
             text = "Bulbul needs three permissions before the floating bubble can dictate into other apps. Grant them in any order — this screen closes itself once all three are on."
             textSize = 14f
-            setTextColor(Color.parseColor("#475569"))
+            setTextColor(bodyColor)
             setPadding(0, 0, 0, dp(24))
         })
 
         micRow = PermissionRow(
-            this,
+            this, night,
             title = "Microphone",
             blurb = "Used only while you hold or tap the floating bubble.",
             actionLabel = "Allow microphone",
             onAction = ::requestMic,
         )
         overlayRow = PermissionRow(
-            this,
+            this, night,
             title = "Display over other apps",
             blurb = "Lets the floating bubble appear above your keyboard in any app.",
             actionLabel = "Open Display settings",
             onAction = ::openOverlaySettings,
         )
         accessibilityRow = PermissionRow(
-            this,
+            this, night,
             title = "Accessibility",
             blurb = "Lets Bulbul see which text field you tapped into and paste cleaned-up transcripts there.",
             actionLabel = "Open Accessibility settings",
@@ -142,7 +185,7 @@ class SetupActivity : Activity() {
         root.addView(TextView(this).apply {
             text = "All three are required because of how Android isolates apps from each other — there's no privileged shortcut."
             textSize = 12f
-            setTextColor(Color.parseColor("#94a3b8"))
+            setTextColor(mutedColor)
             setPadding(0, dp(16), 0, 0)
         })
 
@@ -151,7 +194,7 @@ class SetupActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ))
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(bgColor)
         }
     }
 
@@ -210,9 +253,11 @@ class SetupActivity : Activity() {
     }
 }
 
-/// One row per permission: title, blurb, status pill, grant button.
+/// One row per permission: title, blurb, status pill, grant button. Themed
+/// (light/dark) to match the Bulbul palette.
 private class PermissionRow(
     context: Context,
+    night: Boolean,
     title: String,
     blurb: String,
     actionLabel: String,
@@ -220,12 +265,23 @@ private class PermissionRow(
 ) {
     val view: View
     private val status: TextView
+    private val grantedColor = if (night) 0xFF5EC8C0.toInt() else 0xFF12A594.toInt()
+    private val notGrantedColor = if (night) 0xFFF87171.toInt() else 0xFFDC2626.toInt()
 
     init {
+        val cardBg = if (night) 0xFF1B1F27.toInt() else 0xFFF1F5F9.toInt()
+        val titleColor = if (night) 0xFFF1F5F9.toInt() else 0xFF0F172A.toInt()
+        val bodyColor = if (night) 0xFF94A3B8.toInt() else 0xFF475569.toInt()
+        val accentColor = if (night) 0xFF5EC8C0.toInt() else 0xFF12A594.toInt()
+        val onAccent = if (night) 0xFF0B0E12.toInt() else 0xFFFFFFFF.toInt()
+
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(context, 16), dp(context, 16), dp(context, 16), dp(context, 16))
-            setBackgroundColor(Color.parseColor("#F8FAFC"))
+            background = GradientDrawable().apply {
+                setColor(cardBg)
+                cornerRadius = dp(context, 14).toFloat()
+            }
             val lp = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -240,24 +296,33 @@ private class PermissionRow(
         header.addView(TextView(context).apply {
             text = title
             textSize = 16f
-            setTextColor(Color.BLACK)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(titleColor)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         status = TextView(context).apply {
             text = "Not granted"
             textSize = 12f
-            setTextColor(Color.parseColor("#dc2626"))
+            setTextColor(notGrantedColor)
         }
         header.addView(status)
         card.addView(header)
         card.addView(TextView(context).apply {
             text = blurb
             textSize = 13f
-            setTextColor(Color.parseColor("#475569"))
+            setTextColor(bodyColor)
             setPadding(0, dp(context, 6), 0, dp(context, 12))
         })
         card.addView(Button(context).apply {
             text = actionLabel
+            isAllCaps = false
+            setTextColor(onAccent)
+            background = GradientDrawable().apply {
+                setColor(accentColor)
+                cornerRadius = dp(context, 999).toFloat()
+            }
+            stateListAnimator = null
+            setPadding(dp(context, 20), dp(context, 10), dp(context, 20), dp(context, 10))
             setOnClickListener { onAction() }
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -269,11 +334,11 @@ private class PermissionRow(
 
     fun setGranted(granted: Boolean) {
         if (granted) {
-            status.text = "Granted"
-            status.setTextColor(Color.parseColor("#16a34a"))
+            status.text = "✓ Granted"
+            status.setTextColor(grantedColor)
         } else {
             status.text = "Not granted"
-            status.setTextColor(Color.parseColor("#dc2626"))
+            status.setTextColor(notGrantedColor)
         }
     }
 

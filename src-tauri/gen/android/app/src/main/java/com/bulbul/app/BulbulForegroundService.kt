@@ -145,17 +145,18 @@ class BulbulForegroundService : Service() {
             } else null
 
             if (transcript != null) {
-                // Apply the user's dictionary (whole-word substitutions) before
-                // injecting, and count how many fixes it made so Insights can
-                // report them.
+                // Apply the user's dictionary (whole-word substitutions) then
+                // expand snippets — same order as desktop — before injecting.
+                // Count dictionary fixes so Insights can report them.
                 val (corrected, fixes) = BulbulConfig.applyDictionary(this, transcript)
-                val injected = TextInjector.inject(corrected)
-                Log.i(TAG, "transcript len=${corrected.length} fixes=$fixes injected=$injected")
-                recordHistory(corrected, wavDurationMs(wav), fixes)
+                val finalText = BulbulConfig.applySnippets(this, corrected)
+                val injected = TextInjector.inject(finalText)
+                Log.i(TAG, "transcript len=${finalText.length} fixes=$fixes injected=$injected")
+                recordHistory(finalText, wavDurationMs(wav), fixes)
                 // Couldn't type it in (focus gone, A11y unbound) — put
                 // the words on the clipboard so they're one long-press
                 // away instead of silently lost.
-                if (!injected) clipboardFallback(corrected)
+                if (!injected) clipboardFallback(finalText)
             } else {
                 Log.w(TAG, "transcription failed; saving WAV instead")
                 writeRecording(wav)
@@ -367,7 +368,11 @@ class BulbulForegroundService : Service() {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
-        val sizePx = BUBBLE_SIZE_DP.dp(this)
+        // Size + opacity come from Settings → Overlay (config.json), read
+        // each time the bubble is drawn so a change applies the next time it
+        // appears. View alpha makes the whole bubble see-through.
+        val sizePx = BulbulConfig.overlaySize(this).dp(this)
+        view.alpha = BulbulConfig.overlayOpacity(this)
         val params = WindowManager.LayoutParams(
             sizePx,
             sizePx,

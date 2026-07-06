@@ -231,6 +231,16 @@ pub struct Config {
     /// the full taxonomy.
     #[serde(default = "default_telemetry_enabled")]
     pub telemetry_enabled: bool,
+
+    /// Floating overlay bubble appearance (Android only). `overlay_opacity`
+    /// is 0.3–1.0, `overlay_size` is the bubble diameter in dp. Desktop
+    /// ignores these — its pill is sized by the window/CSS — but they live
+    /// in the shared Config so the mobile Settings page (React) and the
+    /// Kotlin foreground service agree on where the values are stored.
+    #[serde(default = "default_overlay_opacity")]
+    pub overlay_opacity: f32,
+    #[serde(default = "default_overlay_size")]
+    pub overlay_size: u32,
 }
 
 fn default_polish_hotkey() -> String {
@@ -278,6 +288,8 @@ fn default_personalize_cleanup() -> bool { false }
 fn default_learn_corrections() -> bool { true }
 fn default_theme() -> String { "light".to_string() }
 fn default_telemetry_enabled() -> bool { true }
+fn default_overlay_opacity() -> f32 { 0.65 }
+fn default_overlay_size() -> u32 { 52 }
 fn default_style_personal() -> String { "casual".to_string() }
 fn default_style_work() -> String { "casual".to_string() }
 fn default_style_email() -> String { "formal".to_string() }
@@ -487,6 +499,8 @@ impl Default for Config {
             theme: default_theme(),
             onboarding_completed: false,
             telemetry_enabled: default_telemetry_enabled(),
+            overlay_opacity: default_overlay_opacity(),
+            overlay_size: default_overlay_size(),
         }
     }
 }

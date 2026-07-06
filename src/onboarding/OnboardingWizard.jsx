@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
 import { applyTheme } from "../theme.js";
-import { IS_MAC, META_KEY_NAME } from "../platform.js";
+import { IS_ANDROID, IS_MAC, META_KEY_NAME } from "../platform.js";
 import "./onboarding.css";
 
 // The stored hotkey VALUES are platform-independent — Bulbul's parser maps
@@ -72,7 +72,12 @@ const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test, and like, it loo
 // Mac inserts a one-time Permissions step between Welcome and the API
 // key entry. Non-Mac platforms skip it (Windows has no permission gate;
 // Linux X11 needs none, Linux Wayland prompts via portal on first use).
-const STEP_SEQUENCE = IS_MAC
+// Android has no global hotkey (dictation is the floating bubble) and its
+// system permissions are granted through the native setup screen, so the
+// wizard is just the essentials: welcome, key, language, done.
+const STEP_SEQUENCE = IS_ANDROID
+  ? ["welcome", "apiKey", "language", "done"]
+  : IS_MAC
   ? ["welcome", "permissions", "apiKey", "language", "hotkey", "done"]
   : ["welcome", "apiKey", "language", "hotkey", "done"];
 
@@ -127,27 +132,31 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
           >
             {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
           </button>
-          <button
-            className="onb-tb-btn"
-            onClick={() => win.minimize().catch(() => {})}
-            aria-label="Minimize"
-            title="Minimize"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            </svg>
-          </button>
-          <button
-            className="onb-tb-btn onb-tb-close"
-            onClick={() => win.close().catch(() => {})}
-            aria-label="Close"
-            title="Close"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-              <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            </svg>
-          </button>
+          {!IS_ANDROID && (
+            <>
+              <button
+                className="onb-tb-btn"
+                onClick={() => win.minimize().catch(() => {})}
+                aria-label="Minimize"
+                title="Minimize"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                </svg>
+              </button>
+              <button
+                className="onb-tb-btn onb-tb-close"
+                onClick={() => win.close().catch(() => {})}
+                aria-label="Close"
+                title="Close"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                  <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                </svg>
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -218,7 +227,9 @@ function StepWelcome({ config, updateConfig, onNext }) {
       <img src={bulbulMark} alt="" className="onb-hero-mark" aria-hidden />
       <h1>Welcome to Bulbul.</h1>
       <p className="onb-lead">
-        Hold a hotkey anywhere on your computer. Speak. Text appears where your cursor is.
+        {IS_ANDROID
+          ? "Tap the floating bubble in any app. Speak. Your words appear where your cursor is."
+          : "Hold a hotkey anywhere on your computer. Speak. Text appears where your cursor is."}
       </p>
       <div className="onb-value-grid">
         <div className="onb-value">
@@ -1162,21 +1173,37 @@ function StepDone({ onFinish, hotkey, telemetryEnabled, onToggleTelemetry }) {
       <div className="onb-done-check">✓</div>
       <h2>You're all set.</h2>
       <p className="onb-lead">
-        Press <code>{formatComboForDisplay(hotkey)}</code> anywhere — in your browser, in Word, in a terminal — speak,
-        and Bulbul will type what you said.
+        {IS_ANDROID ? (
+          <>Tap the floating bubble in any app — a chat, your notes, a browser — speak, and Bulbul types what you said.</>
+        ) : (
+          <>Press <code>{formatComboForDisplay(hotkey)}</code> anywhere — in your browser, in Word, in a terminal — speak,
+          and Bulbul will type what you said.</>
+        )}
       </p>
       <div className="onb-tour-grid">
         <div className="onb-tour-card">
           <div className="onb-tour-title">Transform selections</div>
-          <p>Select text anywhere and press <code>{displayPart(IS_MAC ? "Win" : "Alt")} + 1…6</code> to polish, formalize, or rephrase it in place.</p>
+          <p>
+            {IS_ANDROID
+              ? "Select text in any app and tap Bulbul in the popup toolbar to polish, formalize, or rephrase it in place."
+              : <>Select text anywhere and press <code>{displayPart(IS_MAC ? "Win" : "Alt")} + 1…6</code> to polish, formalize, or rephrase it in place.</>}
+          </p>
         </div>
         <div className="onb-tour-card">
-          <div className="onb-tour-title">Stays out of your way</div>
-          <p>Close the window to send Bulbul to the tray. Click the tray icon to bring it back.</p>
+          <div className="onb-tour-title">{IS_ANDROID ? "Your words, spelled right" : "Stays out of your way"}</div>
+          <p>
+            {IS_ANDROID
+              ? "Add names, brands, and jargon to your Dictionary, and save frequent phrases as Snippets — both apply automatically."
+              : "Close the window to send Bulbul to the tray. Click the tray icon to bring it back."}
+          </p>
         </div>
         <div className="onb-tour-card">
           <div className="onb-tour-title">Tune everything</div>
-          <p>Change hotkeys, model, theme, mic in Settings — anytime.</p>
+          <p>
+            {IS_ANDROID
+              ? "Change the bubble's size and opacity, cleanup mode, and theme in Settings — anytime."
+              : "Change hotkeys, model, theme, mic in Settings — anytime."}
+          </p>
         </div>
       </div>
 

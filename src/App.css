@@ -3382,8 +3382,13 @@ html.platform-android .m-appbar {
   display: grid;
   grid-template-columns: 52px 1fr 52px;
   align-items: center;
-  padding: 38px 10px 12px;
+  /* Edge-to-edge draws under the status bar and Android's WebView usually
+     reports safe-area-inset-top as 0, so the brand was crammed against the
+     notification bar. Clear it with a generous fixed floor and give the
+     banner real breathing room top and bottom. */
+  padding: max(52px, calc(env(safe-area-inset-top) + 18px)) 10px 16px;
   background: var(--bg);
+  border-bottom: 1px solid var(--fill);
   flex-shrink: 0;
 }
 html.platform-android .m-appbar-brand {
@@ -3402,12 +3407,14 @@ html.platform-android .m-brand-mark {
 html.platform-android .m-brand-text {
   font-family: "Playfair Display", Georgia, "Cambria", serif;
   font-style: italic;
-  font-size: 27px;
+  font-size: 28px;
   font-weight: 500;
   letter-spacing: 0.005em;
   text-transform: lowercase;
   color: var(--text-heading);
-  line-height: 1;
+  /* line-height 1 was clipping the italic descenders; give it room. */
+  line-height: 1.25;
+  padding-bottom: 2px;
 }
 html.platform-android .m-icon-btn {
   width: 52px;
@@ -3475,6 +3482,13 @@ html.platform-android .stat-card .stat-value { font-size: 30px; }
 
 /* Comfortable touch targets everywhere. */
 html.platform-android button { min-height: 38px; }
+/* …but the small circular hero-dismiss X must stay square, or the 38px
+   min-height above stretches it into a vertical oval. */
+html.platform-android .feature-hero-close {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+}
 html.platform-android input,
 html.platform-android select,
 html.platform-android textarea { font-size: 15px; }
@@ -3602,6 +3616,149 @@ html.platform-android .m-sheet-foot .status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+html.platform-android .m-sheet-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+html.platform-android .m-sheet-brand-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  display: block;
+}
+html.platform-android .m-sheet-brand-text {
+  font-family: "Playfair Display", Georgia, serif;
+  font-style: italic;
+  font-size: 17px;
+  color: var(--text);
+}
+
+/* ── Settings: full-screen page (not a popup) ── */
+html.platform-android .m-settings-page {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+html.platform-android .m-settings-head {
+  display: grid;
+  grid-template-columns: 52px 1fr 52px;
+  align-items: center;
+  flex-shrink: 0;
+  padding-top: 30px;
+  border-bottom: 1px solid var(--fill);
+}
+html.platform-android .m-settings-title {
+  text-align: center;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+html.platform-android .m-settings-head-spacer { width: 52px; }
+html.platform-android .m-settings-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 16px calc(24px + env(safe-area-inset-bottom));
+}
+/* Drill-down list: one tappable row per section. */
+html.platform-android .m-settings-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px calc(24px + env(safe-area-inset-bottom));
+}
+html.platform-android .m-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 15px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+html.platform-android .m-settings-row:active { background: var(--fill); }
+html.platform-android .m-settings-row-icon,
+html.platform-android .m-settings-row-icon svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+html.platform-android .m-settings-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+html.platform-android .m-settings-row-label {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+html.platform-android .m-settings-row-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.platform-android .m-settings-row-chev,
+html.platform-android .m-settings-row-chev svg {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* Reuse the desktop pane rows but let them breathe full-width and stack. */
+html.platform-android .m-settings-section-body .setting-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px 0;
+}
+html.platform-android .m-settings-section-body .setting-row-control {
+  width: 100%;
+}
+/* Dropdowns (cleanup mode, language) fill the row so long options like
+   "Auto-detect (English-leaning)" aren't clipped. !important beats the
+   Combobox's inline width style. */
+html.platform-android .m-settings-section-body .combobox {
+  width: 100% !important;
+}
+html.platform-android .m-settings-section-body .segmented {
+  width: 100%;
+}
+html.platform-android .m-settings-section-body .settings-key-row {
+  display: flex;
+  gap: 8px;
+}
+html.platform-android .m-settings-section-body .settings-key-row input { flex: 1; min-width: 0; }
+
+/* Overlay opacity/size sliders */
+html.platform-android .settings-slider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+html.platform-android .settings-slider input[type="range"] {
+  flex: 1;
+  accent-color: #5ec8c0;
+  height: 24px;
+}
+html.platform-android .settings-slider-val {
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-size: 13px;
 }
 
 /* ── Modals go full-screen ── */

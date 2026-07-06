@@ -689,25 +689,81 @@ fn dismiss_correction_suggestion(_from_word: String) -> Result<(), String> {
 }
 
 // ---------- Snippets ----------
+//
+// Trigger phrase → expansion, stored in snippets.json. No defaults (users
+// add their own). The Kotlin dictation path applies them after the
+// dictionary, mirroring desktop.
 
-#[tauri::command]
-fn list_snippets() -> Vec<Value> {
-    Vec::new()
+const SNIPPETS_FILE: &str = "snippets.json";
+
+fn load_snippets(app: &tauri::AppHandle) -> Vec<Value> {
+    read_json_array(app, SNIPPETS_FILE)
 }
 
 #[tauri::command]
-fn add_snippet(_trigger: String, _expansion: String) -> Result<(), String> {
-    Ok(())
+fn list_snippets(app: tauri::AppHandle) -> Vec<Value> {
+    load_snippets(&app)
 }
 
 #[tauri::command]
-fn update_snippet(_id: i64, _trigger: String, _expansion: String) -> Result<(), String> {
-    Ok(())
+fn add_snippet(app: tauri::AppHandle, trigger: String, expansion: String) -> Result<(), String> {
+    let t = trigger.trim();
+    let e = expansion.trim();
+    if t.is_empty() {
+        return Err("Trigger is required.".into());
+    }
+    if e.is_empty() {
+        return Err("Expansion is required.".into());
+    }
+    let mut rows = load_snippets(&app);
+    let id = next_id(&rows);
+    rows.push(json!({
+        "id": id,
+        "trigger": t,
+        "expansion": e,
+        "hit_count": 0,
+        "created_at": now_secs(),
+    }));
+    write_json_array(&app, SNIPPETS_FILE, &rows)
 }
 
 #[tauri::command]
-fn delete_snippet(_id: i64) -> Result<(), String> {
-    Ok(())
+fn update_snippet(
+    app: tauri::AppHandle,
+    id: i64,
+    trigger: String,
+    expansion: String,
+) -> Result<(), String> {
+    let t = trigger.trim();
+    let e = expansion.trim();
+    if t.is_empty() || e.is_empty() {
+        return Err("Trigger and expansion are required.".into());
+    }
+    let mut rows = load_snippets(&app);
+    let mut found = false;
+    for r in rows.iter_mut() {
+        if r["id"].as_i64() == Some(id) {
+            r["trigger"] = json!(t);
+            r["expansion"] = json!(e);
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Err(format!("no snippet with id {id}"));
+    }
+    write_json_array(&app, SNIPPETS_FILE, &rows)
+}
+
+#[tauri::command]
+fn delete_snippet(app: tauri::AppHandle, id: i64) -> Result<(), String> {
+    let mut rows = load_snippets(&app);
+    let before = rows.len();
+    rows.retain(|r| r["id"].as_i64() != Some(id));
+    if rows.len() == before {
+        return Err(format!("no snippet with id {id}"));
+    }
+    write_json_array(&app, SNIPPETS_FILE, &rows)
 }
 
 // ---------- Transforms ----------

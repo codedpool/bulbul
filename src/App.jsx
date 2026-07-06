@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -96,6 +96,10 @@ function App() {
   // a routed page. The sidebar's Settings button toggles this; the
   // modal owns its own internal category sidebar + content pane.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Which settings section is drilled into on Android (null = the section
+  // list). Lifted here so the hardware-back handler can treat it as its own
+  // navigation level.
+  const [settingsSection, setSettingsSection] = useState(null);
   const [config, setConfig] = useState(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
@@ -117,6 +121,55 @@ function App() {
       else m.removeListener(h);
     };
   }, []);
+
+  // Android hardware/gesture back. Without this, Back on any open overlay
+  // falls straight through to the OS and exits the whole app. We model the
+  // open overlays as a stack with a "depth" and keep the browser history depth
+  // in sync, so each Back press pops exactly one level — e.g. Settings ▸
+  // General → Back → Settings list → Back → dashboard → Back → exit.
+  //
+  //   0 = dashboard   1 = More sheet OR Settings list   2 = Settings ▸ section
+  const overlayDepth = moreOpen
+    ? 1
+    : settingsOpen
+    ? (settingsSection ? 2 : 1)
+    : 0;
+  const depthRef = useRef(0);
+  const ignorePopRef = useRef(false);
+
+  // Keep browser history depth == logical overlay depth. Opening a level pushes
+  // an entry; closing one via an in-app control pops it (guarded so its
+  // popstate doesn't double-close).
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const prev = depthRef.current;
+    if (overlayDepth > prev) {
+      for (let i = prev; i < overlayDepth; i++) window.history.pushState({ d: i + 1 }, "");
+    } else if (overlayDepth < prev) {
+      ignorePopRef.current = true;
+      window.history.go(-(prev - overlayDepth));
+    }
+    depthRef.current = overlayDepth;
+  }, [overlayDepth]);
+
+  // Hardware Back → close just the top level.
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const onPop = () => {
+      if (ignorePopRef.current) {
+        ignorePopRef.current = false;
+        return;
+      }
+      // The browser already consumed one history entry; pre-decrement so the
+      // depth-sync effect above sees a balanced stack and doesn't re-push.
+      depthRef.current = Math.max(0, depthRef.current - 1);
+      if (settingsOpen && settingsSection) setSettingsSection(null);
+      else if (settingsOpen) setSettingsOpen(false);
+      else if (moreOpen) setMoreOpen(false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [settingsOpen, settingsSection, moreOpen]);
 
   useEffect(() => {
     invoke("get_config").then((cfg) => {
@@ -296,7 +349,7 @@ function App() {
                     key={s.id}
                     className={`m-sheet-item ${(!isSettings && section === s.id) ? "active" : ""}`}
                     onClick={() => {
-                      if (isSettings) setSettingsOpen(true);
+                      if (isSettings) { setSettingsSection(null); setSettingsOpen(true); }
                       else setSection(s.id);
                       setMoreOpen(false);
                     }}
@@ -307,8 +360,9 @@ function App() {
                 );
               })}
               <div className="m-sheet-foot">
-                <span className={`status status-${status.state}`}>
-                  <span className="dot" /> {statusLabel(status.state)}
+                <span className="m-sheet-brand">
+                  <img src={bulbulMark} alt="" className="m-sheet-brand-mark" aria-hidden />
+                  <span className="m-sheet-brand-text">bulbul</span>
                 </span>
                 <span className="muted small">v1.0.1 · MIT</span>
               </div>
@@ -324,6 +378,8 @@ function App() {
         autostart={autostart}
         onAutostartChange={toggleAutostart}
         onHideTrayChange={toggleHideTray}
+        section={settingsSection}
+        onSectionChange={setSettingsSection}
       />
       <TooltipProvider />
       </>

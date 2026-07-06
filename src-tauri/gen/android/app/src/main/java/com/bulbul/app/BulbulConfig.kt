@@ -20,6 +20,7 @@ object BulbulConfig {
     private const val TAG = "BulbulConfig"
     private const val CONFIG_FILE = "config.json"
     private const val DICTIONARY_FILE = "dictionary.json"
+    private const val SNIPPETS_FILE = "snippets.json"
     private const val DEFAULT_CHAT_MODEL = "llama-3.1-8b-instant"
 
     private var cachedDir: File? = null
@@ -58,6 +59,16 @@ object BulbulConfig {
 
     fun chatModel(context: Context): String =
         read(context)?.optString("chat_model", "").orEmpty().ifBlank { DEFAULT_CHAT_MODEL }
+
+    /// Overlay bubble diameter in dp (Settings → Overlay). Clamped to a sane
+    /// range so a stale/garbage value can't produce an invisible or
+    /// screen-filling bubble.
+    fun overlaySize(context: Context): Int =
+        (read(context)?.optInt("overlay_size", 52) ?: 52).coerceIn(40, 120)
+
+    /// Overlay bubble opacity 0.3–1.0 (Settings → Overlay).
+    fun overlayOpacity(context: Context): Float =
+        (read(context)?.optDouble("overlay_opacity", 0.65) ?: 0.65).toFloat().coerceIn(0.3f, 1.0f)
 
     /// Applies the user's dictionary to a transcript: whole-word substitution
     /// of each `from_word` → `to_word` (case-insensitive unless the entry is
@@ -123,5 +134,49 @@ object BulbulConfig {
             }
         }
         return result to totalFixes
+    }
+
+    /// Expands snippets in a transcript: replaces each trigger phrase (matched
+    /// whole-word, case-insensitively) with its expansion. Applied after the
+    /// dictionary, matching desktop. Bumps each snippet's hit_count so the
+    /// Snippets page's "N uses" reflects usage. Not counted as a "fix" — a
+    /// snippet expansion isn't a correction.
+    fun applySnippets(context: Context, text: String): String {
+        val file = File(dataDir(context), SNIPPETS_FILE)
+        val arr = try {
+            if (!file.exists()) return text
+            org.json.JSONArray(file.readText())
+        } catch (t: Throwable) {
+            Log.w(TAG, "reading snippets.json failed", t)
+            return text
+        }
+
+        var result = text
+        var changed = false
+        for (i in 0 until arr.length()) {
+            val e = arr.getJSONObject(i)
+            val trigger = e.optString("trigger").trim()
+            val expansion = e.optString("expansion")
+            if (trigger.isEmpty() || expansion.isEmpty()) continue
+            val re = try {
+                Regex("\\b" + Regex.escape(trigger) + "\\b", setOf(RegexOption.IGNORE_CASE))
+            } catch (t: Throwable) {
+                continue
+            }
+            var hits = 0
+            result = re.replace(result) { hits++; expansion }
+            if (hits > 0) {
+                e.put("hit_count", e.optInt("hit_count", 0) + hits)
+                changed = true
+            }
+        }
+        if (changed) {
+            try {
+                file.writeText(arr.toString())
+            } catch (t: Throwable) {
+                Log.w(TAG, "writing snippets.json hit counts failed", t)
+            }
+        }
+        return result
     }
 }
