@@ -16,6 +16,10 @@ on:
       - v1.1-integration
   workflow_dispatch:
 
+concurrency:
+  group: macos-dev
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-latest

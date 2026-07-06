@@ -30,15 +30,17 @@ on:
       - v1.1-integration
   workflow_dispatch:
 
+# One build per branch: a newer push cancels an in-flight run so two
+# runs never race to replace the same android-dev release tag.
+concurrency:
+  group: android-dev
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
-
-    env:
-      # Pin the same NDK the app is developed against so codegen matches.
-      NDK_VERSION: '26.1.10909125'
 
     steps:
       - name: Checkout
@@ -59,15 +61,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
-
-      - name: Install Android NDK
-        # The ubuntu image ships an Android SDK at $ANDROID_HOME; install
-        # the pinned NDK into it and export the paths tauri looks for.
-        run: |
-          echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}"
-          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
         run: npm install
