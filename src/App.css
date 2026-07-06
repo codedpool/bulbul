@@ -3844,11 +3844,87 @@ html.platform-android .style-override-add {
 
 /* Scratchpad: notes list stacks above the editor instead of a fixed
    280px side column. */
-html.platform-android .scratchpad-layout {
-  grid-template-columns: 1fr;
+/* Scratchpad on mobile is a master/detail: a scrollable stack of note cards,
+   and tapping one (or "New note") opens a full-screen editor with a Back
+   arrow. Replaces the cramped desktop two-column layout. */
+html.platform-android .m-scratch,
+html.platform-android .m-scratch-list-view,
+html.platform-android .m-scratch-editor-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   gap: 12px;
 }
-html.platform-android .scratch-sidebar { max-height: 30vh; overflow-y: auto; }
+html.platform-android .m-scratch-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+html.platform-android .m-scratch-list-head h1 { font-size: 22px; margin: 0; }
+html.platform-android .m-note-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+html.platform-android .m-note-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  cursor: pointer;
+}
+html.platform-android .m-note-card:active { background: var(--fill); }
+html.platform-android .m-note-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+html.platform-android .m-note-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.platform-android .m-note-card-preview {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.platform-android .m-note-card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+html.platform-android .m-note-card-time { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+html.platform-android .m-note-card-del { color: var(--text-faint); display: inline-flex; padding: 2px; }
+
+html.platform-android .m-scratch-editor-head { display: flex; align-items: center; gap: 8px; }
+html.platform-android .m-scratch-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 18px;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+}
+html.platform-android .m-scratch-body { min-height: 52vh; width: 100%; }
+html.platform-android .m-scratch-err { font-size: 12px; }
 
 /* Cards and panels: tighter padding at phone width. */
 html.platform-android .insight-card,

@@ -283,8 +283,11 @@ function App() {
   // app bar, content, a 4-slot bottom tab bar (the rest of the nav
   // lives in a "More" bottom sheet so tabs stay thumb-sized).
   if (IS_ANDROID) {
-    const primary = SECTIONS.filter((s) => ["home", "dictionary", "transforms", "insights"].includes(s.id));
-    const secondary = SECTIONS.filter((s) => !["home", "dictionary", "transforms", "insights"].includes(s.id));
+    // Bottom tab bar, in this explicit order (Scratchpad sits where Dictionary
+    // used to be); everything else lives in the "More" hamburger sheet.
+    const PRIMARY_IDS = ["home", "insights", "scratchpad", "transforms"];
+    const primary = PRIMARY_IDS.map((id) => SECTIONS.find((s) => s.id === id)).filter(Boolean);
+    const secondary = SECTIONS.filter((s) => !PRIMARY_IDS.includes(s.id));
     return (
       <>
       <div className="app-shell m-shell">

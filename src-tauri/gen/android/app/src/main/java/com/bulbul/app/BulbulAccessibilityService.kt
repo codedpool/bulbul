@@ -110,28 +110,21 @@ class BulbulAccessibilityService : AccessibilityService() {
         }
     }
 
-    /// Bubble should be visible iff the IME (soft keyboard) is on
-    /// screen and the foreground app isn't Bulbul itself.
+    /// Bubble should be visible whenever the IME (soft keyboard) is on
+    /// screen — in any app, including Bulbul's own scratchpad.
     ///
     /// We used to also require findFocus(FOCUS_INPUT) to return an
     /// editable node, but on many devices/IMEs findFocus returns null
     /// even while the user is actively typing — which meant the bubble
     /// never appeared at all. The IME being up is already the signal
-    /// that the user is in a text context; the focused-node check only
-    /// ever removed correct showings, so it's gone.
+    /// that the user is in a text context.
+    ///
+    /// We also used to hide over Bulbul's own package, but that blocked
+    /// dictation into the in-app scratchpad — the one place users most
+    /// expect the same bubble. So the bubble now shows over our own app
+    /// too; the injector appends into whatever field is focused.
     private fun shouldShowBubble(): Boolean {
-        if (!isImeVisible()) return false
-        // Best-effort own-app check: if we can see the focused node and
-        // it's ours, don't cover our own Settings fields. When focus is
-        // unknowable, default to showing.
-        val focused = try {
-            findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        } catch (_: Throwable) { null } ?: return true
-        return try {
-            focused.packageName?.toString() != packageName
-        } finally {
-            focused.recycle()
-        }
+        return isImeVisible()
     }
 
     private fun isImeVisible(): Boolean {

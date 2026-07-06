@@ -996,31 +996,97 @@ fn reset_transforms(app: tauri::AppHandle) -> Result<(), String> {
     write_json_array(&app, TRANSFORMS_FILE, &seeded)
 }
 
+/// Runs a stored transform against arbitrary text (the Scratchpad's
+/// rewrite-selection chips). Looks the transform up in transforms.json and
+/// runs its prompt through Groq. Arg is `transform_id` to match the desktop
+/// command / the React invoke.
 #[tauri::command]
-fn run_transform_on_text(_id: i64, _text: String) -> Result<String, String> {
-    Err("Running transforms on text is not yet supported on Android.".to_string())
+async fn run_transform_on_text(
+    app: tauri::AppHandle,
+    transform_id: i64,
+    text: String,
+) -> Result<String, String> {
+    let cfg = read_config(&app).unwrap_or_default();
+    if !cfg.has_api_key() {
+        return Err("Set your Groq API key in Settings first.".to_string());
+    }
+    if text.trim().is_empty() {
+        return Ok(text);
+    }
+    let prompt = load_transforms(&app)
+        .into_iter()
+        .find(|t| t["id"].as_i64() == Some(transform_id))
+        .and_then(|t| t["system_prompt"].as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "Transform not found".to_string())?;
+    groq_chat(cfg.groq_api_key.trim(), &cfg.chat_model, &prompt, &text, 0.3).await
 }
 
 // ---------- Notes / scratchpad ----------
+//
+// File-backed notes (notes.json), same pattern as the other stores. The
+// desktop scratchpad is a separate window; on mobile it's the in-app
+// ScratchpadView, which drives these commands directly.
 
-#[tauri::command]
-fn list_notes() -> Vec<Value> {
-    Vec::new()
+const NOTES_FILE: &str = "notes.json";
+
+fn load_notes(app: &tauri::AppHandle) -> Vec<Value> {
+    read_json_array(app, NOTES_FILE)
 }
 
 #[tauri::command]
-fn create_note(_title: String, _body: String) -> Result<Value, String> {
-    Err("The scratchpad is not yet supported on Android.".to_string())
+fn list_notes(app: tauri::AppHandle) -> Vec<Value> {
+    let mut rows = load_notes(&app);
+    // Newest-updated first, matching how the editor prepends new notes.
+    rows.sort_by(|a, b| {
+        b["updated_at"].as_i64().unwrap_or(0).cmp(&a["updated_at"].as_i64().unwrap_or(0))
+    });
+    rows
 }
 
 #[tauri::command]
-fn update_note(_id: i64, _title: String, _body: String) -> Result<(), String> {
-    Ok(())
+fn create_note(app: tauri::AppHandle, title: String, body: String) -> Result<Value, String> {
+    let mut rows = load_notes(&app);
+    let now = now_secs();
+    let note = json!({
+        "id": next_id(&rows),
+        "title": title,
+        "body": body,
+        "created_at": now,
+        "updated_at": now,
+    });
+    rows.push(note.clone());
+    write_json_array(&app, NOTES_FILE, &rows)?;
+    Ok(note)
 }
 
 #[tauri::command]
-fn delete_note(_id: i64) -> Result<(), String> {
-    Ok(())
+fn update_note(app: tauri::AppHandle, id: i64, title: String, body: String) -> Result<(), String> {
+    let mut rows = load_notes(&app);
+    let mut found = false;
+    for r in rows.iter_mut() {
+        if r["id"].as_i64() == Some(id) {
+            r["title"] = json!(title);
+            r["body"] = json!(body);
+            r["updated_at"] = json!(now_secs());
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Err(format!("no note with id {id}"));
+    }
+    write_json_array(&app, NOTES_FILE, &rows)
+}
+
+#[tauri::command]
+fn delete_note(app: tauri::AppHandle, id: i64) -> Result<(), String> {
+    let mut rows = load_notes(&app);
+    let before = rows.len();
+    rows.retain(|r| r["id"].as_i64() != Some(id));
+    if rows.len() == before {
+        return Err(format!("no note with id {id}"));
+    }
+    write_json_array(&app, NOTES_FILE, &rows)
 }
 
 // ---------- Settings + updater ----------
