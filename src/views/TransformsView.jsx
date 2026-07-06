@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import FeatureHero from "../components/FeatureHero.jsx";
+import HowToCard from "../components/HowToCard.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { IS_MAC, IS_ANDROID } from "../platform.js";
 
@@ -115,9 +116,31 @@ export default function TransformsView() {
 
       <FeatureHero
         dismissKey="bulbul.transforms.hero.dismissed"
-        title={<>Rewrite anything you write — with <em>one hotkey.</em></>}
+        title={
+          IS_ANDROID ? (
+            <>Rewrite any text — <em>right from the menu.</em></>
+          ) : (
+            <>Rewrite anything you write — with <em>one hotkey.</em></>
+          )
+        }
         samples={TRANSFORMS_HERO_SAMPLES}
       />
+
+      {IS_ANDROID && (
+        <HowToCard title="How transforms work" storageKey="bulbul.transforms.howto">
+          <ol className="howto-steps">
+            <li>Select text in any app.</li>
+            <li>
+              In the pop-up toolbar (Copy · Paste · …), tap <strong>Bulbul</strong> — it may
+              be under the ⋮ / "More" button.
+            </li>
+            <li>Pick a style below. Bulbul rewrites the selection in place.</li>
+          </ol>
+          <p className="howto-tip">
+            Each card's prompt is exactly what the AI is told to do — tap a card to edit it, or create your own.
+          </p>
+        </HowToCard>
+      )}
 
       <BindingFailureBanner
         slotStatuses={slotStatuses}

@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import FeatureHero from "../components/FeatureHero.jsx";
-import { OS_NOUN } from "../platform.js";
+import HowToCard from "../components/HowToCard.jsx";
+import { OS_NOUN, IS_ANDROID } from "../platform.js";
 
 const PAGE_SIZE = 50;
 
@@ -71,8 +72,25 @@ export default function HomeView({ displayName }) {
       <FeatureHero
         dismissKey="bulbul.home.hero.dismissed"
         title={<>Speak. Edit. <em>Move on.</em></>}
-        blurb={`Hold your hotkey anywhere on ${OS_NOUN}, talk, release. Bulbul transcribes, cleans up, and pastes the result right at your cursor.`}
+        blurb={
+          IS_ANDROID
+            ? "Tap the floating bubble in any app, talk, and Bulbul types the cleaned-up text right where your cursor is."
+            : `Hold your hotkey anywhere on ${OS_NOUN}, talk, release. Bulbul transcribes, cleans up, and pastes the result right at your cursor.`
+        }
       />
+
+      {IS_ANDROID && (
+        <HowToCard title="How to dictate" storageKey="bulbul.home.howto">
+          <ol className="howto-steps">
+            <li>Open any app and tap a text field — the Bulbul bubble appears above the keyboard.</li>
+            <li>Tap the bubble to start, tap again to stop. Or press and hold to talk, and release to send.</li>
+            <li>Your words are transcribed and typed right where your cursor is.</li>
+          </ol>
+          <p className="howto-tip">
+            Drag the bubble down onto the snooze circle to hide it for a while. Adjust its size, opacity, and snooze time in Settings → Overlay.
+          </p>
+        </HowToCard>
+      )}
 
       <section className="stat-cards">
         <StatCard
@@ -101,7 +119,12 @@ export default function HomeView({ displayName }) {
         <h3>Recent activity</h3>
         {recent.length === 0 ? (
           <div className="empty-state">
-            <p>No dictations yet. Hold your hotkey anywhere on {OS_NOUN} and start talking.</p>
+            <p>
+              No dictations yet.{" "}
+              {IS_ANDROID
+                ? "Tap the bubble in any app and start talking."
+                : `Hold your hotkey anywhere on ${OS_NOUN} and start talking.`}
+            </p>
           </div>
         ) : (
           <div className="timeline">

@@ -175,7 +175,11 @@ function App() {
     invoke("get_config").then((cfg) => {
       setConfig(cfg);
       if (!cfg.privacy_acknowledged) setShowPrivacy(true);
-      if (!cfg.has_api_key && !cfg.groq_api_key) setSettingsOpen(true);
+      // Only nudge to Settings for a returning user missing a key — during
+      // first-run the onboarding wizard collects the key, so don't also pop
+      // Settings open the moment onboarding finishes.
+      if (cfg.onboarding_completed && !cfg.has_api_key && !cfg.groq_api_key)
+        setSettingsOpen(true);
     });
     invoke("get_autostart").then(setAutostart).catch(() => {});
     // Mode-B auto-update: the Rust watcher emits this event after it

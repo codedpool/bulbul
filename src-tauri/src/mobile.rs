@@ -37,18 +37,19 @@ use tauri::Manager;
 const MOBILE_CONFIG_FILE: &str = "config.json";
 
 fn mobile_config_defaults(mut cfg: Config) -> Config {
-    cfg.onboarding_completed = true;
+    // Privacy is acknowledged implicitly on mobile (no separate privacy
+    // modal). Onboarding is deliberately NOT forced here: the React wizard
+    // runs once on first launch — after the native permission screen —
+    // and persists its completion via complete_onboarding.
     cfg.privacy_acknowledged = true;
     cfg
 }
 
 // ---------- Startup commands (App.jsx useEffect on mount) ----------
 
-/// Reads the persisted config from app-private storage. Falls back to
-/// a mobile-flavoured default (onboarding + privacy acknowledged
-/// pre-flipped) so the React shell skips the desktop-shaped wizard
-/// and renders the main dashboard the first time the user opens the
-/// app on a fresh install.
+/// Reads the persisted config from app-private storage, applying the
+/// mobile defaults (privacy acknowledged; onboarding driven by the real
+/// persisted flag so the first-launch wizard runs exactly once).
 #[tauri::command]
 fn get_config(app: tauri::AppHandle) -> Config {
     let cfg = read_config(&app).unwrap_or_default();
@@ -1164,9 +1165,14 @@ fn open_scratchpad() -> Result<(), String> {
     Err("Scratchpad window is not available on Android.".to_string())
 }
 
+/// Persists onboarding completion so the first-launch wizard never shows
+/// again. Read-modify-write of config.json (keeps the key/language/etc. the
+/// wizard just saved). Called by the wizard's final "Open Bulbul" button.
 #[tauri::command]
-fn complete_onboarding() -> Result<(), String> {
-    Ok(())
+fn complete_onboarding(app: tauri::AppHandle) -> Result<(), String> {
+    let mut cfg = read_config(&app).unwrap_or_default();
+    cfg.onboarding_completed = true;
+    save_config(app, cfg)
 }
 
 // ---------- Entry point ----------

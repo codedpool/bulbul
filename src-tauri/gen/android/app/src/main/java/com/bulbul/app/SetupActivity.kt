@@ -182,6 +182,11 @@ class SetupActivity : Activity() {
         root.addView(overlayRow.view)
         root.addView(accessibilityRow.view)
 
+        // Sideload gotcha: Android 13+ greys out the Accessibility toggle for
+        // apps not installed from a store ("restricted settings"). Spell out
+        // the one-time fix right where people get stuck.
+        root.addView(buildRestrictedHelpCard())
+
         root.addView(TextView(this).apply {
             text = "All three are required because of how Android isolates apps from each other — there's no privileged shortcut."
             textSize = 12f
@@ -196,6 +201,47 @@ class SetupActivity : Activity() {
             ))
             setBackgroundColor(bgColor)
         }
+    }
+
+    /// Accent-tinted note explaining the Android 13+ "restricted settings"
+    /// block on the Accessibility toggle for sideloaded installs, and the
+    /// two ways past it. Brief and step-numbered so a stuck user can act
+    /// without leaving the screen to search for an answer.
+    private fun buildRestrictedHelpCard(): View {
+        val tint = col(0xFFECF6F4.toInt(), 0xFF15201F.toInt())
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = GradientDrawable().apply {
+                setColor(tint)
+                cornerRadius = dp(14).toFloat()
+                setStroke(dp(1), accentColor)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(4) }
+        }
+        card.addView(TextView(this).apply {
+            text = "Accessibility greyed out or \"restricted\"?"
+            textSize = 14f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(headingColor)
+            setPadding(0, 0, 0, dp(6))
+        })
+        card.addView(TextView(this).apply {
+            text = "Android blocks Accessibility for sideloaded apps.\n\n" +
+                "Easiest way: install Bulbul with \"Split APKs Installer\" from the Play Store (you'll watch one short ad) — then you can allow every permission with no blocks.\n\n" +
+                "Or do it once manually:\n" +
+                "1.  Allow the permissions you can here; skip any you can't for now.\n" +
+                "2.  Open App info → tap ⋮ (top-right) → Allow restricted settings.\n" +
+                "3.  Go to Settings → Accessibility → allow Bulbul.\n" +
+                "4.  Reopen Bulbul and finish."
+            textSize = 13f
+            setTextColor(bodyColor)
+            setLineSpacing(dp(2).toFloat(), 1f)
+        })
+        return card
     }
 
     // ---------------- Grant actions ----------------
