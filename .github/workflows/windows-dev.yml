@@ -1,0 +1,65 @@
+name: Windows dev build
+
+# Rolling pre-release for the v1.1 integration branch (desktop + Android
+# unified). Every push to v1.1-integration rebuilds + replaces the
+# `windows-dev` release with a fresh NSIS installer. The tester pulls via
+# the same install flow as the other desktop dev builds.
+#
+# Sibling workflows linux-dev.yml, macos-dev.yml, and android-dev.yml
+# cover the other targets of the same branch. When v1.1 ships to main,
+# drop all four.
+
+on:
+  push:
+    branches:
+      - v1.1-integration
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Wipe previous dev release
+        # Mirrors the other dev workflows: delete the existing release
+        # first so the updater manifest never points at a fresh bundle
+        # with a stale embedded signature. `|| true` keeps the first run
+        # green when no prior release exists.
+        run: gh release delete windows-dev --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + sign dev release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: windows-dev
+          releaseName: 'Bulbul Windows dev build'
+          releaseBody: |
+            Rolling Windows dev build from the `v1.1-integration` branch. **Not for general use** — this is a pre-release for testing the merged desktop + Android v1.1.
+
+            Download and run the `.exe` NSIS installer below. Each push to `v1.1-integration` replaces this release. Production builds live in tagged `vX.Y.Z` releases.
+          releaseDraft: false
+          prerelease: true
+          includeUpdaterJson: true

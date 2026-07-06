@@ -165,6 +165,13 @@ pub struct Config {
     #[serde(default = "default_privacy_ack")]
     pub privacy_acknowledged: bool,
 
+    /// One-shot migration marker (see `migrate` in this file). True once
+    /// the Linux Ctrl+Win → Ctrl+Alt+Space rewrite has run, so a user
+    /// who deliberately re-picks Ctrl+Win afterwards keeps it. Harmless
+    /// (always false, never read) on Windows/macOS.
+    #[serde(default)]
+    pub linux_hotkey_migrated: bool,
+
     #[serde(default = "default_open_dashboard")]
     pub open_dashboard_on_launch: bool,
 
@@ -256,12 +263,25 @@ fn default_polish_hotkey() -> String {
 }
 
 fn default_hotkey() -> String {
-    // Modifier-only chord, hold-to-talk. The keyboard
+    // Linux: Ctrl+Alt+Space instead of the modifier-only chord. Two
+    // reasons: (a) the Super key belongs to the compositor on most
+    // desktops (GNOME opens the Activities overview on release, KDE the
+    // launcher) so a Ctrl+Win chord fights the shell, and (b) the
+    // Wayland GlobalShortcuts portal can only bind triggers that
+    // contain a real key — a pure modifier chord isn't representable.
+    #[cfg(target_os = "linux")]
+    {
+        "Ctrl+Alt+Space".to_string()
+    }
+    // Windows + macOS: modifier-only chord, hold-to-talk. The keyboard
     // hook (see hotkey.rs::spawn_modifier_chord_watcher) detects this as
     // a dictation press once both modifiers have been held for ~80ms.
     // Existing users with a previously-saved hotkey keep theirs; this
     // default only applies to fresh installs.
-    "Ctrl+Win".to_string()
+    #[cfg(not(target_os = "linux"))]
+    {
+        "Ctrl+Win".to_string()
+    }
 }
 fn default_stt_model() -> String {
     "whisper-large-v3-turbo".to_string()
@@ -489,6 +509,7 @@ impl Default for Config {
             chat_model: default_chat_model(),
             min_recording_seconds: default_min_seconds(),
             privacy_acknowledged: default_privacy_ack(),
+            linux_hotkey_migrated: false,
             open_dashboard_on_launch: default_open_dashboard(),
             display_name: default_display_name(),
             hide_tray: default_hide_tray(),
@@ -573,7 +594,7 @@ pub fn load() -> Config {
             return Config::default();
         }
     };
-    match fs::read_to_string(&path) {
+    let cfg = match fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str::<Config>(&text) {
             Ok(cfg) => cfg,
             Err(e) => {
@@ -582,7 +603,33 @@ pub fn load() -> Config {
             }
         },
         Err(_) => Config::default(),
+    };
+    migrate(cfg)
+}
+
+/// One-shot fixups for configs written by earlier builds. Runs on every
+/// load; each rule must be a no-op once applied.
+fn migrate(cfg: Config) -> Config {
+    #[allow(unused_mut)]
+    let mut cfg = cfg;
+    // Linux builds before the port fix shipped the Windows default
+    // ("Ctrl+Win") which never worked here — the Super key belongs to
+    // the compositor and the Wayland portal can't bind modifier-only
+    // chords. Rewriting is safe: the combo cannot have been chosen
+    // because it worked. Runs once (marker below), so a user who
+    // deliberately re-picks Ctrl+Win in Settings afterwards keeps it.
+    #[cfg(target_os = "linux")]
+    if !cfg.linux_hotkey_migrated {
+        if cfg.hotkey == "Ctrl+Win" {
+            tracing::info!("migrating Linux dictation hotkey Ctrl+Win → Ctrl+Alt+Space");
+            cfg.hotkey = "Ctrl+Alt+Space".to_string();
+        }
+        cfg.linux_hotkey_migrated = true;
+        if let Err(e) = save(&cfg) {
+            tracing::warn!("could not persist hotkey migration: {e:#}");
+        }
     }
+    cfg
 }
 
 pub fn save(cfg: &Config) -> Result<()> {

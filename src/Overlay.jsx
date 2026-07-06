@@ -42,9 +42,9 @@ export default function Overlay() {
   // two silent-rejection paths ("Too short, ignored." and "Silence —
   // nothing to transcribe."). Without inflating those into a distinct
   // transient state, the overlay swallows them — the pill just shrinks
-  // back to its dot with no clue why nothing was typed. Open-source
-  // peers (Handy, FreeFlow, Mesmer) all silently fail this same way;
-  // we surface a brief amber pill instead so users can self-diagnose.
+  // back to its dot with no clue why nothing was typed. Many dictation
+  // apps silently fail this same way; we surface a brief amber pill
+  // instead so users can self-diagnose.
   const [transientReject, setTransientReject] = useState(null);
 
   useEffect(() => {

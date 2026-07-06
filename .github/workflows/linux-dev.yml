@@ -1,17 +1,18 @@
 name: Linux dev build
 
-# Rolling pre-release for the in-flight Linux port (v1.1.0). Every push
-# to v1.1-port rebuilds + replaces the `linux-dev` release with fresh
-# .AppImage + .deb + .rpm assets. The user installs via
-# `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`.
+# Rolling pre-release for the v1.1 integration branch (desktop + Android
+# unified). Every push to v1.1-integration rebuilds + replaces the
+# `linux-dev` release with fresh .AppImage + .deb + .rpm assets. The user
+# installs via `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`.
 #
-# Sibling workflow `macos-dev.yml` covers the Mac side of the same
-# branch. When the port is done and merged, drop both.
+# Sibling workflows macos-dev.yml, windows-dev.yml, and android-dev.yml
+# cover the other targets of the same branch. When v1.1 ships to main,
+# drop all four.
 
 on:
   push:
     branches:
-      - v1.1-port
+      - v1.1-integration
   workflow_dispatch:
 
 jobs:
@@ -86,9 +87,12 @@ jobs:
             curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh
             ```
 
-            The script picks the right AppImage for your architecture, verifies the minisign signature, and integrates with your desktop launcher.
+            On Ubuntu/Debian the script installs the `.deb` (which pulls the tray dependencies); elsewhere it falls back to the AppImage. Every artifact is minisign-verified before install, and the script prints Wayland/GNOME setup notes when they apply.
 
             Three formats produced per build: `.AppImage` (universal), `.deb` (Ubuntu/Debian), `.rpm` (Fedora/openSUSE). Each push to `v1.1-port` replaces this release.
           releaseDraft: false
           prerelease: true
           includeUpdaterJson: true
+          # Note: tauri-action signs every bundle (.deb.sig / .rpm.sig /
+          # .AppImage.sig are all attached) — install-dev.sh's deb route
+          # relies on the detached .deb.sig being present.

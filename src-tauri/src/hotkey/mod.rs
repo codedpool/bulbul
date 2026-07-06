@@ -37,6 +37,10 @@ use macos as native;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as native;
+#[cfg(target_os = "linux")]
+mod linux_portal;
+#[cfg(target_os = "linux")]
+mod linux_evdev;
 
 /// Minimum gap between two fires of the same hotkey. Guards against
 /// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
@@ -107,22 +111,45 @@ pub struct HotkeySet {
 
 fn normalize_key_name(s: &str) -> String {
     let trimmed = s.trim();
-    if trimmed.len() == 1 {
-        trimmed.to_ascii_uppercase()
-    } else {
-        let mut out = String::with_capacity(trimmed.len());
-        let mut chars = trimmed.chars();
-        if let Some(c) = chars.next() {
-            out.push(c.to_ascii_uppercase());
-        }
-        for c in chars {
-            out.push(c.to_ascii_lowercase());
-        }
-        if out.starts_with('F') && out[1..].chars().all(|c| c.is_ascii_digit()) {
-            out = out.to_ascii_uppercase();
-        }
-        out
+    // Compound names need a fixed canonical form so that saved configs
+    // round-trip cleanly: file → ParsedHotkey::parse → this function →
+    // key_name_to_code lookup. If we let the generic capitalise-first
+    // logic run on "PageUp" it becomes "Pageup", and then the Code
+    // match arm "PageUp" => Code::PageUp never fires.
+    let lower = trimmed.to_ascii_lowercase();
+    match lower.as_str() {
+        "up" | "arrowup" => return "Up".into(),
+        "down" | "arrowdown" => return "Down".into(),
+        "left" | "arrowleft" => return "Left".into(),
+        "right" | "arrowright" => return "Right".into(),
+        "insert" | "ins" => return "Insert".into(),
+        "delete" | "del" => return "Delete".into(),
+        "home" => return "Home".into(),
+        "end" => return "End".into(),
+        "pageup" | "pgup" => return "PageUp".into(),
+        "pagedown" | "pgdn" => return "PageDown".into(),
+        "space" => return "Space".into(),
+        "tab" => return "Tab".into(),
+        "enter" | "return" => return "Enter".into(),
+        "backspace" => return "Backspace".into(),
+        "escape" | "esc" => return "Escape".into(),
+        _ => {}
     }
+    if trimmed.len() == 1 {
+        return trimmed.to_ascii_uppercase();
+    }
+    let mut out = String::with_capacity(trimmed.len());
+    let mut chars = trimmed.chars();
+    if let Some(c) = chars.next() {
+        out.push(c.to_ascii_uppercase());
+    }
+    for c in chars {
+        out.push(c.to_ascii_lowercase());
+    }
+    if out.starts_with('F') && out[1..].chars().all(|c| c.is_ascii_digit()) {
+        out = out.to_ascii_uppercase();
+    }
+    out
 }
 
 /// Convert our internal key string ("Space", "A", "F9") to the plugin's
@@ -152,6 +179,27 @@ fn key_name_to_code(name: &str) -> Option<Code> {
         "F4" => Code::F4, "F5" => Code::F5, "F6" => Code::F6,
         "F7" => Code::F7, "F8" => Code::F8, "F9" => Code::F9,
         "F10" => Code::F10, "F11" => Code::F11, "F12" => Code::F12,
+        "Up" => Code::ArrowUp,
+        "Down" => Code::ArrowDown,
+        "Left" => Code::ArrowLeft,
+        "Right" => Code::ArrowRight,
+        "Insert" => Code::Insert,
+        "Delete" => Code::Delete,
+        "Home" => Code::Home,
+        "End" => Code::End,
+        "PageUp" => Code::PageUp,
+        "PageDown" => Code::PageDown,
+        ";" => Code::Semicolon,
+        "'" => Code::Quote,
+        "," => Code::Comma,
+        "." => Code::Period,
+        "/" => Code::Slash,
+        "\\" => Code::Backslash,
+        "[" => Code::BracketLeft,
+        "]" => Code::BracketRight,
+        "-" => Code::Minus,
+        "=" => Code::Equal,
+        "`" => Code::Backquote,
         _ => return None,
     })
 }
@@ -215,36 +263,71 @@ fn re_register(
         tracing::warn!("unregister_all failed: {e:#}");
     }
 
-    // Stop the previous registration's watchers. Non-Windows uses native
-    // polling threads; Windows drives modifier chords through the
-    // low-level keyboard hook, so also clear its chord mask (that fires a
-    // synthetic Released if a chord was mid-press, so the orchestrator
-    // doesn't get stuck). Always run, even if the new dictation hotkey is
-    // also a modifier chord — a fresh registration is applied below.
+    // Stop any platform-specific watchers from the previous registration
+    // (Windows: clears the LL keyboard hook's chord mask; macOS: future
+    // CGEventTap teardown). Always run, even if the new dictation hotkey
+    // is also a modifier chord — a fresh registration with the up-to-date
+    // spec gets installed below.
     native::stop_native_watchers();
-    #[cfg(target_os = "windows")]
-    crate::keyboard_hook::set_chord_mask(0);
 
     let snapshot = set.lock().clone();
 
+    // Linux: the best hotkey path is reading /dev/input directly (evdev)
+    // — instant, true hold-to-talk, works on every compositor. Available
+    // once the user has input-device access (the .deb's input-group
+    // grant + one relogin). When it's driving, it fully owns dictation +
+    // polish and we deliberately DON'T also run the portal or plugin
+    // watchers for them — running two mechanisms at once is what made the
+    // hotkey fire erratically before.
+    #[cfg(target_os = "linux")]
+    let evdev_driving = linux_evdev::available();
+    #[cfg(not(target_os = "linux"))]
+    let evdev_driving = false;
+
+    // Transform ids the evdev reader is watching (Linux/evdev only). Used
+    // below to report slot status instead of the global-shortcut plugin,
+    // which can't see keys on Wayland.
+    #[cfg(target_os = "linux")]
+    let evdev_transform_ids: Vec<i64> = if evdev_driving {
+        linux_evdev::register(
+            tx.clone(),
+            snapshot.dictation.clone(),
+            snapshot.polish_dictation.clone(),
+            &snapshot.transform_bindings,
+        )
+    } else {
+        linux_evdev::stop();
+        Vec::new()
+    };
+
+    // Linux Wayland WITHOUT evdev access (pre-relogin, AppImage): fall
+    // back to the GlobalShortcuts portal for dictation + polish. Neither
+    // the plugin nor the X11 poller can see global key state on Wayland.
+    // On X11 sessions this is skipped and Linux uses the Windows paths.
+    #[cfg(target_os = "linux")]
+    let wayland_portal = !evdev_driving && crate::linux_env::is_wayland();
+    #[cfg(not(target_os = "linux"))]
+    let wayland_portal = false;
+
+    #[cfg(target_os = "linux")]
+    if wayland_portal {
+        linux_portal::register(
+            tx.clone(),
+            snapshot.dictation.clone(),
+            snapshot.polish_dictation.clone(),
+        );
+    } else {
+        // No portal when evdev drives (or on X11) — stop any prior task.
+        linux_portal::stop();
+    }
+
     // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
-    // plugin's RegisterHotKey backend can't represent these. On Windows,
-    // route the chord through the low-level keyboard hook — it intercepts
-    // the events before the shell sees them, so tap detection never fires
-    // for the held Win key (no Start-menu pop on release). Other platforms
-    // use the native polling watcher.
-    if snapshot.dictation.is_modifier_chord() {
-        #[cfg(target_os = "windows")]
-        {
-            let mask = crate::keyboard_hook::chord_mask_for(&snapshot.dictation);
-            crate::keyboard_hook::set_chord_mask(mask);
-            tracing::info!(
-                "registered dictation (LL keyboard hook): {:?} mask=0b{:04b}",
-                snapshot.dictation,
-                mask
-            );
-        }
-        #[cfg(not(target_os = "windows"))]
+    // plugin's RegisterHotKey backend can't represent these, so we hand
+    // off to the platform's native implementation (Windows uses the LL
+    // keyboard hook; macOS/Linux use polling watchers).
+    if evdev_driving || wayland_portal {
+        // Handled by evdev / portal above.
+    } else if snapshot.dictation.is_modifier_chord() {
         native::spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone());
     }
     // Dictation, branch B: regular combo with a non-modifier key
@@ -297,8 +380,18 @@ fn re_register(
             tracing::warn!(
                 "register dictation hotkey failed (combo unsupported by RegisterHotKey?): {e:#}"
             );
+            #[cfg(target_os = "linux")]
+            crate::linux_env::emit_hotkey_status(
+                "none",
+                format!("Couldn't register the dictation hotkey: {e}"),
+            );
         } else {
             tracing::info!("registered dictation shortcut: {:?}", snapshot.dictation);
+            #[cfg(target_os = "linux")]
+            crate::linux_env::emit_hotkey_status(
+                "x11",
+                "Dictation hotkey registered via X11.".to_string(),
+            );
         }
     }
 
@@ -306,8 +399,11 @@ fn re_register(
     // the orchestrator forces CleanupMode::Polished on the pipeline so the
     // output is rewritten-for-clarity regardless of the user's global
     // cleanup mode. Same press/release-poller pattern as dictation,
-    // parameterised on PolishDictationReleased.
-    if let Some(pol_sc) = parsed_to_shortcut(&snapshot.polish_dictation) {
+    // parameterised on PolishDictationReleased. On Linux the evdev or
+    // portal registration above already covers polish.
+    if evdev_driving || wayland_portal {
+        // Handled by evdev / portal above.
+    } else if let Some(pol_sc) = parsed_to_shortcut(&snapshot.polish_dictation) {
         let tx_pol = tx.clone();
         let pol_parsed = snapshot.polish_dictation.clone();
         let pol_active = Arc::new(Mutex::new(false));
@@ -365,6 +461,28 @@ fn re_register(
     for (transform_id, hk) in &snapshot.transform_bindings {
         let slot = derive_slot_number(hk).unwrap_or(0);
         let combo = format_combo(hk);
+
+        // Linux with evdev driving: the transform chord is watched by the
+        // evdev reader (registered above), not the global-shortcut plugin
+        // — on Wayland the plugin registers "successfully" but never
+        // fires. Report status from what evdev actually resolved.
+        #[cfg(target_os = "linux")]
+        if evdev_driving {
+            let registered = evdev_transform_ids.contains(transform_id);
+            statuses.push(TransformSlotStatus {
+                transform_id: *transform_id,
+                slot,
+                combo,
+                registered,
+                error: if registered {
+                    None
+                } else {
+                    Some("Transform needs a chord ending in a non-modifier key".into())
+                },
+            });
+            continue;
+        }
+
         let Some(shortcut) = parsed_to_shortcut(hk) else {
             statuses.push(TransformSlotStatus {
                 transform_id: *transform_id,

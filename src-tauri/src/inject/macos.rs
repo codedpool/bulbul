@@ -1,4 +1,4 @@
-//! macOS text injection: NSPasteboard clipboard + Cmd+V via AppleScript.
+//! macOS text injection: NSPasteboard clipboard + Cmd+V via enigo (CGEvent).
 //!
 //! 1. Snapshot the user's prior clipboard contents (NSPasteboard read).
 //! 2. Write the transcript to the clipboard with TRANSIENT pasteboard
@@ -11,22 +11,24 @@
 //!    dictation hotkey and Cmd+V becomes something else.
 //! 4. Wait another 30ms (lets the clipboard settle and gives the OS a
 //!    moment between modifier-release and our synthetic event).
-//! 5. Drive `osascript` to send `keystroke "v" using command down`
-//!    through System Events. AppleScript's keystroke goes through the
-//!    official macOS Accessibility/HID path that the OS treats as
-//!    trusted input — more reliable across macOS versions (including
-//!    Tahoe) than directly posting a CGEvent to the session event tap,
-//!    which can silently fail to deliver the keystroke on newer
-//!    releases. Requires the `NSAppleEventsUsageDescription` Info.plist
-//!    key; first paste triggers a one-time "Bulbul wants to control
-//!    System Events" TCC prompt.
+//! 5. Synthesize Cmd+V via [`enigo`] — Press(Meta) → Click(V) → wait
+//!    100ms with Meta held so the target app processes the chord →
+//!    Release(Meta). enigo posts the events through CGEventPost which
+//!    only requires the Accessibility TCC permission already needed for
+//!    our global-shortcut polling — no AppleEvents prompt.
 //! 6. After 1s, restore the prior clipboard IF the clipboard still
 //!    holds exactly what we wrote (so the user can copy something
 //!    new mid-paste and we won't clobber it).
 //!
-//! The switch from CGEvent to osascript was contributed by
-//! @Pskuntal1248 (Parth singh) — verified working on macOS Tahoe where
-//! the previous CGEvent path could silently no-op.
+//! Fallback: set `BULBUL_INJECT=osascript` in the environment to revert
+//! to the prior AppleScript+System Events keystroke path. Keep around
+//! until enough testers confirm enigo works on every Mac we care about.
+//!
+//! History: an earlier hand-rolled CGEvent path silently no-op'd on
+//! some macOS versions, so the project moved to osascript (PR by
+//! @Pskuntal1248). enigo's CGEvent path is well-proven across
+//! 10.15–Tahoe in the wild, so we now use it as the default and keep
+//! osascript only as an opt-in safety net.
 //!
 //! See:
 //!   <https://github.com/nicke5012/TransientPasteboardType>
@@ -34,12 +36,18 @@
 
 use anyhow::{anyhow, Context, Result};
 use core_graphics::event_source::CGEventSourceStateID;
+use enigo::{
+    Direction::{Click, Press, Release},
+    Enigo, Key, Keyboard, Settings,
+};
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2_foundation::{NSArray, NSString};
+use parking_lot::Mutex;
 use std::process::Command;
 use std::ptr;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
@@ -57,12 +65,25 @@ const MODIFIER_KEYCODES: &[u16] = &[
     62, // Control (Right)
 ];
 
+// ----- Mac virtual key codes for the keys we synthesize -------------------
+// kVK_ANSI_C = 8, kVK_ANSI_V = 9. Layout-independent for the alpha block on
+// a US-ANSI mapping; non-ANSI layouts (Dvorak, AZERTY) remap by character,
+// but the C/V positions stay at kVK_ANSI_C/V because the shortcut is bound
+// to the *position*, not the glyph — same way Cmd+V works in Dvorak Cocoa
+// apps without rebinding.
+const KVK_V: u16 = 9;
+const KVK_C: u16 = 8;
+
 // ----- Tuning constants. --------------------------------------------------
 const MOD_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const MOD_POLL_MAX_ATTEMPTS: u32 = 24; // = 600ms ceiling
 const POST_RELEASE_DELAY: Duration = Duration::from_millis(30);
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(40);
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(1000);
+/// How long Cmd stays held between press and release. Below ~60ms some
+/// Electron apps drop the chord; 100ms is comfortably above that floor
+/// without being noticeable.
+const CMD_HOLD: Duration = Duration::from_millis(100);
 
 // ----- FFI: CGEventSourceKeyState ------------------------------------------
 // CGEventSourceKeyState isn't bound by the Rust core-graphics crate. The
@@ -91,7 +112,7 @@ pub fn inject_text(text: &str) -> Result<()> {
 
     wait_for_modifiers_released();
 
-    run_cmd_keystroke("v").context("posting Cmd+V via osascript")?;
+    send_cmd(KVK_V).context("posting Cmd+V")?;
 
     // Background restore. Only restore if the clipboard still holds
     // *our* paste — that way a user-initiated mid-paste copy isn't
@@ -115,29 +136,99 @@ pub fn inject_text(text: &str) -> Result<()> {
 /// Synthesize Cmd+V. Used by the Transform pipeline after writing
 /// transformed text to the clipboard.
 pub fn send_ctrl_v() -> Result<()> {
-    run_cmd_keystroke("v")
+    send_cmd(KVK_V)
 }
 
 /// Synthesize Cmd+C. Used by the Transform pipeline to copy the user's
 /// selection before processing.
 pub fn send_ctrl_c() -> Result<()> {
-    run_cmd_keystroke("c")
+    send_cmd(KVK_C)
 }
 
-// ----- AppleScript-driven keystroke ----------------------------------------
+/// Force-eager Enigo initialization. Onboarding calls this when the
+/// user reaches the Accessibility step so `Enigo::new`'s built-in
+/// `AXIsProcessTrustedWithOptions({prompt: true})` pops the native
+/// "Bulbul wants Accessibility" dialog inside the wizard rather than
+/// silently on first paste. Result: Bulbul appears in the Accessibility
+/// list at the moment the user is looking for it, instead of the user
+/// having to click `+` and browse to Bulbul.app.
+///
+/// Idempotent — subsequent calls hit the cached OnceLock and short-
+/// circuit. Retry-friendly — a failed prime (permission not granted
+/// yet) leaves SLOT empty so the next call retries.
+pub fn prime_enigo() -> Result<()> {
+    enigo_handle().map(|_| ())
+}
+
+// ----- Keystroke synthesis -------------------------------------------------
+
+/// Dispatch a Cmd+<vkey> chord. Defaults to the enigo (CGEvent) path;
+/// users can opt into the legacy osascript path with `BULBUL_INJECT=osascript`.
+fn send_cmd(vkey: u16) -> Result<()> {
+    if use_osascript_fallback() {
+        let letter = match vkey {
+            KVK_V => "v",
+            KVK_C => "c",
+            other => return Err(anyhow!("osascript fallback has no mapping for vkey {other}")),
+        };
+        return run_cmd_keystroke_osascript(letter);
+    }
+    send_cmd_enigo(vkey)
+}
+
+fn use_osascript_fallback() -> bool {
+    std::env::var("BULBUL_INJECT")
+        .map(|v| v.eq_ignore_ascii_case("osascript"))
+        .unwrap_or(false)
+}
+
+/// Lazy global Enigo. `Enigo::new` allocates a CGEventSource and a few
+/// other Core Graphics handles — cheap once, but we don't want to do it
+/// per keystroke. Wrapped in a Mutex because `Keyboard::key` takes
+/// `&mut self`. parking_lot is already a workspace dep so we get its
+/// non-poisoning lock without dragging in a new crate.
+fn enigo_handle() -> Result<&'static Mutex<Enigo>> {
+    static SLOT: OnceLock<Mutex<Enigo>> = OnceLock::new();
+    if let Some(m) = SLOT.get() {
+        return Ok(m);
+    }
+    let e = Enigo::new(&Settings::default())
+        .map_err(|e| anyhow!("Enigo::new failed (Accessibility permission?): {e}"))?;
+    let _ = SLOT.set(Mutex::new(e));
+    Ok(SLOT.get().expect("just-set OnceLock is Some"))
+}
+
+/// Press Cmd, click the given keycode, hold 100ms with Cmd still down,
+/// then release Cmd. The 100ms hold matters: some Electron-based apps
+/// (Slack, VS Code at one point) drop the chord if Cmd releases on the
+/// same frame the V keydown lands.
+fn send_cmd_enigo(vkey: u16) -> Result<()> {
+    let mu = enigo_handle()?;
+    // Press + click are done while we hold the lock. We drop the lock
+    // before sleeping so other paste paths aren't blocked for 100ms.
+    {
+        let mut e = mu.lock();
+        e.key(Key::Meta, Press)
+            .map_err(|err| anyhow!("press ⌘: {err}"))?;
+        e.key(Key::Other(vkey as u32), Click)
+            .map_err(|err| anyhow!("click vkey {vkey}: {err}"))?;
+    }
+    thread::sleep(CMD_HOLD);
+    {
+        let mut e = mu.lock();
+        e.key(Key::Meta, Release)
+            .map_err(|err| anyhow!("release ⌘: {err}"))?;
+    }
+    Ok(())
+}
 
 /// Drive `osascript` to send a single ⌘+key keystroke through System
-/// Events. AppleScript's `keystroke` action goes through the official
-/// Accessibility/HID path the OS treats as trusted input — more
-/// reliable across macOS versions than directly posting a CGEvent to
-/// the session event tap, which can silently fail to deliver under
-/// newer macOS security hardening.
-///
-/// Requires the `NSAppleEventsUsageDescription` Info.plist key so TCC
-/// doesn't block the AppleEvent send. The first call from a fresh
-/// install triggers a one-time "Bulbul wants to control System Events"
-/// prompt; once granted, all future calls succeed silently.
-fn run_cmd_keystroke(key: &str) -> Result<()> {
+/// Events. Legacy path kept as opt-in via `BULBUL_INJECT=osascript` for
+/// any Mac where the enigo CGEvent path silently no-ops. Requires the
+/// `NSAppleEventsUsageDescription` Info.plist key so TCC doesn't block
+/// the AppleEvent send — the first call from a fresh install triggers
+/// the "Bulbul wants to control System Events" prompt.
+fn run_cmd_keystroke_osascript(key: &str) -> Result<()> {
     let script = format!(
         "tell application \"System Events\" to keystroke \"{key}\" using command down"
     );

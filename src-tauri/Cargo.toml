@@ -1,6 +1,6 @@
 [package]
 name = "bulbul"
-version = "1.0.1"
+version = "1.1.0"
 description = "Free, open-source Windows voice dictation powered by Groq"
 authors = ["Bulbul contributors"]
 edition = "2021"
@@ -93,6 +93,12 @@ features = [
 ]
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# CGEvent-driven keystroke synthesis for inject/macos.rs. Replaces the
+# osascript+System Events path that needed the AppleEvents TCC prompt;
+# enigo posts events directly through CGEventPost which only needs the
+# Accessibility permission we already require for the global hotkey
+# polling.
+enigo = "0.6.1"
 # NSWorkspace + NSRunningApplication for foreground-app detection
 # (window_info/macos.rs).
 objc2-app-kit = "0.3"
@@ -123,9 +129,40 @@ core-foundation = "0.10"
 # x11rb: pure-Rust X11 binding.
 # - foreground-window discovery (window_info/linux.rs)
 # - XTest extension for synthetic keyboard events (inject/linux.rs)
-# Wayland-specific crates (ashpd, reis, atspi) added in Phase 3-5
-# when the corresponding primitives land.
 x11rb = { version = "0.13", features = ["xtest"] }
+# xdg-desktop-portal client. Two portals:
+#   - global_shortcuts: native Wayland press/release hotkeys
+#     (hotkey/linux_portal.rs)
+#   - remote_desktop: native keystroke injection for paste on Wayland
+#     (inject/linux_portal_paste.rs) — replaces needing wtype/ydotool
+# register_host_app (crate root) attaches our app id so GNOME's portal
+# stops rejecting requests with "an app id is required". tokio backend
+# matches the tokio we already ship.
+# remote_desktop's module pulls in screencast::Stream, so the screencast
+# feature must ride along (ashpd 0.13 doesn't declare the inter-feature
+# dep itself — enabling remote_desktop alone fails to compile).
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast"] }
+# StreamExt for the portal's Activated/Deactivated signal streams.
+futures-util = "0.3"
+# BitFlags<DeviceType> for the RemoteDesktop select_devices call. Pinned
+# to the version ashpd 0.13 already resolves so the flag types match.
+enumflags2 = "0.7"
+# kernel uinput virtual keyboard (inject/linux_uinput.rs). This is the
+# path that actually works on GNOME Wayland: it injects below the
+# compositor, so Mutter can't drop it the way it drops the portal's
+# Notify* and blocks wtype. Same mechanism Speech Note / nerd-dictation
+# / numen ship. Access to /dev/uinput comes from a setgid binary + udev
+# rule the .deb installs — no relogin, no broad capability.
+evdev = "0.13"
+# EIS (libei) keystroke injection — kept as a no-privilege fallback for
+# AppImage users who can't get the setgid uinput path. enigo's libei
+# backend (reis + its own ashpd session) does the EIS handshake;
+# libei_tokio only. (Its ashpd ^0.12 coexists with our 0.13.)
+enigo = { version = "0.6.1", default-features = false, features = ["libei_tokio"] }
+# SIGUSR1/SIGUSR2 handlers — DE-level custom shortcuts can `kill -USR2`
+# (or run `bulbul --toggle-dictation`) to drive dictation on compositors
+# without a working GlobalShortcuts portal.
+signal-hook = "0.3"
 
 [dependencies.anyhow]
 version = "1"

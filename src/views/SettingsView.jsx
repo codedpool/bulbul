@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
-import { AUTOSTART_LABEL, IS_ANDROID, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
+import { AUTOSTART_LABEL, IS_ANDROID, IS_LINUX, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
 
 const MODES = [
   { value: "raw", label: "Raw", hint: "Fix obvious errors only. Keeps every word." },
@@ -835,7 +835,7 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
         </div>
       </Row>
       <p className="muted small settings-note">
-        Bulbul v1.0.1 · MIT-licensed · made with care · <a
+        Bulbul v1.1.0 · MIT-licensed · made with care · <a
           href="#"
           onClick={(e) => { e.preventDefault(); openUrl("https://bulbultypes.xyz"); }}
         >bulbultypes.xyz</a>
@@ -885,8 +885,9 @@ function HotkeyControl({ combo, isRecording, error, onStart, onCancel }) {
             <span className="hotkey-error">{error}</span>
           ) : (
             <span className="muted">
-              Press a key combo… Modifier-only chords (Ctrl+Win, Alt+Win)
-              also work — just release the keys. Esc to cancel.
+              {IS_LINUX
+                ? "Press a key combo with a regular key (e.g. Ctrl+Alt+Space) — modifier-only chords can't be bound on Wayland. Esc to cancel."
+                : "Press a key combo… Modifier-only chords (Ctrl+Win, Alt+Win) also work — just release the keys. Esc to cancel."}
             </span>
           )
         ) : (

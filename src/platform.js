@@ -70,11 +70,13 @@ export const META_KEY_NAME = IS_MAC
     ? "Super"
     : "Windows";
 
-// Tag <html> with a platform class so CSS can apply OS-specific
-// rules — Mac wants a transparent body + rounded shell corners since
-// the native window is borderless + transparent. Android uses its
-// own class since the layout (no titlebar, no sidebar footer toggles,
-// safe-area insets) diverges from desktop.
+// rules. Mac and Linux want a transparent body + rounded shell corners
+// (Mac: borderless window; Linux: GTK draws borderless windows as sharp
+// rectangles, so the window is created transparent and the radius is
+// CSS). Windows keeps the opaque shell — DWM rounds borderless-but-
+// resizable windows natively on Win11. Android uses its own class since
+// the layout (no titlebar, no sidebar footer toggles, safe-area insets)
+// diverges from desktop.
 if (typeof document !== "undefined") {
   const cls = IS_ANDROID
     ? "platform-android"

@@ -7,6 +7,8 @@ mod hotkey;
 mod inject;
 #[cfg(target_os = "windows")]
 mod keyboard_hook;
+#[cfg(target_os = "linux")]
+mod linux_env;
 mod telemetry;
 mod uia;
 mod window_info;
@@ -25,6 +27,8 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
@@ -1146,7 +1150,20 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // controls) — we suspect a Tauri 2 + WebView2 quirk around lazy window
     // creation in dev mode. Building it during boot gives the WebView2 host
     // time to fully initialize before the user ever interacts with it.
-    let window = WebviewWindowBuilder::new(
+    // Mac: native NSWindow chrome (traffic lights work like every
+    // other Mac app), plus TitleBarStyle::Overlay + hiddenTitle so the
+    // title bar strip is transparent and our content extends behind
+    // it. That lets us place a small sidebar toggle at the same Y as
+    // the traffic lights — the Wispr Flow / Linear / Raycast pattern.
+    // Win/Linux stay borderless because their custom React SpTitleBar
+    // draws its own min/close.
+    #[cfg(target_os = "macos")]
+    let decorations = true;
+    #[cfg(not(target_os = "macos"))]
+    let decorations = false;
+
+    #[allow(unused_mut)]
+    let mut builder = WebviewWindowBuilder::new(
         app,
         "scratchpad",
         WebviewUrl::App("index.html#scratchpad".into()),
@@ -1154,19 +1171,52 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     .title("Bulbul Scratchpad")
     .inner_size(760.0, 540.0)
     .min_inner_size(520.0, 380.0)
-    .decorations(false)
+    .decorations(decorations)
     .center()
     .resizable(true)
     .maximizable(false)
     .skip_taskbar(false)
-    .visible(false)
-    .build()?;
+    .visible(false);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+    // Linux stays opaque: WebKitGTK window transparency is unreliable
+    // across stacks (and broken on some drivers/VMs), so we don't fake a
+    // rounded shell here the way Mac/Windows do — an un-composited
+    // transparent window just renders black/garbled corners. Borderless +
+    // opaque + our custom titlebar; square corners. See the
+    // `.platform-linux` note in App.css / ScratchpadWindow.css.
+    let window = builder.build()?;
 
-    // Intercept the X button so the window persists across opens.
+    // Intercept the close button (X on Win/Linux, red traffic light on
+    // macOS) so the window persists across opens. Cmd+Q / RunEvent::
+    // ExitRequested goes through a separate code path and still quits.
     let win_handle = window.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
+            // See main-window handler for the fullscreen-then-hide
+            // black-Space bug — same fix applies here.
+            #[cfg(target_os = "macos")]
+            {
+                if matches!(win_handle.is_fullscreen(), Ok(true)) {
+                    let _ = win_handle.set_fullscreen(false);
+                    let after = win_handle.clone();
+                    std::thread::spawn(move || {
+                        for _ in 0..30 {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            if matches!(after.is_fullscreen(), Ok(false)) {
+                                break;
+                            }
+                        }
+                        let _ = after.hide();
+                    });
+                    return;
+                }
+            }
             let _ = win_handle.hide();
         }
     });
@@ -1272,6 +1322,22 @@ fn get_staged_update_version(state: tauri::State<'_, AppState>) -> Option<String
 ///
 /// Called both from the dashboard banner ("Install & restart") and from
 /// the tray Quit handler when an update is sitting in the slot.
+/// Linux-only: session facts for the dashboard's Linux-support banner
+/// (Wayland vs X11, installed injection tools, desktop environment, and
+/// the exact CLI-toggle command to bind). Null elsewhere — the frontend
+/// only calls it when running on Linux.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn get_linux_support_info() -> serde_json::Value {
+    linux_env::support_info()
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+fn get_linux_support_info() -> serde_json::Value {
+    serde_json::Value::Null
+}
+
 /// Mac-only: query whether Bulbul currently has Accessibility permission.
 /// Polled by the onboarding wizard's Permissions step to enable Continue
 /// once granted. On other platforms returns true unconditionally so the
@@ -1288,6 +1354,37 @@ fn check_accessibility_status_mac() -> bool {
 #[tauri::command]
 fn check_accessibility_status_mac() -> bool {
     true
+}
+
+/// Mac-only: eagerly trigger the Accessibility TCC prompt. The
+/// onboarding wizard's Permissions step calls this on mount so the
+/// user sees the native "Bulbul wants to use Accessibility" dialog
+/// inside the wizard — instead of Bulbul being invisible in the
+/// System Settings list until first paste tries and silently fails.
+///
+/// Implemented by calling `Enigo::new(&Settings::default())` under the
+/// hood — `Settings::default()` sets `open_prompt_to_get_permissions:
+/// true`, which drives enigo's internal
+/// `AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: true})`
+/// call. That's what registers Bulbul with TCC AND shows the system
+/// dialog. Priming and paste share the same code path, so a successful
+/// prime is a strict guarantee the actual paste-time call also
+/// succeeds — no double-source-of-truth risk.
+///
+/// Idempotent: returns Ok on repeat calls without re-prompting.
+/// Returns Err with a description if AX isn't granted yet, so the
+/// wizard can log-and-poll (the polling `check_accessibility_status_mac`
+/// still drives the ✓/○ UI state).
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn prime_accessibility_mac() -> Result<(), String> {
+    inject::prime_enigo().map_err(|e| format!("{e:#}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn prime_accessibility_mac() -> Result<(), String> {
+    Ok(())
 }
 
 /// Restart Bulbul cleanly. Used by the onboarding wizard's
@@ -1474,6 +1571,16 @@ async fn install_staged_update(app: AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // webkit2gtk's DMA-BUF renderer is a recurring source of blank or
+    // garbled windows on NVIDIA/driver-quirky Linux boxes, and of
+    // artifacts on transparent windows (which our rounded shell needs).
+    // The standard workaround most shipping Tauri apps apply. Users can
+    // override by exporting the variable themselves before launch.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     // Write tracing to stderr (not stdout). stdout is block-buffered
     // when the process's stdout is piped (e.g. when running under
     // `cargo run` from a captured-output dev harness), which means logs
@@ -1527,8 +1634,19 @@ pub fn run() {
         // shared SQLite db, the tray, or the config file. Focusing the
         // existing main window gives the user visible feedback so the
         // double-launch doesn't feel like nothing happened.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // `bulbul --toggle-dictation` from a second process lands
+            // here inside the primary. This is the universal hotkey
+            // fallback for Linux desktops where no global-shortcut
+            // mechanism works (e.g. GNOME Wayland rejecting the portal):
+            // the user binds a DE-level custom shortcut to the command
+            // and it drives hold-to-talk as a toggle. Works on every
+            // platform, but only Linux docs advertise it.
+            if argv.iter().any(|a| a == "--toggle-dictation") {
+                cli_toggle_dictation(app, false);
+            } else if argv.iter().any(|a| a == "--toggle-polish") {
+                cli_toggle_dictation(app, true);
+            } else if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
@@ -1543,7 +1661,9 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            get_linux_support_info,
             check_accessibility_status_mac,
+            prime_accessibility_mac,
             check_microphone_status_mac,
             request_microphone_access_mac,
             open_mac_settings_pane,
@@ -1594,6 +1714,35 @@ pub fn run() {
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            // Must precede install_global_shortcuts below — the Linux
+            // hotkey watchers (portal + X11) report their fate through
+            // linux_env::emit_hotkey_status, which needs the handle.
+            #[cfg(target_os = "linux")]
+            {
+                linux_env::set_app_handle(handle.clone());
+                spawn_signal_watcher(handle.clone());
+                // Kernel uinput virtual keyboard — the injection path that
+                // actually works on GNOME Wayland (below the compositor,
+                // so Mutter can't drop it). Ready immediately when the
+                // .deb granted access (setgid + udev rule); otherwise this
+                // fails quietly and the portal/tool/clipboard chain covers
+                // it. Works on every session type, so init unconditionally.
+                match inject::linux_uinput::init() {
+                    Ok(()) => linux_env::emit_paste_status(
+                        "uinput",
+                        "Typing via a kernel virtual keyboard — works in every app.".into(),
+                    ),
+                    Err(e) => tracing::info!("uinput not available ({e}); using fallbacks"),
+                }
+                // Wayland: also bring up the RemoteDesktop paste portal as
+                // a no-privilege fallback for when uinput access wasn't
+                // granted (e.g. AppImage). Its one-time dialog appears at
+                // launch. No-op on X11.
+                if linux_env::is_wayland() && !inject::linux_uinput::is_ready() {
+                    inject::linux_portal_paste::spawn();
+                }
+            }
 
             // Build tray-icon variants. Mac uses a dedicated monochrome
             // template asset (black silhouette on transparent) so the
@@ -1680,6 +1829,13 @@ pub fn run() {
             setup_scratchpad_window(&handle)?;
 
             if let Some(window) = handle.get_webview_window("main") {
+                // Mac uses the borderless + transparent + overlay-titlebar
+                // configuration from tauri.conf.json so the rounded shell
+                // shows around the floating traffic lights — same visual
+                // language as Linear, Raycast, Things. The React TitleBar
+                // hides its Win-style min/max/close on .platform-mac and
+                // adds 80px of leading padding so the sidebar toggle sits
+                // clear of the traffic lights.
                 let cfg = handle.state::<AppState>().config.clone();
                 let want_show = {
                     let c = cfg.lock();
@@ -1693,6 +1849,33 @@ pub fn run() {
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
+                        // Mac: hiding a window that's inside a fullscreen
+                        // Space leaves the Space behind as a black screen —
+                        // classic AppKit behavior since NSWindow.hide isn't
+                        // aware of NSWindowStyleMaskFullScreen. Exit the
+                        // fullscreen Space first, then hide once the exit
+                        // animation lands, so the user snaps back to their
+                        // previous Space cleanly.
+                        #[cfg(target_os = "macos")]
+                        {
+                            if matches!(win_handle.is_fullscreen(), Ok(true)) {
+                                let _ = win_handle.set_fullscreen(false);
+                                let after = win_handle.clone();
+                                std::thread::spawn(move || {
+                                    // AppKit's fullscreen exit animates over
+                                    // ~500-700ms. Poll every 100ms, cap at 3s
+                                    // so a stuck transition can't deadlock.
+                                    for _ in 0..30 {
+                                        std::thread::sleep(std::time::Duration::from_millis(100));
+                                        if matches!(after.is_fullscreen(), Ok(false)) {
+                                            break;
+                                        }
+                                    }
+                                    let _ = after.hide();
+                                });
+                                return;
+                            }
+                        }
                         let _ = win_handle.hide();
                     }
                 });
@@ -1741,8 +1924,24 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Bulbul");
+        .build(tauri::generate_context!())
+        .expect("error while building Bulbul")
+        .run(|app, event| {
+            // macOS: when the user closes the window (red traffic light)
+            // we call `prevent_close` + `window.hide()` — the process keeps
+            // running so dictation still works. Without an explicit Reopen
+            // handler, though, clicking the dock icon afterwards does
+            // nothing because Tauri doesn't auto-show hidden windows. Mac
+            // users (rightly) expect dock-icon click to bring the app
+            // forward, so we re-show the main window here. Same code path
+            // covers Cmd+Tab activation that lands on Bulbul when no
+            // window is visible.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                show_settings(app);
+            }
+            let _ = (app, event);
+        });
 }
 
 fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
@@ -1837,6 +2036,21 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
 }
 
 fn setup_overlay_window(app: &AppHandle) -> tauri::Result<()> {
+    // Wayland has no global window positioning — set_position is a
+    // no-op and the compositor drops new windows wherever it likes
+    // (usually dead center). A "bottom-center pill" that actually
+    // renders mid-screen looks like a bug (testers read it as "the
+    // tray is in the middle of my desktop"), and some compositors
+    // focus it on map, which would steal the paste target. Skip the
+    // pill entirely on Wayland until a gtk-layer-shell integration
+    // lands; every consumer (position/height/hover) already
+    // None-guards on the window lookup. X11 sessions keep the pill.
+    #[cfg(target_os = "linux")]
+    if linux_env::is_wayland() {
+        tracing::info!("Wayland session: overlay pill disabled (no global positioning)");
+        return Ok(());
+    }
+
     let overlay = WebviewWindowBuilder::new(
         app,
         "overlay",
@@ -1864,6 +2078,72 @@ fn show_settings(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+/// Toggle-mode dictation for external triggers (CLI re-invocation via
+/// single-instance, SIGUSR1/2 on Linux). Hold-to-talk needs a press AND
+/// a release, but a DE shortcut can only fire a command — so the first
+/// call starts recording, the second stops it. The orchestrator ignores
+/// a press while recording and a release while idle, so drift between
+/// this flag and actual recorder state (e.g. the user mixed hotkey and
+/// CLI mid-recording) self-corrects after one extra invocation.
+fn cli_toggle_dictation(app: &AppHandle, polish: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
+    static ACTIVE_IS_POLISH: AtomicBool = AtomicBool::new(false);
+
+    let Some(state) = app.try_state::<AppState>() else {
+        tracing::warn!("cli toggle before AppState ready — ignored");
+        return;
+    };
+    if !ACTIVE.swap(true, Ordering::SeqCst) {
+        ACTIVE_IS_POLISH.store(polish, Ordering::SeqCst);
+        let evt = if polish {
+            HotkeyEvent::PolishDictationPressed
+        } else {
+            HotkeyEvent::DictationPressed
+        };
+        tracing::info!("cli toggle: start (polish={polish})");
+        let _ = state.hotkey_tx.send(evt);
+    } else {
+        ACTIVE.store(false, Ordering::SeqCst);
+        // Release with the same flavor the recording started with; the
+        // orchestrator treats both release types identically anyway.
+        let evt = if ACTIVE_IS_POLISH.load(Ordering::SeqCst) {
+            HotkeyEvent::PolishDictationReleased
+        } else {
+            HotkeyEvent::DictationReleased
+        };
+        tracing::info!("cli toggle: stop");
+        let _ = state.hotkey_tx.send(evt);
+    }
+}
+
+/// SIGUSR2 toggles dictation, SIGUSR1 toggles polish dictation — the
+/// signal-level equivalent of `--toggle-dictation` for users who prefer
+/// `kill -USR2 $(pidof bulbul)` in a compositor keybinding (Sway,
+/// Hyprland) over spawning a second process.
+#[cfg(target_os = "linux")]
+fn spawn_signal_watcher(app: AppHandle) {
+    use signal_hook::consts::{SIGUSR1, SIGUSR2};
+    use signal_hook::iterator::Signals;
+
+    let mut signals = match Signals::new([SIGUSR1, SIGUSR2]) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("could not install SIGUSR handlers: {e:#}");
+            return;
+        }
+    };
+    thread::spawn(move || {
+        for sig in signals.forever() {
+            match sig {
+                SIGUSR2 => cli_toggle_dictation(&app, false),
+                SIGUSR1 => cli_toggle_dictation(&app, true),
+                _ => {}
+            }
+        }
+    });
 }
 
 fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEvent>) {
@@ -2057,33 +2337,66 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
         .map(|t| t.name.clone())
         .unwrap_or_else(|| "<fallback>".into());
     tracing::info!("transform_pipeline start: transform={transform_name}");
-    // Reuse a single Clipboard handle across save / clear / read / paste /
-    // restore. Repeatedly opening arboard on Windows triggers OLE init/teardown
+    // On Wayland, arboard can't reliably read a selection another app just
+    // copied (the same limitation that makes dictation use wl-copy/
+    // wl-paste), and opening it can fail outright — so route the pipeline's
+    // clipboard through wl-clipboard there and skip arboard entirely.
+    // Every other platform keeps a single reused arboard handle:
+    // repeatedly re-opening arboard on Windows triggers OLE init/teardown
     // cycles that can corrupt the heap when paired with rdev's keyboard hook.
-    let mut clipboard = match arboard::Clipboard::new() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("clipboard open failed: {e:#}");
-            emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
-            return;
+    #[cfg(target_os = "linux")]
+    let use_wl = inject::wayland_clipboard_available();
+    #[cfg(not(target_os = "linux"))]
+    let use_wl = false;
+
+    let mut clipboard: Option<arboard::Clipboard> = if use_wl {
+        None
+    } else {
+        match arboard::Clipboard::new() {
+            Ok(c) => Some(c),
+            Err(e) => {
+                tracing::error!("clipboard open failed: {e:#}");
+                emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
+                return;
+            }
         }
     };
 
-    let original = clipboard.get_text().ok();
-    let _ = clipboard.set_text(String::new());
-
     let t_capture_start = Instant::now();
-    if let Err(e) = inject::send_ctrl_c() {
-        emit_status(&app, "error", Some(format!("Ctrl+C failed: {e:#}")));
-        notify(&app, "Bulbul polish failed", &format!("{e:#}"));
-        restore_clipboard_with(&mut clipboard, original);
-        return;
-    }
 
-    // Give the foreground app a moment to populate the clipboard.
-    tokio::time::sleep(Duration::from_millis(220)).await;
+    // On Wayland, prefer the PRIMARY selection — it holds whatever text is
+    // currently highlighted (set by mouse drag AND keyboard selection like
+    // Ctrl+A), so we read it directly instead of simulating Ctrl+C. The
+    // Ctrl+C copy was unreliable because the transform hotkey fires while
+    // its own modifier is still held, corrupting the combo. Fall back to
+    // Ctrl+C for apps that don't maintain a primary selection.
+    #[cfg(target_os = "linux")]
+    let selected_primary = if use_wl {
+        inject::wayland_primary_read().filter(|s| !s.trim().is_empty())
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "linux"))]
+    let selected_primary: Option<String> = None;
 
-    let selected = clipboard.get_text().unwrap_or_default();
+    // `original` is only saved/restored on the Ctrl+C fallback path, which
+    // clobbers the clipboard. The primary path never touches it.
+    let mut original: Option<String> = None;
+    let selected = if let Some(p) = selected_primary {
+        p
+    } else {
+        original = transform_clip_read(&mut clipboard, use_wl);
+        transform_clip_write(&mut clipboard, use_wl, "");
+        if let Err(e) = inject::send_ctrl_c() {
+            emit_status(&app, "error", Some(format!("Ctrl+C failed: {e:#}")));
+            notify(&app, "Bulbul polish failed", &format!("{e:#}"));
+            restore_clipboard_with(&mut clipboard, use_wl, original);
+            return;
+        }
+        // Give the foreground app a moment to populate the clipboard.
+        tokio::time::sleep(Duration::from_millis(220)).await;
+        transform_clip_read(&mut clipboard, use_wl).unwrap_or_default()
+    };
     let t_capture_ms = t_capture_start.elapsed().as_millis() as u64;
 
     if selected.trim().is_empty() {
@@ -2094,7 +2407,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
             Some("No text selected — highlight something first.".into()),
         );
         notify(&app, "Bulbul polish", "No text selected — highlight some text and try again.");
-        restore_clipboard_with(&mut clipboard, original);
+        restore_clipboard_with(&mut clipboard, use_wl, original);
         return;
     }
     let input_chars = selected.chars().count();
@@ -2122,7 +2435,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
             tracing::error!("transform failed: {e:#}");
             emit_status(&app, "error", Some(format!("{e:#}")));
             notify(&app, "Bulbul transform failed", &format!("{e:#}"));
-            restore_clipboard_with(&mut clipboard, original);
+            restore_clipboard_with(&mut clipboard, use_wl, original);
             return;
         }
     };
@@ -2138,7 +2451,7 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
 
     if polished.trim().is_empty() {
         emit_status(&app, "error", Some("Transform returned empty text.".into()));
-        restore_clipboard_with(&mut clipboard, original);
+        restore_clipboard_with(&mut clipboard, use_wl, original);
         return;
     }
 
@@ -2150,18 +2463,24 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
-    if let Err(e) = clipboard.set_text(final_text.clone()) {
-        tracing::error!("clipboard write failed: {e:#}");
-        emit_status(&app, "error", Some(format!("Clipboard: {e:#}")));
-        restore_clipboard_with(&mut clipboard, original);
-        return;
-    }
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    if let Err(e) = inject::send_ctrl_v() {
-        tracing::error!("Ctrl+V failed: {e:#}");
-        emit_status(&app, "error", Some(format!("Paste: {e:#}")));
-        notify(&app, "Bulbul transform failed", &format!("{e:#}"));
-        restore_clipboard_with(&mut clipboard, original);
+    // Wayland: type the result straight in (uinput direct typing) — no
+    // clipboard write to lose to Wayland's unreliable background clipboard,
+    // and no flicker. Every other platform keeps the arboard + Ctrl+V path.
+    #[cfg(target_os = "linux")]
+    let inject_result: Result<(), String> = if use_wl {
+        inject::inject_text(&final_text).map_err(|e| format!("{e:#}"))
+    } else {
+        clipboard_set_and_paste(&mut clipboard, &final_text).await
+    };
+    #[cfg(not(target_os = "linux"))]
+    let inject_result: Result<(), String> =
+        clipboard_set_and_paste(&mut clipboard, &final_text).await;
+
+    if let Err(e) = inject_result {
+        tracing::error!("transform inject failed: {e}");
+        emit_status(&app, "error", Some(e.clone()));
+        notify(&app, "Bulbul transform failed", &e);
+        restore_clipboard_with(&mut clipboard, use_wl, original);
         return;
     }
     let t_inject_ms = t_inject_start.elapsed().as_millis() as u64;
@@ -2186,6 +2505,19 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     // guard: only restore if the clipboard still holds our paste — that
     // way nothing the user copies in between gets overwritten.
     drop(clipboard);
+    // Wayland: output was typed directly and never went through the
+    // clipboard, but we cleared the clipboard during capture — put the
+    // user's original contents back (best-effort, after a short delay).
+    #[cfg(target_os = "linux")]
+    if use_wl {
+        if let Some(orig) = original {
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(250));
+                let _ = inject::wayland_clipboard_write(&orig);
+            });
+        }
+        return;
+    }
     if let Some(orig) = original {
         let our_paste = final_text;
         thread::spawn(move || {
@@ -2203,9 +2535,53 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     }
 }
 
-fn restore_clipboard_with(clipboard: &mut arboard::Clipboard, original: Option<String>) {
+/// Read clipboard text for the transform pipeline. On Wayland uses
+/// wl-paste (arboard can't reliably read a selection another app just
+/// copied); elsewhere uses the reused arboard handle.
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+fn transform_clip_read(clipboard: &mut Option<arboard::Clipboard>, use_wl: bool) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    if use_wl {
+        return inject::wayland_clipboard_read();
+    }
+    clipboard.as_mut().and_then(|c| c.get_text().ok())
+}
+
+/// Write clipboard text for the transform pipeline (best-effort). On
+/// Wayland uses wl-copy; elsewhere the reused arboard handle.
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+fn transform_clip_write(clipboard: &mut Option<arboard::Clipboard>, use_wl: bool, text: &str) {
+    #[cfg(target_os = "linux")]
+    if use_wl {
+        let _ = inject::wayland_clipboard_write(text);
+        return;
+    }
+    if let Some(c) = clipboard.as_mut() {
+        let _ = c.set_text(text.to_string());
+    }
+}
+
+/// Non-Wayland transform output: write the result to the clipboard and
+/// fire the paste combo. Wayland types directly instead (see the pipeline).
+async fn clipboard_set_and_paste(
+    clipboard: &mut Option<arboard::Clipboard>,
+    text: &str,
+) -> Result<(), String> {
+    if let Some(c) = clipboard.as_mut() {
+        c.set_text(text.to_string())
+            .map_err(|e| format!("Clipboard: {e:#}"))?;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    inject::send_ctrl_v().map_err(|e| format!("Paste: {e:#}"))
+}
+
+fn restore_clipboard_with(
+    clipboard: &mut Option<arboard::Clipboard>,
+    use_wl: bool,
+    original: Option<String>,
+) {
     if let Some(orig) = original {
-        let _ = clipboard.set_text(orig);
+        transform_clip_write(clipboard, use_wl, &orig);
     }
 }
 
@@ -2459,9 +2835,90 @@ async fn process_pipeline(
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
-    if let Err(e) = inject::inject_text(&final_text) {
+    // Fast path: when Bulbul's own webview is the target, skip the
+    // OS Cmd+V / Ctrl+V round-trip and push the text straight into the
+    // React tree via Tauri IPC. Bypassing OS paste keeps the user's
+    // clipboard clean and dodges Mac's fragile self-paste where
+    // CGEvent Cmd+V posted to Bulbul's own WKWebView often silently
+    // no-ops.
+    //
+    // Two Bulbul destinations exist:
+    //   - "scratchpad" window: standalone editor (tray → Open
+    //     scratchpad). Fires `scratchpad-append`; its listener always
+    //     consumes.
+    //   - "main" window's inline ScratchpadView (dashboard sidebar →
+    //     Scratchpad). Fires `bulbul-focused-insert`; the inline
+    //     listener only consumes when its own textarea has document
+    //     focus, so dictating from Home/Insights is a silent no-op.
+    //
+    // Routing:
+    //   1. Standalone is focused (or Mac fallback: Bulbul foreground +
+    //      standalone visible + main NOT focused) → standalone.
+    //   2. Bulbul foreground + main visible → main.
+    //   3. Otherwise → OS-level paste (external app is the target).
+    let scratchpad_win = app.get_webview_window("scratchpad");
+    let main_win = app.get_webview_window("main");
+    let scratchpad_focused = scratchpad_win
+        .as_ref()
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    let scratchpad_visible = scratchpad_win
+        .as_ref()
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    let main_focused = main_win
+        .as_ref()
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    let main_visible = main_win
+        .as_ref()
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    let bulbul_foreground = meta
+        .foreground_app
+        .as_deref()
+        .map(|b| b.to_ascii_lowercase().contains("bulbul"))
+        .unwrap_or(false);
+    let route_to_standalone = scratchpad_focused
+        || (bulbul_foreground && scratchpad_visible && !main_focused);
+    let route_to_main = !route_to_standalone && bulbul_foreground && main_visible;
+    tracing::debug!(
+        "inject routing: standalone={} main={} (sp_focused={} sp_visible={} main_focused={} main_visible={} bulbul_fg={} fg={:?})",
+        route_to_standalone,
+        route_to_main,
+        scratchpad_focused,
+        scratchpad_visible,
+        main_focused,
+        main_visible,
+        bulbul_foreground,
+        meta.foreground_app
+    );
+    if route_to_standalone {
+        // Nudge the standalone forward so the user actually sees the
+        // text land — otherwise a scratchpad tucked behind another
+        // window silently receives the IPC and the user thinks the
+        // paste failed.
+        if let Some(w) = scratchpad_win.as_ref() {
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+        let _ = app.emit_to("scratchpad", "scratchpad-append", final_text.clone());
+    } else if route_to_main {
+        let _ = app.emit_to("main", "bulbul-focused-insert", final_text.clone());
+    } else if let Err(e) = inject::inject_text(&final_text) {
         tracing::error!("inject failed: {e:#}");
         emit_status(&app, "error", Some(format!("Inject: {e:#}")));
+        // On Linux every inject path writes the clipboard before the
+        // keystroke, so a failed auto-type still leaves the transcript
+        // one Ctrl+V away — say that instead of a dead-end error. The
+        // text is also always in the dashboard (logged above).
+        #[cfg(target_os = "linux")]
+        notify(
+            &app,
+            "Dictation copied — press Ctrl+V",
+            "Bulbul couldn't auto-type on this desktop; your text is on the clipboard.",
+        );
+        #[cfg(not(target_os = "linux"))]
         notify(&app, "Bulbul inject failed", &format!("{e:#}"));
         track_dictation_failed(&app, "inject", &meta.mode);
         return;

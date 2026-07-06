@@ -20,3 +20,7 @@ pub use macos::*;
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::*;
+#[cfg(target_os = "linux")]
+pub mod linux_portal_paste;
+#[cfg(target_os = "linux")]
+pub mod linux_uinput;

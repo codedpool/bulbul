@@ -13,8 +13,9 @@ import ScratchpadView from "./views/ScratchpadView.jsx";
 import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
+import LinuxSupportBanner from "./LinuxSupportBanner.jsx";
 import { applyTheme } from "./theme.js";
-import { RELAUNCH_HINT, IS_ANDROID } from "./platform.js";
+import { IS_LINUX, IS_MAC, RELAUNCH_HINT, IS_ANDROID } from "./platform.js";
 import "./App.css";
 
 const ICONS = {
@@ -371,7 +372,7 @@ function App() {
                   <img src={bulbulMark} alt="" className="m-sheet-brand-mark" aria-hidden />
                   <span className="m-sheet-brand-text">bulbul</span>
                 </span>
-                <span className="muted small">v1.0.1 · MIT</span>
+                <span className="muted small">v1.1.0 · MIT</span>
               </div>
             </div>
           </div>
@@ -397,12 +398,27 @@ function App() {
     <>
     <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
       {!IS_ANDROID && (
+        <>
         <TitleBar
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           resolvedTheme={resolvedTheme}
           onToggleTheme={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
         />
+        {IS_MAC && (
+          <button
+            className="mac-floating-sidebar-toggle"
+            onClick={() => setSidebarOpen((v) => !v)}
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <rect x="3" y="4" width="18" height="16" rx="2.5" />
+              <line x1="9" y1="4" x2="9" y2="20" />
+            </svg>
+          </button>
+        )}
+        </>
       )}
       {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
 
@@ -461,17 +477,40 @@ function App() {
                   <span className="toggle-thumb" />
                 </span>
               </label>
+              {IS_MAC && (
+                <button
+                  className="sidebar-mac-btn sidebar-mac-btn-solo"
+                  onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+                  aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+                  title={resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
+                >
+                  {resolvedTheme === "dark" ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <circle cx="12" cy="12" r="4" />
+                      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                    </svg>
+                  )}
+                  <span className="sidebar-mac-label">
+                    {resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
+                  </span>
+                </button>
+              )}
             </>
           )}
           <div className={`status status-${status.state}`}>
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
           </div>
-          <div className="version muted small">v1.0.1 · MIT</div>
+          <div className="version muted small">v1.1.0 · MIT</div>
         </div>
       </aside>
 
       <main className="content">
+        {IS_LINUX && <LinuxSupportBanner />}
         {stagedUpdate && (
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />
@@ -523,17 +562,23 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="titlebar-left">
-        <button
-          className="tb-btn tb-sidebar"
-          aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          onClick={onToggleSidebar}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-            <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
-            <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
-          </svg>
-        </button>
+        {/* On macOS the sidebar toggle lives inside the sidebar (below the
+            brand mark) — pairing it with the traffic lights looked
+            cramped. Win/Linux keep it here so it sits next to the custom
+            titlebar controls the OS doesn't provide. */}
+        {!IS_MAC && (
+          <button
+            className="tb-btn tb-sidebar"
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            onClick={onToggleSidebar}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+              <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
+        )}
       </div>
       <div className="titlebar-spacer" data-tauri-drag-region />
       <div className="titlebar-controls">
@@ -554,44 +599,52 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
             </svg>
           )}
         </button>
-        <button
-          className="tb-btn"
-          aria-label="Minimize"
-          title="Minimize"
-          onClick={() => win.minimize().catch(() => {})}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-          </svg>
-        </button>
-        <button
-          className="tb-btn"
-          aria-label={isMaximized ? "Restore" : "Maximize"}
-          title={isMaximized ? "Restore" : "Maximize"}
-          onClick={() => win.toggleMaximize().catch(() => {})}
-        >
-          {isMaximized ? (
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <rect x="2" y="3.2" width="5.5" height="5.5" fill="none" stroke="currentColor" strokeWidth="1" />
-              <path d="M3.2 3.2 V1.5 H8.5 V6.8 H6.8" fill="none" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          )}
-        </button>
-        <button
-          className="tb-btn tb-close"
-          aria-label="Close"
-          title="Close"
-          onClick={() => win.close().catch(() => {})}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-          </svg>
-        </button>
+        {/* On macOS the OS owns minimize / maximize / close — the red,
+            yellow, green traffic lights on the left. Rendering our own
+            buttons next to them would be visually doubled. The theme
+            toggle stays because it isn't a window-control. */}
+        {!IS_MAC && (
+          <>
+            <button
+              className="tb-btn"
+              aria-label="Minimize"
+              title="Minimize"
+              onClick={() => win.minimize().catch(() => {})}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              className="tb-btn"
+              aria-label={isMaximized ? "Restore" : "Maximize"}
+              title={isMaximized ? "Restore" : "Maximize"}
+              onClick={() => win.toggleMaximize().catch(() => {})}
+            >
+              {isMaximized ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <rect x="2" y="3.2" width="5.5" height="5.5" fill="none" stroke="currentColor" strokeWidth="1" />
+                  <path d="M3.2 3.2 V1.5 H8.5 V6.8 H6.8" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              )}
+            </button>
+            <button
+              className="tb-btn tb-close"
+              aria-label="Close"
+              title="Close"
+              onClick={() => win.close().catch(() => {})}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              </svg>
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

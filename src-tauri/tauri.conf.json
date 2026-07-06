@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Bulbul",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "identifier": "com.bulbul.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -58,14 +58,25 @@
         "depends": [
           "libwebkit2gtk-4.1-0",
           "libgtk-3-0",
-          "libayatana-appindicator3-1"
+          "libayatana-appindicator3-1",
+          "wl-clipboard"
         ],
+        "recommends": [
+          "gnome-shell-extension-appindicator"
+        ],
+        "postInstallScript": "deb/postinst.sh",
+        "postRemoveScript": "deb/postrm.sh",
         "section": "utility"
       },
       "rpm": {
         "depends": [
           "webkit2gtk4.1",
-          "gtk3"
+          "gtk3",
+          "wl-clipboard"
+        ],
+        "recommends": [
+          "ydotool",
+          "gnome-shell-extension-appindicator"
         ]
       },
       "appimage": {

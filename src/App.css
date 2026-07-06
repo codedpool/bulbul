@@ -30,24 +30,173 @@ body, html, #root {
   height: 100%;
 }
 
-/* macOS: the Tauri window is borderless + transparent, so we make the
-   body see-through and let the inner shell draw a rounded background.
-   Without this the shell hits the window's flat alpha-edge and shows
-   as a sharp-cornered rectangle. */
-.platform-mac body,
-.platform-mac html,
-.platform-mac #root {
+/* macOS: native NSWindow chrome with TitleBarStyle::Overlay so the
+   title bar strip is transparent and content extends behind it. The
+   React .titlebar is redundant (native chrome renders traffic lights
+   + drag region); hide it. The sidebar toggle floats at the same Y
+   as the traffic lights, positioned to their right — Wispr Flow /
+   Linear / Raycast pattern. */
+.platform-mac .titlebar {
+  display: none;
+}
+
+/* ────────── Mac chrome header ──────────
+   A distinct 44px strip along the top of the window that holds the
+   OS traffic lights and our floating sidebar toggle. Slightly
+   sunken background + subtle bottom border read as an explicit
+   header, so the RGB row doesn't float ambiguously over the sidebar
+   content below. Sidebar + main content padding-top offsets clear
+   this strip. */
+.platform-mac .app-shell::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 38px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--field);
+  z-index: 998;
+  pointer-events: none;
+}
+
+/* Wispr Flow-style sidebar toggle: sits inline with the traffic
+   lights, immediately to their right. Overlay title bar mode extends
+   window content up to Y=0, so we can place a fixed-position button
+   at (top: 10px, left: 84px) — 84px clears the ~78px cluster + a
+   small gap. 16px icon w/ 1.9px stroke in a 26×26 hit box matches
+   the visual mass of the filled traffic-light discs; anything
+   smaller reads as a thin wispy afterthought next to them. */
+.mac-floating-sidebar-toggle {
+  display: none;
+}
+.platform-mac .mac-floating-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 4px;
+  left: 82px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text);
+  opacity: 0.7;
+  cursor: pointer;
+  z-index: 1002;
+  transition: background 120ms ease, opacity 120ms ease;
 }
-.platform-mac .app-shell {
-  border-radius: 10px;
-  overflow: hidden;
+.platform-mac .mac-floating-sidebar-toggle:hover {
+  background: var(--fill);
+  opacity: 1;
 }
+
+/* Mac sidebar: single-color bg matches main content (border-right
+   still delineates the column). Padding-top clears the 44px chrome
+   header + 8px breathing so the brand mark sits comfortably below
+   the RGB row. No divider under the brand — the header separator
+   already carries that job. */
+.platform-mac .sidebar {
+  background: var(--bg);
+  padding-top: 46px;
+}
+.platform-mac .brand {
+  padding-top: 0;
+  padding-bottom: 14px;
+  border-bottom: none;
+  margin-bottom: 6px;
+}
+
+/* Main content: same top-clearance treatment as the sidebar so
+   page headers (h1) don't hide behind the chrome header. */
+.platform-mac .content {
+  padding-top: 54px;
+}
+
+/* ────────── Linux: opaque square window ──────────
+   Unlike Mac (native chrome) and Windows (DWM rounds borderless
+   windows), Linux has no reliable way to round a borderless window:
+   the trick everywhere else needs a transparent window, and WebKitGTK
+   transparency is unavailable on many stacks (and outright broken on
+   some drivers/VMs — a transparent window that won't composite renders
+   black/garbled corners instead of see-through ones). So Linux stays
+   opaque and borderless with our custom titlebar; corners are square.
+   Body keeps the themed background from the base rule above — no
+   platform override needed. */
 
 .loading {
   color: var(--text-dim);
   text-align: center;
   padding: 80px;
+}
+
+/* ─────────── Linux support banner ───────────
+   Amber sibling of the update banner below: shows only when the Linux
+   session needs user action (Wayland hotkey fallback, missing paste
+   tool, GNOME tray extension). Same layout position, calmer urgency
+   than an error. */
+
+.linux-banner {
+  padding: 12px 16px;
+  margin: -16px -16px 16px;
+  background: linear-gradient(180deg, rgba(224, 170, 62, 0.16), rgba(224, 170, 62, 0.08));
+  border-bottom: 1px solid rgba(224, 170, 62, 0.35);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.linux-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.linux-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e0aa3e;
+  box-shadow: 0 0 0 3px rgba(224, 170, 62, 0.22);
+  flex-shrink: 0;
+}
+
+.linux-banner-dismiss {
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.linux-banner-dismiss:hover { color: var(--text); background: var(--fill); }
+
+.linux-banner-list {
+  margin: 8px 0 0;
+  padding-left: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.linux-banner-code {
+  display: block;
+  margin-top: 4px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--field);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  font-size: 12px;
+  color: var(--text);
+  -webkit-user-select: text;
+  user-select: text;
+  word-break: break-all;
 }
 
 /* ─────────── Update banner (Mode-B auto-update) ─────────── */
@@ -134,6 +283,10 @@ body, html, #root {
   align-items: stretch;
   padding-left: 6px;
 }
+
+/* Mac no longer uses the React .titlebar (native NSWindow chrome
+   handles traffic lights + drag + title). This rule is only kept for
+   parity — the whole .platform-mac .titlebar is display:none above. */
 
 .titlebar-spacer {
   flex: 1;
@@ -254,6 +407,64 @@ body, html, #root {
   color: var(--text-heading);
   text-transform: lowercase;
   line-height: 1;
+}
+
+/* Mac-only footer chrome — since we hide the React .titlebar on Mac
+   in favor of the native NSWindow chrome, the two toggles that used
+   to live there (sidebar collapse, theme switch) move down into the
+   sidebar footer. Styled as full-width row buttons matching the
+   nav-item shape (16px icon + label at 13px), so they sit visually
+   consistent with the sections above and don't read as afterthoughts.
+   Collapsed sidebar: icon-only, centered. */
+.sidebar-mac-controls {
+  display: none;
+}
+.platform-mac .sidebar-mac-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+  border-top: 1px solid var(--field);
+  padding-top: 8px;
+}
+.sidebar-mac-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-5);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  transition: background 120ms ease, color 120ms ease;
+}
+.sidebar-mac-btn svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: color 120ms ease;
+}
+.sidebar-mac-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.sidebar-mac-btn:hover svg {
+  color: var(--text);
+}
+.platform-mac .app-shell.sidebar-collapsed .sidebar-mac-btn {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+  gap: 0;
+}
+.platform-mac .app-shell.sidebar-collapsed .sidebar-mac-label {
+  display: none;
 }
 
 .nav {

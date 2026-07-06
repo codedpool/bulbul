@@ -19,6 +19,12 @@
   border-radius: 10px;
   overflow: hidden;
 }
+/* Push the brand mark + dots clear of the OS traffic lights that
+   float at the top-left of the window in TitleBarStyle::Overlay mode.
+   96px matches the main app titlebar so all three windows feel aligned. */
+.platform-mac .onb-top {
+  padding-left: 96px;
+}
 
 .onb-shell * { box-sizing: border-box; }
 .onb-shell button,
