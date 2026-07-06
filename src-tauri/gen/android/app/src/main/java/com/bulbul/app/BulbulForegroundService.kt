@@ -38,6 +38,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -488,24 +490,30 @@ private data class BubbleCallbacks(
 /// reposition. The "recording" visual state swaps the fill to red so
 /// the user has unambiguous feedback while audio is being captured.
 private class BubbleView(context: Context, private val cb: BubbleCallbacks) : View(context) {
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = COLOR_IDLE
+    /// The bubble IS the app icon: a black rounded-square tile with the
+    /// gold Bulbul bird centered on it — identical to the launcher icon.
+    /// The whole view's alpha (set from the user's overlay-opacity
+    /// setting in showBubble) is what makes it see-through; nothing here
+    /// dims the icon itself.
+    private val tilePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
         style = Paint.Style.FILL
-        // Soft drop shadow so the bubble reads as floating above any
+        // Soft drop shadow so the tile reads as floating above any
         // background. Needs a software layer to render on all APIs.
         setShadowLayer(10f, 0f, 4f, Color.argb(90, 0, 0, 0))
     }
-    private val micPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.STROKE
-        strokeWidth = 5f
-        strokeCap = Paint.Cap.ROUND
+    /// The Bulbul bird, keyed to a transparent PNG (drawable-nodpi/
+    /// bulbul_bird.png) — same art the launcher foreground uses.
+    private val birdBitmap: Bitmap? = try {
+        BitmapFactory.decodeResource(context.resources, R.drawable.bulbul_bird)
+    } catch (t: Throwable) {
+        Log.w(TAG, "bird bitmap decode failed", t)
+        null
     }
-    private val micFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
-    }
-    /// Animated ring drawn while recording — alpha/radius driven by a
+    private val birdPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val birdDst = android.graphics.RectF()
+    private val tileRect = android.graphics.RectF()
+    /// Animated border drawn while recording — alpha/inset driven by a
     /// repeating animator so "live mic" is unmissable at a glance.
     private val pulsePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = COLOR_RECORDING
@@ -559,7 +567,6 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     fun setRecording(active: Boolean) {
         post {
             recording = active
-            fillPaint.color = if (active) COLOR_RECORDING else COLOR_IDLE
             pulser?.cancel(); pulser = null
             if (active) {
                 pulser = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
@@ -574,30 +581,39 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     }
 
     override fun onDraw(canvas: Canvas) {
-        val cx = width / 2f
-        val cy = height / 2f
-        val r = width / 2f - 8f // leave room for shadow + pulse ring
-        if (recording) {
-            pulsePaint.alpha = ((1f - pulse) * 160).toInt()
-            canvas.drawCircle(cx, cy, r + pulse * 7f, pulsePaint)
-        }
-        canvas.drawCircle(cx, cy, r, fillPaint)
+        val pad = 8f // room for the drop shadow + recording border
+        tileRect.set(pad, pad, width - pad, height - pad)
+        val radius = tileRect.width() * TILE_CORNER_FRACTION
 
-        // Mic glyph, scaled to the bubble: capsule body, cradle arc,
-        // stem and base — the universal "dictate here" symbol.
-        val u = r / 22f
-        val bodyW = 9f * u
-        val bodyTop = cy - 12f * u
-        val bodyBottom = cy + 1f * u
-        canvas.drawRoundRect(
-            cx - bodyW / 2, bodyTop, cx + bodyW / 2, bodyBottom,
-            bodyW / 2, bodyW / 2, micFillPaint,
-        )
-        micPaint.strokeWidth = 2.6f * u
-        val arc = android.graphics.RectF(cx - 8f * u, cy - 7f * u, cx + 8f * u, cy + 5f * u)
-        canvas.drawArc(arc, 20f, 140f, false, micPaint)
-        canvas.drawLine(cx, cy + 5f * u, cx, cy + 9f * u, micPaint)
-        canvas.drawLine(cx - 4.5f * u, cy + 10f * u, cx + 4.5f * u, cy + 10f * u, micPaint)
+        // Black rounded-square tile — the app-icon ground.
+        canvas.drawRoundRect(tileRect, radius, radius, tilePaint)
+
+        // The gold bird, centered and scaled to the same proportion the
+        // launcher foreground uses, so the bubble is literally the app
+        // icon.
+        val bmp = birdBitmap
+        if (bmp != null && bmp.width > 0 && bmp.height > 0) {
+            val maxSide = tileRect.width() * BIRD_TILE_FRACTION
+            val scale = maxSide / maxOf(bmp.width, bmp.height)
+            val hw = bmp.width * scale / 2f
+            val hh = bmp.height * scale / 2f
+            val cx = tileRect.centerX()
+            val cy = tileRect.centerY()
+            birdDst.set(cx - hw, cy - hh, cx + hw, cy + hh)
+            canvas.drawBitmap(bmp, null, birdDst, birdPaint)
+        }
+
+        // Recording: a pulsing red border hugging the tile — keeps the
+        // icon itself black while making "live mic" unmissable.
+        if (recording) {
+            pulsePaint.alpha = (120 + (1f - pulse) * 135).toInt().coerceIn(0, 255)
+            val grow = pulse * 3f
+            val rr = android.graphics.RectF(
+                tileRect.left - grow, tileRect.top - grow,
+                tileRect.right + grow, tileRect.bottom + grow,
+            )
+            canvas.drawRoundRect(rr, radius + grow, radius + grow, pulsePaint)
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -654,9 +670,14 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     companion object {
         private const val TAG = "BulbulBubble"
         private const val TOUCH_SLOP_PX = 12
-        // Bulbul's primary blue when idle; cherry red when capturing,
-        // so a glance at the screen tells you whether audio is live.
-        private val COLOR_IDLE = Color.parseColor("#3B82F6")
+        // Corner radius of the black tile as a fraction of its width —
+        // tuned to read like the launcher icon's rounded square.
+        private const val TILE_CORNER_FRACTION = 0.26f
+        // Bird size as a fraction of the tile — matches the launcher
+        // foreground's padding so the bubble is the same icon.
+        private const val BIRD_TILE_FRACTION = 0.56f
+        // Cherry red for the recording border, so a glance tells you
+        // whether audio is live.
         private val COLOR_RECORDING = Color.parseColor("#EF4444")
     }
 }

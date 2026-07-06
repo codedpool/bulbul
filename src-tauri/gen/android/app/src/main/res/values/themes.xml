@@ -1,7 +1,13 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Theme.bulbul" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <!-- Android 12+ shows a system splash on cold start, defaulting
+             to the launcher icon on a background — that was the extra
+             "bulbul icon then loader" the user saw. Suppress the icon and
+             paint the splash plain black so it blends straight into the
+             app's own (black) React launch splash and reads as one. -->
+        <item name="android:windowSplashScreenBackground">@android:color/black</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
     </style>
 
     <!-- Translucent theme for the text-selection transform sheet

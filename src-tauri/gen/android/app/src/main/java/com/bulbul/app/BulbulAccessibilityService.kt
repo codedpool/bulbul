@@ -141,10 +141,11 @@ class BulbulAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "BulbulA11y"
-        // Long enough to absorb IME teardown/rebuild during keyboard
-        // animations, short enough that an actual dismissal feels
-        // responsive. 500 ms hits the sweet spot on every device I
-        // have logs from; if a future OEM is slower we can dial up.
-        private const val HIDE_GRACE_MS = 500L
+        // Just long enough to absorb a one-frame IME teardown/rebuild
+        // flicker during a keyboard animation, but short enough that
+        // closing the keyboard hides the bubble near-instantly. 500 ms
+        // read as "the bubble lingers" — 120 ms feels immediate while
+        // still swallowing the transient flap.
+        private const val HIDE_GRACE_MS = 120L
     }
 }

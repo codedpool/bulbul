@@ -54,6 +54,14 @@ object BulbulConfig {
         null
     }
 
+    /// Theme preference the React app persists: "dark" | "light" | "system".
+    /// Defaults to "light" to match theme.js's own default. Used to keep the
+    /// system status-bar / nav-bar icon contrast in sync with the in-app
+    /// theme (otherwise, in light mode over a dark OS theme, the white status
+    /// icons vanish into the app's white top).
+    fun theme(context: Context): String =
+        read(context)?.optString("theme", "light").orEmpty().ifBlank { "light" }
+
     fun apiKey(context: Context): String =
         read(context)?.optString("groq_api_key", "").orEmpty()
 
