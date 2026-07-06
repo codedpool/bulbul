@@ -3509,14 +3509,33 @@ html.platform-android .m-tab .m-tab-icon svg {
   height: 22px;
   display: block;
 }
-html.platform-android .m-tab.active { color: var(--text); }
+html.platform-android .m-tab.active { color: #5ec8c0; }
 html.platform-android .m-tab.active .m-tab-icon {
-  background: var(--fill);
+  background: rgba(94, 200, 192, 0.16);
   border-radius: 999px;
-  padding: 4px 14px;
+  padding: 4px 16px;
   width: auto;
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 html.platform-android .m-tab-label { line-height: 1; }
+
+/* The dictionary "add auto-correct" row lays out two text inputs + arrow
+   + case toggle in a single flex row — too wide for a phone, so it
+   overflowed horizontally. Stack the inputs full-width and drop the
+   inline arrow (the placeholders already convey the from→to direction). */
+html.platform-android .dict-form-fields {
+  flex-wrap: wrap;
+}
+html.platform-android .dict-form-fields input[type="text"] {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+html.platform-android .dict-form-fields .dict-arrow {
+  display: none;
+}
 
 /* ── "More" bottom sheet ── */
 html.platform-android .m-sheet-overlay {
@@ -3625,9 +3644,27 @@ html.platform-android .insights-page .tabs {
   flex-wrap: nowrap;
   scrollbar-width: none;
 }
+/* On desktop the heatmap fills the streak panel via flex:1 stretch. Once
+   the grid stacks to a single column on mobile the panel has no imposed
+   height, so flex:1 cells collapse to ~0px and the whole heatmap
+   disappears. Pin the cells to a fixed size and let the row scroll
+   horizontally instead. */
 html.platform-android .insights-page .heatmap {
+  flex: none;
+  align-items: flex-start;
+  justify-content: flex-start;
   overflow-x: auto;
   padding-bottom: 6px;
+}
+html.platform-android .insights-page .heatmap-col {
+  flex: none;
+}
+html.platform-android .insights-page .heatmap-cell {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  min-width: 13px;
+  min-height: 13px;
 }
 html.platform-android .voice-grid {
   grid-template-columns: 1fr;

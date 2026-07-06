@@ -252,9 +252,23 @@ function App() {
             <img src={bulbulMark} alt="" className="m-brand-mark" aria-hidden />
             <span className="m-brand-text">bulbul</span>
           </div>
-          <div className={`m-status status-${status.state}`} title={statusLabel(status.state)}>
-            <span className="dot" />
-          </div>
+          <button
+            className="m-icon-btn"
+            aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+            onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+          >
+            {resolvedTheme === "dark" ? (
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+              </svg>
+            ) : (
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
+          </button>
         </header>
         <main className="content m-content">{mainView}</main>
 
@@ -292,24 +306,6 @@ function App() {
                   </button>
                 );
               })}
-              <button
-                className="m-sheet-item"
-                onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
-              >
-                <span className="m-sheet-icon">
-                  {resolvedTheme === "dark" ? (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <circle cx="12" cy="12" r="4" />
-                      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                    </svg>
-                  )}
-                </span>
-                <span>{resolvedTheme === "dark" ? "Light mode" : "Dark mode"}</span>
-              </button>
               <div className="m-sheet-foot">
                 <span className={`status status-${status.state}`}>
                   <span className="dot" /> {statusLabel(status.state)}

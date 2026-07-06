@@ -13,6 +13,7 @@
 package com.bulbul.app
 
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.DataOutputStream
@@ -24,6 +25,7 @@ object GroqClient {
 
     private const val TAG = "BulbulGroq"
     private const val ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
+    private const val CHAT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
     private const val MODEL = "whisper-large-v3-turbo"
     private const val BOUNDARY = "----BulbulMultipartBoundary"
     private const val CRLF = "\r\n"
@@ -66,6 +68,53 @@ object GroqClient {
             JSONObject(body).optString("text").trim().takeIf { it.isNotEmpty() }
         } catch (t: Throwable) {
             Log.w(TAG, "Groq transcribe failed", t)
+            null
+        }
+    }
+
+    /// Runs a single chat completion — the transform pipeline. [systemPrompt]
+    /// is the transform's instruction (see Transforms.kt), [userText] is the
+    /// selected text to transform. Returns the model's output, or null on any
+    /// failure (no key, network, non-2xx, empty completion) so the caller can
+    /// surface a toast instead of silently replacing the selection with junk.
+    fun chat(apiKey: String, systemPrompt: String, userText: String, model: String): String? {
+        if (apiKey.isBlank()) {
+            Log.w(TAG, "no API key set; not transforming")
+            return null
+        }
+        return try {
+            val payload = JSONObject().apply {
+                put("model", model)
+                put("temperature", 0.3)
+                put("messages", JSONArray().apply {
+                    put(JSONObject().put("role", "system").put("content", systemPrompt))
+                    put(JSONObject().put("role", "user").put("content", userText))
+                })
+            }.toString()
+
+            val conn = (URL(CHAT_ENDPOINT).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 10_000
+                readTimeout = 30_000
+                setRequestProperty("Authorization", "Bearer $apiKey")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val err = conn.errorStream?.let { InputStreamReader(it).buffered().readText() } ?: ""
+                Log.w(TAG, "Groq chat returned $code: $err")
+                return null
+            }
+            val body = conn.inputStream.bufferedReader().use(BufferedReader::readText)
+            JSONObject(body)
+                .getJSONArray("choices").getJSONObject(0)
+                .getJSONObject("message").getString("content")
+                .trim().takeIf { it.isNotEmpty() }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Groq chat failed", t)
             null
         }
     }

@@ -1,0 +1,17 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.bulbul" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Customize your theme here. -->
+    </style>
+
+    <!-- Translucent theme for the text-selection transform sheet
+         (TransformActivity). The window is see-through so the app the
+         user selected text in stays visible behind the bottom sheet —
+         it must never read as a separate full-screen page. Own scrim is
+         drawn in code, so backgroundDimEnabled is off. -->
+    <style name="Theme.bulbul.Transparent" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+</resources>

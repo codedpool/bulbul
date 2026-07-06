@@ -145,13 +145,17 @@ class BulbulForegroundService : Service() {
             } else null
 
             if (transcript != null) {
-                val injected = TextInjector.inject(transcript)
-                Log.i(TAG, "transcript len=${transcript.length} injected=$injected")
-                recordHistory(transcript, wavDurationMs(wav))
+                // Apply the user's dictionary (whole-word substitutions) before
+                // injecting, and count how many fixes it made so Insights can
+                // report them.
+                val (corrected, fixes) = BulbulConfig.applyDictionary(this, transcript)
+                val injected = TextInjector.inject(corrected)
+                Log.i(TAG, "transcript len=${corrected.length} fixes=$fixes injected=$injected")
+                recordHistory(corrected, wavDurationMs(wav), fixes)
                 // Couldn't type it in (focus gone, A11y unbound) — put
                 // the words on the clipboard so they're one long-press
                 // away instead of silently lost.
-                if (!injected) clipboardFallback(transcript)
+                if (!injected) clipboardFallback(corrected)
             } else {
                 Log.w(TAG, "transcription failed; saving WAV instead")
                 writeRecording(wav)
@@ -162,7 +166,7 @@ class BulbulForegroundService : Service() {
     /// Appends one dictation to filesDir/history.jsonl. The Rust side
     /// (mobile.rs get_recent_dictations / get_home_stats) reads the same
     /// file — file-as-IPC, same trick as config.json.
-    private fun recordHistory(text: String, durationMs: Long) {
+    private fun recordHistory(text: String, durationMs: Long, fixCount: Int) {
         try {
             val words = text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
             val line = org.json.JSONObject().apply {
@@ -171,6 +175,7 @@ class BulbulForegroundService : Service() {
                 put("word_count", words)
                 put("mode", "clean")
                 put("duration_ms", durationMs)
+                put("fix_count", fixCount)
             }
             // Same dir the Rust side reads (app_data_dir) — resolved, not
             // assumed, for the same reason as getApiKey.

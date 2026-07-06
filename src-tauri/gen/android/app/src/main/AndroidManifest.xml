@@ -46,6 +46,29 @@
             android:exported="false"
             android:label="@string/app_name" />
 
+        <!-- Text-selection transform entry. Registers "Bulbul" in the
+             system Copy/Paste floating toolbar via ACTION_PROCESS_TEXT.
+             Opens as a translucent bottom sheet over the current app
+             (never a full page), runs the chosen transform through Groq,
+             and returns the result so the OS replaces the selection in
+             place. Exported so the system can launch it from any app's
+             selection toolbar. -->
+        <activity
+            android:name=".TransformActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.bulbul.Transparent"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:configChanges="orientation|keyboardHidden|screenSize|uiMode"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
         <!-- Bulbul accessibility service. Off until the user enables it
              in Settings → Accessibility → Bulbul (the onboarding step
              surfaces that screen via Intent). The system holds the
