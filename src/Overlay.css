@@ -198,12 +198,28 @@ html, body, #root {
 
 .pill-done   .glyph { color: #5ec8c0; }
 .pill-error  .glyph { color: #d46b6b; }
+/* Rejected-recording pills use amber (warning, not error) — the user
+   did nothing wrong, the recording just didn't make the cut. Same hue
+   as processing/rate_limited so the visual vocabulary stays small. */
+.pill-too_short .glyph,
+.pill-silent .glyph { color: #d4a657; }
 
 .pill-listening .pill-label { color: #5ec8c0; }
 .pill-processing .pill-label,
 .pill-injecting .pill-label { color: #d4a657; }
 .pill-done .pill-label { color: #5ec8c0; }
 .pill-error .pill-label { color: #d46b6b; }
+.pill-too_short .pill-label,
+.pill-silent .pill-label { color: #d4a657; }
+
+/* Rejection pills carry a short sentence ("No audio — check mic"),
+   so they need the same widened layout as rate_limited. */
+.expanded .pill.pill-too_short,
+.expanded .pill.pill-silent {
+  width: auto;
+  min-width: 96px;
+  max-width: 200px;
+}
 
 /* Rate-limit backoff: amber like processing, widened for the countdown text. */
 .expanded .pill.pill-rate_limited {

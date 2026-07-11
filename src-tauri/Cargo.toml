@@ -1,6 +1,6 @@
 [package]
 name = "bulbul"
-version = "1.0.1"
+version = "1.1.0"
 description = "Free, open-source Windows voice dictation powered by Groq"
 authors = ["Bulbul contributors"]
 edition = "2021"
@@ -9,22 +9,28 @@ edition = "2021"
 name = "bulbul_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Tauri 2's `tauri::generate_context!()` decides at compile time
+# whether the webview loads frontendDist (the bundled dist/) or the
+# devUrl from tauri.conf.json. With the `custom-protocol` feature off
+# it bakes the devUrl in unconditionally — fine for `tauri dev` /
+# `npm run tauri dev`, but disastrous for any release binary built
+# outside the Tauri CLI (e.g. our manual `cargo build --release` for
+# Android, where the resulting APK tries to connect to a Vite dev
+# server that isn't running). The Tauri CLI's `tauri build` flips this
+# on automatically; everywhere else we have to opt in via
+# --features custom-protocol on the cargo command line.
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
-# OS-level RegisterHotKey, used because rdev's low-level hook is suppressed
-# when Bulbul's own webview has focus.
-tauri-plugin-global-shortcut = "2"
-# Ensures only one Bulbul process can run at a time. Without this, two
-# instances both watch the modifier-chord keyboard state, both fire on
-# the same hotkey press, and writes to the shared SQLite + config race.
-tauri-plugin-single-instance = "2"
 
 # Local persistence (activity log + V2 data)
 rusqlite = { version = "0.31", features = ["bundled"] }
@@ -34,19 +40,47 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Audio
-cpal = "0.15"
+# WAV encoder — used to package recorded audio for Groq's STT endpoint
 hound = "3.5"
 
 # HTTP / Groq
 reqwest = { version = "0.12", default-features = false, features = ["multipart", "json", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 
-# Clipboard
+# ----- Desktop-only dependencies -----------------------------------------
+# Audio capture, clipboard, OS hotkeys, and single-instance guarding are
+# all desktop-only concepts. On Android, audio is recorded via Kotlin
+# AudioRecord and bridged through JNI; text injection goes through the
+# Accessibility Service rather than a clipboard; "hotkeys" are gestures
+# on the floating bubble; and only one Activity exists per process by
+# Android's process model. Gating these out of the Android build keeps
+# the dependency graph small and removes a wall of compile errors from
+# crates that simply don't have an Android target.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+cpal = "0.15"
 arboard = "3"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
 
-# Win32 SendInput for Ctrl+V
-[dependencies.windows]
+# ----- Android-only dependencies ----------------------------------------
+# rustls 0.23 (pulled in transitively by reqwest's rustls-tls feature)
+# refuses to operate until a CryptoProvider is installed in the process
+# default registry — on Windows + macOS reqwest falls back to Schannel /
+# SecureTransport so this never trips, but on Android there is no
+# native TLS backend so any reqwest::Client::new() panics on the first
+# call with "No provider set". We install ring at startup in mobile.rs.
+[target.'cfg(target_os = "android")'.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+# Platform-specific dependencies. Top-level [dependencies] above must
+# stay portable across Windows + macOS (+ eventually Linux); anything that
+# only exists on one OS lives in a target-conditional block below.
+
+# Win32: SendInput, GetForegroundWindow, UIA, GetAsyncKeyState — see
+# src/{inject,window_info,uia,hotkey}/windows.rs and the Win32-gated
+# helpers in lib.rs (bring_overlay_to_top, spawn_hover_watcher,
+# work_area_bottom_logical).
+[target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
 features = [
     "Win32_UI_Input_KeyboardAndMouse",
@@ -57,6 +91,78 @@ features = [
     "Win32_System_Threading",
     "Win32_System_Com",
 ]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# CGEvent-driven keystroke synthesis for inject/macos.rs. Replaces the
+# osascript+System Events path that needed the AppleEvents TCC prompt;
+# enigo posts events directly through CGEventPost which only needs the
+# Accessibility permission we already require for the global hotkey
+# polling.
+enigo = "0.6.1"
+# NSWorkspace + NSRunningApplication for foreground-app detection
+# (window_info/macos.rs).
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
+# objc2 runtime for class-method message sending into AVFoundation
+# (mic-permission status check) and other classes not exposed by the
+# higher-level objc2-* binding crates. Pinned to 0.6 to match what
+# objc2-app-kit 0.3 transitively requires — a version mismatch here
+# (0.5 vs 0.6) splits the encode/runtime traits and breaks every
+# msg_send! call site at compile time.
+objc2 = "0.6"
+# Blocks for AVCaptureDevice.requestAccess completion handler. The
+# requestAccess API requires a non-null block; we use RcBlock so the
+# allocation outlives the async completion callback. Pinned to match
+# objc2 0.6's block2 alignment.
+block2 = "0.6"
+# CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs)
+# and live key-state polling in the hotkey path (hotkey/macos.rs).
+core-graphics = "0.25"
+# AXUIElement bindings for the correction-memory watcher
+# (uia/macos.rs). Also pulls in core-foundation transitively, but we
+# depend on it explicitly so the CFString::wrap_under_create_rule path
+# stays stable across point releases.
+accessibility-sys = "0.2"
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# x11rb: pure-Rust X11 binding.
+# - foreground-window discovery (window_info/linux.rs)
+# - XTest extension for synthetic keyboard events (inject/linux.rs)
+x11rb = { version = "0.13", features = ["xtest"] }
+# xdg-desktop-portal client. Two portals:
+#   - global_shortcuts: native Wayland press/release hotkeys
+#     (hotkey/linux_portal.rs)
+#   - remote_desktop: native keystroke injection for paste on Wayland
+#     (inject/linux_portal_paste.rs) — replaces needing wtype/ydotool
+# register_host_app (crate root) attaches our app id so GNOME's portal
+# stops rejecting requests with "an app id is required". tokio backend
+# matches the tokio we already ship.
+# remote_desktop's module pulls in screencast::Stream, so the screencast
+# feature must ride along (ashpd 0.13 doesn't declare the inter-feature
+# dep itself — enabling remote_desktop alone fails to compile).
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast"] }
+# StreamExt for the portal's Activated/Deactivated signal streams.
+futures-util = "0.3"
+# BitFlags<DeviceType> for the RemoteDesktop select_devices call. Pinned
+# to the version ashpd 0.13 already resolves so the flag types match.
+enumflags2 = "0.7"
+# kernel uinput virtual keyboard (inject/linux_uinput.rs). This is the
+# path that actually works on GNOME Wayland: it injects below the
+# compositor, so Mutter can't drop it the way it drops the portal's
+# Notify* and blocks wtype. Same mechanism Speech Note / nerd-dictation
+# / numen ship. Access to /dev/uinput comes from a setgid binary + udev
+# rule the .deb installs — no relogin, no broad capability.
+evdev = "0.13"
+# EIS (libei) keystroke injection — kept as a no-privilege fallback for
+# AppImage users who can't get the setgid uinput path. enigo's libei
+# backend (reis + its own ashpd session) does the EIS handshake;
+# libei_tokio only. (Its ashpd ^0.12 coexists with our 0.13.)
+enigo = { version = "0.6.1", default-features = false, features = ["libei_tokio"] }
+# SIGUSR1/SIGUSR2 handlers — DE-level custom shortcuts can `kill -USR2`
+# (or run `bulbul --toggle-dictation`) to drive dictation on compositors
+# without a working GlobalShortcuts portal.
+signal-hook = "0.3"
 
 [dependencies.anyhow]
 version = "1"

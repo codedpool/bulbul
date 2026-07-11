@@ -11,6 +11,21 @@
   font-optical-sizing: auto;
 }
 
+/* macOS: round the wizard's outer shell (the window itself is
+   borderless + transparent on Mac, so this is what the user
+   actually sees as the window edge). Win11 / GNOME / KDE already
+   round borderless windows at the compositor level. */
+.platform-mac .onb-shell {
+  border-radius: 10px;
+  overflow: hidden;
+}
+/* Push the brand mark + dots clear of the OS traffic lights that
+   float at the top-left of the window in TitleBarStyle::Overlay mode.
+   96px matches the main app titlebar so all three windows feel aligned. */
+.platform-mac .onb-top {
+  padding-left: 96px;
+}
+
 .onb-shell * { box-sizing: border-box; }
 .onb-shell button,
 .onb-shell input,
@@ -438,6 +453,44 @@
 .onb-theme-seg {
   width: auto;
   min-width: 260px;
+}
+
+/* On a phone the 260px segmented control overflows the card. Stack the label
+   above it and let the control fill the width. */
+html.platform-android .onb-theme-block {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+html.platform-android .onb-theme-seg {
+  width: 100%;
+  min-width: 0;
+}
+
+/* ─────────── Android wizard layout ─────────── */
+
+/* Top bar: edge-to-edge draws under the status bar and Android reports the
+   safe-area inset as 0, so the brand collided with the notification bar.
+   Give it the same generous top clearance as the dashboard banner. */
+html.platform-android .onb-top {
+  height: auto;
+  padding: max(52px, calc(env(safe-area-inset-top) + 18px)) 18px 12px;
+  border-bottom: 1px solid var(--fill);
+}
+
+/* Even side gutters so nothing (e.g. the Verify button on the API-key step)
+   sits flush against the screen edge — the desktop 48px gutter is replaced
+   with a comfortable, symmetric mobile margin. */
+html.platform-android .onb-page {
+  padding: 18px 18px 0;
+}
+html.platform-android .onb-page-inner {
+  gap: 16px;
+}
+
+/* Action row buttons breathe and reach a proper tap size. */
+html.platform-android .onb-actions .onb-btn {
+  min-height: 44px;
 }
 
 /* ─────────── Hotkey step ─────────── */
@@ -1257,4 +1310,79 @@
   font-size: 12.5px;
   line-height: 1.45;
   color: var(--text-muted);
+}
+
+/* === Permissions step (macOS) ============================================== */
+
+.onb-perm-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 28px 0;
+}
+
+.onb-perm-card {
+  border: 1px solid var(--border);
+  background: var(--fill);
+  border-radius: 12px;
+  padding: 18px 20px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.onb-perm-card.granted {
+  border-color: var(--accent, #4ade80);
+  background: color-mix(in srgb, var(--accent, #4ade80) 8%, var(--fill));
+}
+
+.onb-perm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.onb-perm-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onb-perm-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg);
+}
+
+.onb-perm-card.granted .onb-perm-status {
+  border-color: var(--accent, #4ade80);
+  color: var(--accent, #4ade80);
+  background: var(--bg);
+}
+
+.onb-perm-actions {
+  margin: 10px 0 8px;
+}
+
+.onb-perm-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.onb-perm-confirm input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
 }

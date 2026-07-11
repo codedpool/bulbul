@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import FeatureHero from "../components/FeatureHero.jsx";
+import HowToCard from "../components/HowToCard.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
+import { IS_MAC, IS_ANDROID } from "../platform.js";
 
 const TRANSFORMS_HERO_SAMPLES = [
   { trigger: "Polish", expansion: "Fix grammar, tighten flow, keep meaning." },
@@ -94,7 +96,9 @@ export default function TransformsView() {
         <div>
           <h1>Transforms</h1>
           <p className="muted small">
-            Select text anywhere, press Alt+1 through Alt+6, and Bulbul rewrites it — polish, retone, or restructure. The one marked default is what Bulbul uses everywhere else.
+            {IS_ANDROID
+              ? "One-tap rewrite styles — polish, retone, or restructure. The one marked default is what Bulbul uses everywhere else."
+              : `Select text anywhere, press ${IS_MAC ? "⌘1 through ⌘6" : "Alt+1 through Alt+6"}, and Bulbul rewrites it — polish, retone, or restructure. The one marked default is what Bulbul uses everywhere else.`}
           </p>
         </div>
         <div className="header-actions">
@@ -112,9 +116,31 @@ export default function TransformsView() {
 
       <FeatureHero
         dismissKey="bulbul.transforms.hero.dismissed"
-        title={<>Rewrite anything you write — with <em>one hotkey.</em></>}
+        title={
+          IS_ANDROID ? (
+            <>Rewrite any text — <em>right from the menu.</em></>
+          ) : (
+            <>Rewrite anything you write — with <em>one hotkey.</em></>
+          )
+        }
         samples={TRANSFORMS_HERO_SAMPLES}
       />
+
+      {IS_ANDROID && (
+        <HowToCard title="How transforms work" storageKey="bulbul.transforms.howto">
+          <ol className="howto-steps">
+            <li>Select text in any app.</li>
+            <li>
+              In the pop-up toolbar (Copy · Paste · …), tap <strong>Bulbul</strong> — it may
+              be under the ⋮ / "More" button.
+            </li>
+            <li>Pick a style below. Bulbul rewrites the selection in place.</li>
+          </ol>
+          <p className="howto-tip">
+            Each card's prompt is exactly what the AI is told to do — tap a card to edit it, or create your own.
+          </p>
+        </HowToCard>
+      )}
 
       <BindingFailureBanner
         slotStatuses={slotStatuses}

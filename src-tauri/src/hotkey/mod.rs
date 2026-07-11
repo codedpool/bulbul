@@ -1,18 +1,51 @@
+//! Hotkey registration + the orchestrator-bound event channel.
+//!
+//! This module owns the platform-agnostic parts:
+//! - the parsed-hotkey/event/status types,
+//! - key-name → W3C `Code` mapping (the cross-platform global-shortcut
+//!   plugin speaks Codes),
+//! - the dictation / polish / transform-slot registration logic.
+//!
+//! Anything that has to touch raw OS APIs (querying live key state for a
+//! release poller, or polling modifier state for a modifier-only chord)
+//! lives in `windows.rs` / `macos.rs`. Those modules expose a small
+//! native-side surface (`stop_native_watchers`, `spawn_modifier_chord_watcher`,
+//! `spawn_release_poller`) which this module calls without caring about
+//! the underlying primitives.
+
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows as native;
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos as native;
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as native;
+#[cfg(target_os = "linux")]
+mod linux_portal;
+#[cfg(target_os = "linux")]
+mod linux_evdev;
+
 /// Minimum gap between two fires of the same hotkey. Guards against
-/// auto-repeat and spurious event bursts.
-const FIRE_COOLDOWN_MS: u128 = 700;
-/// How often the release poller checks the dictation hotkey's key state.
-const RELEASE_POLL_MS: u64 = 25;
+/// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
+/// handlers; the native release-poller has its own cadence constants.
+pub const FIRE_COOLDOWN_MS: u128 = 700;
 
 #[derive(Clone, Debug)]
 pub enum HotkeyEvent {
@@ -50,10 +83,6 @@ impl ParsedHotkey {
             }
         }
         h
-    }
-
-    pub fn is_meaningful(&self) -> bool {
-        self.key.is_some() || self.ctrl || self.shift || self.alt || self.meta
     }
 
     /// True if this hotkey is a pure modifier chord (no non-modifier key)
@@ -124,7 +153,8 @@ fn normalize_key_name(s: &str) -> String {
 }
 
 /// Convert our internal key string ("Space", "A", "F9") to the plugin's
-/// `Code` (W3C UI Events `code` values).
+/// `Code` (W3C UI Events `code` values). The plugin is cross-platform —
+/// these mappings work on Windows + macOS + Linux.
 fn key_name_to_code(name: &str) -> Option<Code> {
     Some(match name {
         "Space" => Code::Space,
@@ -174,57 +204,6 @@ fn key_name_to_code(name: &str) -> Option<Code> {
     })
 }
 
-/// Convert our key string to a Windows virtual-key code for `GetAsyncKeyState`.
-fn key_name_to_vk(name: &str) -> Option<i32> {
-    let code: i32 = match name {
-        "Space" => 0x20,
-        "Tab" => 0x09,
-        "Return" | "Enter" => 0x0D,
-        "Backspace" => 0x08,
-        "Escape" => 0x1B,
-        "Up" => 0x26,
-        "Down" => 0x28,
-        "Left" => 0x25,
-        "Right" => 0x27,
-        "Insert" => 0x2D,
-        "Delete" => 0x2E,
-        "Home" => 0x24,
-        "End" => 0x23,
-        "PageUp" => 0x21,
-        "PageDown" => 0x22,
-        ";" => 0xBA,  // VK_OEM_1
-        "'" => 0xDE,  // VK_OEM_7
-        "," => 0xBC,  // VK_OEM_COMMA
-        "." => 0xBE,  // VK_OEM_PERIOD
-        "/" => 0xBF,  // VK_OEM_2
-        "\\" => 0xDC, // VK_OEM_5
-        "[" => 0xDB,  // VK_OEM_4
-        "]" => 0xDD,  // VK_OEM_6
-        "-" => 0xBD,  // VK_OEM_MINUS
-        "=" => 0xBB,  // VK_OEM_PLUS
-        "`" => 0xC0,  // VK_OEM_3
-        // Letters: VK_<A-Z> is just ASCII upper.
-        x if x.len() == 1 && x.chars().next().unwrap().is_ascii_uppercase() => {
-            x.chars().next().unwrap() as i32
-        }
-        // Digits: VK_0..VK_9 are ASCII '0'..'9'.
-        x if x.len() == 1 && x.chars().next().unwrap().is_ascii_digit() => {
-            x.chars().next().unwrap() as i32
-        }
-        // F1..F12 = 0x70..0x7B.
-        x if x.starts_with('F') && x[1..].chars().all(|c| c.is_ascii_digit()) => {
-            let n: u8 = x[1..].parse().ok()?;
-            if (1..=12).contains(&n) {
-                0x70 + (n as i32 - 1)
-            } else {
-                return None;
-            }
-        }
-        _ => return None,
-    };
-    Some(code)
-}
-
 pub fn parsed_to_shortcut(h: &ParsedHotkey) -> Option<Shortcut> {
     let mut mods = Modifiers::empty();
     if h.ctrl {
@@ -241,50 +220,6 @@ pub fn parsed_to_shortcut(h: &ParsedHotkey) -> Option<Shortcut> {
     }
     let code = key_name_to_code(h.key.as_deref()?)?;
     Some(Shortcut::new(Some(mods), code))
-}
-
-fn is_key_down(vk: i32) -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-    unsafe { GetAsyncKeyState(vk) < 0 }
-}
-
-/// Hold-to-talk release detector. RegisterHotKey only signals key-down;
-/// we poll the actual key state to detect when the user lets go. The
-/// `release_evt` parameter lets the same poller drive either the
-/// dictation pipeline or the voice-transform pipeline.
-fn spawn_release_poller(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey, release_evt: HotkeyEvent) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
-    };
-    let Some(main_vk) = hotkey.key.as_deref().and_then(key_name_to_vk) else {
-        return;
-    };
-    thread::spawn(move || {
-        // Safety net: regardless of polling result, never let this thread
-        // outlive a reasonable upper bound on a press. 60 seconds covers
-        // even the most generous dictation; if we hit it we fire release
-        // anyway so the orchestrator doesn't get stuck.
-        let started = Instant::now();
-        loop {
-            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
-            if started.elapsed() > Duration::from_secs(60) {
-                tracing::warn!("release poller timed out — forcing release");
-                let _ = tx.send(release_evt.clone());
-                return;
-            }
-            let main_down = is_key_down(main_vk);
-            let ctrl_ok = !hotkey.ctrl || is_key_down(VK_CONTROL.0 as i32);
-            let shift_ok = !hotkey.shift || is_key_down(VK_SHIFT.0 as i32);
-            let alt_ok = !hotkey.alt || is_key_down(VK_MENU.0 as i32);
-            let meta_ok = !hotkey.meta
-                || is_key_down(VK_LWIN.0 as i32)
-                || is_key_down(VK_RWIN.0 as i32);
-            if !(main_down && ctrl_ok && shift_ok && alt_ok && meta_ok) {
-                let _ = tx.send(release_evt.clone());
-                return;
-            }
-        }
-    });
 }
 
 /// Create the hotkey channel. Returns (tx, rx). The tx is stored in
@@ -328,35 +263,76 @@ fn re_register(
         tracing::warn!("unregister_all failed: {e:#}");
     }
 
-    // Clear any chord mask in the keyboard hook before we re-apply
-    // below. This also fires a synthetic Released event if a chord was
-    // mid-press, so the orchestrator doesn't get stuck.
-    #[cfg(target_os = "windows")]
-    crate::keyboard_hook::set_chord_mask(0);
+    // Stop any platform-specific watchers from the previous registration
+    // (Windows: clears the LL keyboard hook's chord mask; macOS: future
+    // CGEventTap teardown). Always run, even if the new dictation hotkey
+    // is also a modifier chord — a fresh registration with the up-to-date
+    // spec gets installed below.
+    native::stop_native_watchers();
 
     let snapshot = set.lock().clone();
 
+    // Linux: the best hotkey path is reading /dev/input directly (evdev)
+    // — instant, true hold-to-talk, works on every compositor. Available
+    // once the user has input-device access (the .deb's input-group
+    // grant + one relogin). When it's driving, it fully owns dictation +
+    // polish and we deliberately DON'T also run the portal or plugin
+    // watchers for them — running two mechanisms at once is what made the
+    // hotkey fire erratically before.
+    #[cfg(target_os = "linux")]
+    let evdev_driving = linux_evdev::available();
+    #[cfg(not(target_os = "linux"))]
+    let evdev_driving = false;
+
+    // Transform ids the evdev reader is watching (Linux/evdev only). Used
+    // below to report slot status instead of the global-shortcut plugin,
+    // which can't see keys on Wayland.
+    #[cfg(target_os = "linux")]
+    let evdev_transform_ids: Vec<i64> = if evdev_driving {
+        linux_evdev::register(
+            tx.clone(),
+            snapshot.dictation.clone(),
+            snapshot.polish_dictation.clone(),
+            &snapshot.transform_bindings,
+        )
+    } else {
+        linux_evdev::stop();
+        Vec::new()
+    };
+
+    // Linux Wayland WITHOUT evdev access (pre-relogin, AppImage): fall
+    // back to the GlobalShortcuts portal for dictation + polish. Neither
+    // the plugin nor the X11 poller can see global key state on Wayland.
+    // On X11 sessions this is skipped and Linux uses the Windows paths.
+    #[cfg(target_os = "linux")]
+    let wayland_portal = !evdev_driving && crate::linux_env::is_wayland();
+    #[cfg(not(target_os = "linux"))]
+    let wayland_portal = false;
+
+    #[cfg(target_os = "linux")]
+    if wayland_portal {
+        linux_portal::register(
+            tx.clone(),
+            snapshot.dictation.clone(),
+            snapshot.polish_dictation.clone(),
+        );
+    } else {
+        // No portal when evdev drives (or on X11) — stop any prior task.
+        linux_portal::stop();
+    }
+
     // Dictation, branch A: modifier-only chord (e.g. Ctrl+Win). The
-    // plugin's RegisterHotKey backend can't represent these, and naive
-    // polling can't prevent the Start menu from popping on Win release.
-    // Route the chord through the low-level keyboard hook instead — it
-    // intercepts the events before Windows's shell sees them, so tap
-    // detection never fires for the held Win key.
-    if snapshot.dictation.is_modifier_chord() {
-        #[cfg(target_os = "windows")]
-        {
-            let mask = crate::keyboard_hook::chord_mask_for(&snapshot.dictation);
-            crate::keyboard_hook::set_chord_mask(mask);
-            tracing::info!(
-                "registered dictation (LL keyboard hook): {:?} mask=0b{:04b}",
-                snapshot.dictation,
-                mask
-            );
-        }
+    // plugin's RegisterHotKey backend can't represent these, so we hand
+    // off to the platform's native implementation (Windows uses the LL
+    // keyboard hook; macOS/Linux use polling watchers).
+    if evdev_driving || wayland_portal {
+        // Handled by evdev / portal above.
+    } else if snapshot.dictation.is_modifier_chord() {
+        native::spawn_modifier_chord_watcher(tx.clone(), snapshot.dictation.clone());
     }
     // Dictation, branch B: regular combo with a non-modifier key
     // (Ctrl+Shift+Space etc.). Uses the global-shortcut plugin for press,
-    // and a one-shot release poller for the key-up edge.
+    // and a platform-native release poller for the key-up edge.
     else if let Some(dict_sc) = parsed_to_shortcut(&snapshot.dictation) {
         let tx_dict = tx.clone();
         let dict_parsed = snapshot.dictation.clone();
@@ -393,7 +369,7 @@ fn re_register(
             let dict_active_clone = dict_active.clone();
             thread::spawn(move || {
                 let (poll_tx, poll_rx) = mpsc::channel();
-                spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
+                native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
                     let _ = tx_release.send(evt);
                 }
@@ -404,8 +380,18 @@ fn re_register(
             tracing::warn!(
                 "register dictation hotkey failed (combo unsupported by RegisterHotKey?): {e:#}"
             );
+            #[cfg(target_os = "linux")]
+            crate::linux_env::emit_hotkey_status(
+                "none",
+                format!("Couldn't register the dictation hotkey: {e}"),
+            );
         } else {
             tracing::info!("registered dictation shortcut: {:?}", snapshot.dictation);
+            #[cfg(target_os = "linux")]
+            crate::linux_env::emit_hotkey_status(
+                "x11",
+                "Dictation hotkey registered via X11.".to_string(),
+            );
         }
     }
 
@@ -413,8 +399,11 @@ fn re_register(
     // the orchestrator forces CleanupMode::Polished on the pipeline so the
     // output is rewritten-for-clarity regardless of the user's global
     // cleanup mode. Same press/release-poller pattern as dictation,
-    // parameterised on PolishDictationReleased.
-    if let Some(pol_sc) = parsed_to_shortcut(&snapshot.polish_dictation) {
+    // parameterised on PolishDictationReleased. On Linux the evdev or
+    // portal registration above already covers polish.
+    if evdev_driving || wayland_portal {
+        // Handled by evdev / portal above.
+    } else if let Some(pol_sc) = parsed_to_shortcut(&snapshot.polish_dictation) {
         let tx_pol = tx.clone();
         let pol_parsed = snapshot.polish_dictation.clone();
         let pol_active = Arc::new(Mutex::new(false));
@@ -446,7 +435,7 @@ fn re_register(
             let pol_active_clone = pol_active.clone();
             thread::spawn(move || {
                 let (poll_tx, poll_rx) = mpsc::channel();
-                spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
+                native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
                     let _ = tx_release.send(evt);
                 }
@@ -466,11 +455,34 @@ fn re_register(
     // Transform slot hotkeys (Alt+1..Alt+9 by default). Each one fires
     // TransformTriggered(id) on press. If registration fails (e.g. the
     // combo is owned by another app), we surface the error to the UI via
-    // the returned status vec instead of crashing.
+    // the returned status vec instead of crashing. No release polling
+    // needed — these are tap-to-trigger, not hold-to-talk.
     let mut statuses: Vec<TransformSlotStatus> = Vec::new();
     for (transform_id, hk) in &snapshot.transform_bindings {
         let slot = derive_slot_number(hk).unwrap_or(0);
         let combo = format_combo(hk);
+
+        // Linux with evdev driving: the transform chord is watched by the
+        // evdev reader (registered above), not the global-shortcut plugin
+        // — on Wayland the plugin registers "successfully" but never
+        // fires. Report status from what evdev actually resolved.
+        #[cfg(target_os = "linux")]
+        if evdev_driving {
+            let registered = evdev_transform_ids.contains(transform_id);
+            statuses.push(TransformSlotStatus {
+                transform_id: *transform_id,
+                slot,
+                combo,
+                registered,
+                error: if registered {
+                    None
+                } else {
+                    Some("Transform needs a chord ending in a non-modifier key".into())
+                },
+            });
+            continue;
+        }
+
         let Some(shortcut) = parsed_to_shortcut(hk) else {
             statuses.push(TransformSlotStatus {
                 transform_id: *transform_id,

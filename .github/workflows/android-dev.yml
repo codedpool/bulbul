@@ -1,0 +1,101 @@
+name: Android dev build
+
+# Rolling pre-release for the v1.1 integration branch (desktop + Android
+# unified). Every push to v1.1-integration rebuilds + replaces the
+# `android-dev` release with a fresh arm64 APK that testers sideload
+# directly onto their phones.
+#
+# Sibling workflows linux-dev.yml, macos-dev.yml, and windows-dev.yml
+# cover the desktop targets of the same branch. When v1.1 ships to main,
+# drop all four.
+#
+# Notes on this build:
+#   - Uses the standard `tauri android build`. The local dev workaround
+#     (manual .so copy + gradle) exists only because Windows fails to
+#     create the jniLibs symlink — a Linux runner has no such problem, so
+#     the supported path works here directly.
+#   - Produces a DEBUG-SIGNED APK. build.gradle.kts falls back to the
+#     debug signer when keystore.properties is absent (it is — the release
+#     keystore is not committed), and debug-signed APKs install fine for
+#     sideload testing. To ship testers an APK that upgrades in place with
+#     the production key, add the keystore as a secret and restore
+#     keystore.properties before the build (left out here to avoid gating
+#     dev builds on secrets).
+#   - arm64 only (the phones we test on). Add more ABIs by widening the
+#     rustup targets and dropping the `--target aarch64` flag.
+
+on:
+  push:
+    branches:
+      - v1.1-integration
+  workflow_dispatch:
+
+# One build per branch: a newer push cancels an in-flight run so two
+# runs never race to replace the same android-dev release tag.
+concurrency:
+  group: android-dev
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Rust toolchain (Android arm64)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build APK (arm64, release, debug-signed)
+        # tauri runs beforeBuildCommand (npm run build) itself, then the
+        # Rust .so build + gradle assemble for the existing gen/android
+        # project.
+        run: npx tauri android build --apk --target aarch64
+
+      - name: Locate + rename APK
+        id: apk
+        run: |
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -path '*release*' | head -n1)
+          if [ -z "$APK" ]; then echo "No APK produced"; exit 1; fi
+          OUT="bulbul-1.1.0-arm64-dev.apk"
+          cp "$APK" "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          ls -la "$OUT"
+
+      - name: Wipe previous dev release
+        # Same rationale as the desktop dev workflows: replace rather than
+        # append so testers always pull the freshest APK from a stable tag.
+        run: gh release delete android-dev --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish android-dev release
+        run: |
+          gh release create android-dev \
+            "${{ steps.apk.outputs.path }}" \
+            --title 'Bulbul Android dev build' \
+            --prerelease \
+            --notes 'Rolling Android dev build from the `v1.1-integration` branch. **Not for general use** — this is a pre-release for testing the merged desktop + Android v1.1.
+
+          Sideload the `.apk` below (arm64 phones). It is debug-signed, so if you previously installed a differently-signed Bulbul you may need to uninstall first. Enabling Accessibility on a sideloaded install still needs the manual steps shown on the app'"'"'s permission screen. Each push to `v1.1-integration` replaces this release.'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -10,9 +10,115 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Playfair+Display:ital,wght@1,500;1,600&display=swap"
     />
     <title>Bulbul</title>
+    <!-- Boot splash, rendered from the very first HTML paint — BEFORE the
+         JS bundle parses and React mounts — so there is no black gap
+         between the OS launch window and the loader. A tiny inline script
+         fades it out once the app root has painted; if that never fires
+         it self-dismisses after a short cap. Dark ground doubles as the
+         no-flash fallback; once App.css loads, --bg follows the theme. -->
+    <style>
+      html, body { margin: 0; }
+      body { background: var(--bg, #0e0e0e); }
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+        opacity: 1;
+        transition: opacity 320ms ease;
+      }
+      #boot-splash.hide { opacity: 0; }
+      #boot-splash .bs-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        animation: bsPop 560ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+      }
+      #boot-splash img {
+        width: 96px;
+        height: 96px;
+        object-fit: contain;
+      }
+      #boot-splash .bs-name {
+        font-family: "Playfair Display", Georgia, "Cambria", serif;
+        font-style: italic;
+        font-weight: 500;
+        font-size: 30px;
+        letter-spacing: 0.01em;
+        color: #ece9e0;
+        line-height: 1;
+      }
+      #boot-splash .bs-bar {
+        width: 96px;
+        height: 3px;
+        margin-top: 2px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+      #boot-splash .bs-bar span {
+        display: block;
+        width: 40%;
+        height: 100%;
+        border-radius: 2px;
+        background: #5ec8c0;
+        animation: bsBar 900ms ease-in-out infinite;
+      }
+      @keyframes bsPop {
+        0% { opacity: 0; transform: scale(0.86); }
+        60% { opacity: 1; }
+        100% { opacity: 1; transform: scale(1); }
+      }
+      @keyframes bsBar {
+        0% { transform: translateX(-120%); }
+        100% { transform: translateX(320%); }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash">
+      <div class="bs-inner">
+        <img src="/splash-mark.png" alt="" />
+        <span class="bs-name">bulbul</span>
+        <div class="bs-bar"><span></span></div>
+      </div>
+    </div>
     <div id="root"></div>
+    <script>
+      // Remove the boot splash once the app has actually painted, so it
+      // never lingers longer than the load takes. A MutationObserver
+      // fires the moment React first renders into #root; a short minimum
+      // keeps the loader from flickering on fast loads, and a hard cap
+      // guarantees dismissal even if something stalls.
+      (function () {
+        var splash = document.getElementById("boot-splash");
+        if (!splash) return;
+        var start = performance.now();
+        var done = false;
+        function dismiss() {
+          if (done) return;
+          done = true;
+          var wait = Math.max(0, 550 - (performance.now() - start));
+          setTimeout(function () {
+            splash.classList.add("hide");
+            setTimeout(function () { splash.remove(); }, 340);
+          }, wait);
+        }
+        var root = document.getElementById("root");
+        if (root) {
+          var obs = new MutationObserver(function () {
+            if (root.childNodes.length > 0) { obs.disconnect(); dismiss(); }
+          });
+          obs.observe(root, { childList: true });
+        }
+        // Hard cap in case the observer never fires.
+        setTimeout(dismiss, 2500);
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

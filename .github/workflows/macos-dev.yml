@@ -1,0 +1,83 @@
+name: macOS dev build
+
+# Rolling pre-release for the v1.1 integration branch (desktop + Android
+# unified). Every push to v1.1-integration rebuilds + replaces the
+# `macos-dev` release. The tester pulls via
+# `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`, so no
+# clone/build is needed on their machine.
+#
+# Sibling workflows linux-dev.yml, windows-dev.yml, and android-dev.yml
+# cover the other targets of the same branch. When v1.1 ships to main,
+# drop all four.
+
+on:
+  push:
+    branches:
+      - v1.1-integration
+  workflow_dispatch:
+
+concurrency:
+  group: macos-dev
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust toolchain (Apple Silicon + Intel)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Wipe previous dev release
+        # Has to happen before tauri-action: when an existing macos-dev
+        # release is present, tauri-action re-uploads the bundle and
+        # standalone .sig but apparently merges-rather-than-overwrites
+        # the embedded signature in latest.json, so the manifest ends
+        # up pointing at a fresh bundle with a stale signature from
+        # the previous run and `minisign -V` fails on the tester side.
+        # Trade-off: if the build later fails, the tester sees a 404
+        # for the manifest until the next push — clear "wait and retry"
+        # signal, preferable to a scary-looking signature failure.
+        # `|| true` keeps the first run green when no prior release exists.
+        run: gh release delete macos-dev --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + sign dev release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: macos-dev
+          releaseName: 'Bulbul macOS dev build'
+          releaseBody: |
+            Rolling dev build from the `macos-port` branch. **Not for general use** — the port is incomplete.
+
+            ## Tester install
+
+            ```sh
+            curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh
+            ```
+
+            Each push to `macos-port` replaces this release. Production builds live in tagged `vX.Y.Z` releases.
+          releaseDraft: false
+          prerelease: true
+          includeUpdaterJson: true
+          args: --target universal-apple-darwin

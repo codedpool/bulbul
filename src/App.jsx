@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -13,7 +13,9 @@ import ScratchpadView from "./views/ScratchpadView.jsx";
 import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
+import LinuxSupportBanner from "./LinuxSupportBanner.jsx";
 import { applyTheme } from "./theme.js";
+import { IS_LINUX, IS_MAC, RELAUNCH_HINT, IS_ANDROID } from "./platform.js";
 import "./App.css";
 
 const ICONS = {
@@ -90,10 +92,15 @@ const SECTIONS = [
 
 function App() {
   const [section, setSection] = useState("home");
+  const [moreOpen, setMoreOpen] = useState(false); // mobile "More" sheet
   // Settings now lives as a modal popup over the rest of the app, not
   // a routed page. The sidebar's Settings button toggles this; the
   // modal owns its own internal category sidebar + content pane.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Which settings section is drilled into on Android (null = the section
+  // list). Lifted here so the hardware-back handler can treat it as its own
+  // navigation level.
+  const [settingsSection, setSettingsSection] = useState(null);
   const [config, setConfig] = useState(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
@@ -116,11 +123,64 @@ function App() {
     };
   }, []);
 
+  // Android hardware/gesture back. Without this, Back on any open overlay
+  // falls straight through to the OS and exits the whole app. We model the
+  // open overlays as a stack with a "depth" and keep the browser history depth
+  // in sync, so each Back press pops exactly one level — e.g. Settings ▸
+  // General → Back → Settings list → Back → dashboard → Back → exit.
+  //
+  //   0 = dashboard   1 = More sheet OR Settings list   2 = Settings ▸ section
+  const overlayDepth = moreOpen
+    ? 1
+    : settingsOpen
+    ? (settingsSection ? 2 : 1)
+    : 0;
+  const depthRef = useRef(0);
+  const ignorePopRef = useRef(false);
+
+  // Keep browser history depth == logical overlay depth. Opening a level pushes
+  // an entry; closing one via an in-app control pops it (guarded so its
+  // popstate doesn't double-close).
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const prev = depthRef.current;
+    if (overlayDepth > prev) {
+      for (let i = prev; i < overlayDepth; i++) window.history.pushState({ d: i + 1 }, "");
+    } else if (overlayDepth < prev) {
+      ignorePopRef.current = true;
+      window.history.go(-(prev - overlayDepth));
+    }
+    depthRef.current = overlayDepth;
+  }, [overlayDepth]);
+
+  // Hardware Back → close just the top level.
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const onPop = () => {
+      if (ignorePopRef.current) {
+        ignorePopRef.current = false;
+        return;
+      }
+      // The browser already consumed one history entry; pre-decrement so the
+      // depth-sync effect above sees a balanced stack and doesn't re-push.
+      depthRef.current = Math.max(0, depthRef.current - 1);
+      if (settingsOpen && settingsSection) setSettingsSection(null);
+      else if (settingsOpen) setSettingsOpen(false);
+      else if (moreOpen) setMoreOpen(false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [settingsOpen, settingsSection, moreOpen]);
+
   useEffect(() => {
     invoke("get_config").then((cfg) => {
       setConfig(cfg);
       if (!cfg.privacy_acknowledged) setShowPrivacy(true);
-      if (!cfg.has_api_key && !cfg.groq_api_key) setSettingsOpen(true);
+      // Only nudge to Settings for a returning user missing a key — during
+      // first-run the onboarding wizard collects the key, so don't also pop
+      // Settings open the moment onboarding finishes.
+      if (cfg.onboarding_completed && !cfg.has_api_key && !cfg.groq_api_key)
+        setSettingsOpen(true);
     });
     invoke("get_autostart").then(setAutostart).catch(() => {});
     // Mode-B auto-update: the Rust watcher emits this event after it
@@ -130,7 +190,10 @@ function App() {
     const unStaged = listen("update-staged", (e) => setStagedUpdate(e.payload));
     const un = listen("bulbul-status", (e) => setStatus(e.payload));
     const onKey = (e) => {
-      if (e.key === "Escape") getCurrentWindow().hide();
+      // Escape-to-hide is desktop-only — Android handles app dismissal
+      // via the system back button and home gesture, and there's no
+      // physical Escape key on a phone keyboard worth wiring.
+      if (e.key === "Escape" && !IS_ANDROID) getCurrentWindow().hide().catch(() => {});
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -207,15 +270,156 @@ function App() {
     );
   }
 
+  const mainView = (
+    <>
+      {section === "home" && <HomeView displayName={config.display_name} />}
+      {section === "dictionary" && <DictionaryView />}
+      {section === "insights" && <InsightsView />}
+      {section === "snippets" && <SnippetsView />}
+      {section === "transforms" && <TransformsView />}
+      {section === "style" && <StyleView config={config} updateConfig={updateConfig} />}
+      {section === "scratchpad" && <ScratchpadView />}
+      {!["home", "dictionary", "insights", "snippets", "transforms", "style", "scratchpad"].includes(section) && <ComingSoon id={section} />}
+    </>
+  );
+
+  // ── Mobile shell ──────────────────────────────────────────────
+  // Phones get their own idiom instead of a squeezed desktop: a slim
+  // app bar, content, a 4-slot bottom tab bar (the rest of the nav
+  // lives in a "More" bottom sheet so tabs stay thumb-sized).
+  if (IS_ANDROID) {
+    // Bottom tab bar, in this explicit order (Scratchpad sits where Dictionary
+    // used to be); everything else lives in the "More" hamburger sheet.
+    const PRIMARY_IDS = ["home", "insights", "scratchpad", "transforms"];
+    const primary = PRIMARY_IDS.map((id) => SECTIONS.find((s) => s.id === id)).filter(Boolean);
+    const secondary = SECTIONS.filter((s) => !PRIMARY_IDS.includes(s.id));
+    return (
+      <>
+      <div className="app-shell m-shell">
+        {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
+        <header className="m-appbar">
+          <button
+            className="m-icon-btn"
+            aria-label="Menu"
+            onClick={() => setMoreOpen(true)}
+          >
+            <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+              <line x1="4" y1="7" x2="20" y2="7" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="17" x2="20" y2="17" />
+            </svg>
+          </button>
+          <div className="m-appbar-brand">
+            <img src={bulbulMark} alt="" className="m-brand-mark" aria-hidden />
+            <span className="m-brand-text">bulbul</span>
+          </div>
+          <button
+            className="m-icon-btn"
+            aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+            onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+          >
+            {resolvedTheme === "dark" ? (
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+              </svg>
+            ) : (
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
+          </button>
+        </header>
+        <main className="content m-content">{mainView}</main>
+
+        <nav className="m-tabbar">
+          {primary.map((s) => (
+            <button
+              key={s.id}
+              className={`m-tab ${section === s.id && !moreOpen ? "active" : ""}`}
+              onClick={() => { setSection(s.id); setMoreOpen(false); }}
+            >
+              <span className="m-tab-icon">{ICONS[s.id]}</span>
+              <span className="m-tab-label">{s.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {moreOpen && (
+          <div className="m-sheet-overlay" onClick={() => setMoreOpen(false)}>
+            <div className="m-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="m-sheet-grab" />
+              {secondary.map((s) => {
+                const isSettings = s.id === "settings";
+                return (
+                  <button
+                    key={s.id}
+                    className={`m-sheet-item ${(!isSettings && section === s.id) ? "active" : ""}`}
+                    onClick={() => {
+                      if (isSettings) { setSettingsSection(null); setSettingsOpen(true); }
+                      else setSection(s.id);
+                      setMoreOpen(false);
+                    }}
+                  >
+                    <span className="m-sheet-icon">{ICONS[s.id]}</span>
+                    <span>{s.label}</span>
+                  </button>
+                );
+              })}
+              <div className="m-sheet-foot">
+                <span className="m-sheet-brand">
+                  <img src={bulbulMark} alt="" className="m-sheet-brand-mark" aria-hidden />
+                  <span className="m-sheet-brand-text">bulbul</span>
+                </span>
+                <span className="muted small">v1.1.0 · MIT</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      <SettingsView
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        config={config}
+        updateConfig={updateConfig}
+        autostart={autostart}
+        onAutostartChange={toggleAutostart}
+        onHideTrayChange={toggleHideTray}
+        section={settingsSection}
+        onSectionChange={setSettingsSection}
+      />
+      <TooltipProvider />
+      </>
+    );
+  }
+
   return (
     <>
     <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
-      <TitleBar
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={() => setSidebarOpen((v) => !v)}
-        resolvedTheme={resolvedTheme}
-        onToggleTheme={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
-      />
+      {!IS_ANDROID && (
+        <>
+        <TitleBar
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          resolvedTheme={resolvedTheme}
+          onToggleTheme={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+        />
+        {IS_MAC && (
+          <button
+            className="mac-floating-sidebar-toggle"
+            onClick={() => setSidebarOpen((v) => !v)}
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <rect x="3" y="4" width="18" height="16" rx="2.5" />
+              <line x1="9" y1="4" x2="9" y2="20" />
+            </svg>
+          </button>
+        )}
+        </>
+      )}
       {showPrivacy && <PrivacyModal onAck={ackPrivacy} />}
 
       <aside className="sidebar">
@@ -243,43 +447,70 @@ function App() {
           })}
         </nav>
         <div className="sidebar-footer">
-          <label
-            className="sidebar-toggle-row"
-            title="When on, the dashboard pops up at startup. When off, Bulbul boots silently to the tray — the pill still appears when you dictate."
-          >
-            <span className="sidebar-toggle-label">Open at startup</span>
-            <span className={`toggle ${config.open_dashboard_on_launch ? "on" : ""}`}>
-              <input
-                type="checkbox"
-                checked={!!config.open_dashboard_on_launch}
-                onChange={(e) => updateConfig({ ...config, open_dashboard_on_launch: e.target.checked })}
-              />
-              <span className="toggle-thumb" />
-            </span>
-          </label>
-          <label
-            className="sidebar-toggle-row"
-            title="When on, the system-tray icon disappears. Bulbul keeps running in the background — the pill only appears while you're dictating. Re-launch Bulbul from the Start menu to bring this dashboard back."
-          >
-            <span className="sidebar-toggle-label">Hide tray icon</span>
-            <span className={`toggle ${config.hide_tray ? "on" : ""}`}>
-              <input
-                type="checkbox"
-                checked={!!config.hide_tray}
-                onChange={(e) => toggleHideTray(e.target.checked)}
-              />
-              <span className="toggle-thumb" />
-            </span>
-          </label>
+          {!IS_ANDROID && (
+            <>
+              <label
+                className="sidebar-toggle-row"
+                title="When on, the dashboard pops up at startup. When off, Bulbul boots silently to the tray — the pill still appears when you dictate."
+              >
+                <span className="sidebar-toggle-label">Open at startup</span>
+                <span className={`toggle ${config.open_dashboard_on_launch ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.open_dashboard_on_launch}
+                    onChange={(e) => updateConfig({ ...config, open_dashboard_on_launch: e.target.checked })}
+                  />
+                  <span className="toggle-thumb" />
+                </span>
+              </label>
+              <label
+                className="sidebar-toggle-row"
+                title={`When on, the system-tray icon disappears. Bulbul keeps running in the background — the pill only appears while you're dictating. ${RELAUNCH_HINT}`}
+              >
+                <span className="sidebar-toggle-label">Hide tray icon</span>
+                <span className={`toggle ${config.hide_tray ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.hide_tray}
+                    onChange={(e) => toggleHideTray(e.target.checked)}
+                  />
+                  <span className="toggle-thumb" />
+                </span>
+              </label>
+              {IS_MAC && (
+                <button
+                  className="sidebar-mac-btn sidebar-mac-btn-solo"
+                  onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+                  aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+                  title={resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
+                >
+                  {resolvedTheme === "dark" ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <circle cx="12" cy="12" r="4" />
+                      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                    </svg>
+                  )}
+                  <span className="sidebar-mac-label">
+                    {resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
+                  </span>
+                </button>
+              )}
+            </>
+          )}
           <div className={`status status-${status.state}`}>
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
           </div>
-          <div className="version muted small">v1.0.1 · MIT</div>
+          <div className="version muted small">v1.1.0 · MIT</div>
         </div>
       </aside>
 
       <main className="content">
+        {IS_LINUX && <LinuxSupportBanner />}
         {stagedUpdate && (
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />
@@ -295,14 +526,7 @@ function App() {
             </button>
           </div>
         )}
-        {section === "home" && <HomeView displayName={config.display_name} />}
-        {section === "dictionary" && <DictionaryView />}
-        {section === "insights" && <InsightsView />}
-        {section === "snippets" && <SnippetsView />}
-        {section === "transforms" && <TransformsView />}
-        {section === "style" && <StyleView config={config} updateConfig={updateConfig} />}
-        {section === "scratchpad" && <ScratchpadView />}
-        {!["home", "dictionary", "insights", "snippets", "transforms", "style", "scratchpad"].includes(section) && <ComingSoon id={section} />}
+        {mainView}
       </main>
     </div>
     <SettingsView
@@ -338,17 +562,23 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="titlebar-left">
-        <button
-          className="tb-btn tb-sidebar"
-          aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          onClick={onToggleSidebar}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-            <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
-            <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
-          </svg>
-        </button>
+        {/* On macOS the sidebar toggle lives inside the sidebar (below the
+            brand mark) — pairing it with the traffic lights looked
+            cramped. Win/Linux keep it here so it sits next to the custom
+            titlebar controls the OS doesn't provide. */}
+        {!IS_MAC && (
+          <button
+            className="tb-btn tb-sidebar"
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            onClick={onToggleSidebar}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+              <rect x="1.5" y="2.5" width="13" height="11" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="6" y1="3" x2="6" y2="13" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
+        )}
       </div>
       <div className="titlebar-spacer" data-tauri-drag-region />
       <div className="titlebar-controls">
@@ -369,44 +599,52 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
             </svg>
           )}
         </button>
-        <button
-          className="tb-btn"
-          aria-label="Minimize"
-          title="Minimize"
-          onClick={() => win.minimize().catch(() => {})}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-          </svg>
-        </button>
-        <button
-          className="tb-btn"
-          aria-label={isMaximized ? "Restore" : "Maximize"}
-          title={isMaximized ? "Restore" : "Maximize"}
-          onClick={() => win.toggleMaximize().catch(() => {})}
-        >
-          {isMaximized ? (
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <rect x="2" y="3.2" width="5.5" height="5.5" fill="none" stroke="currentColor" strokeWidth="1" />
-              <path d="M3.2 3.2 V1.5 H8.5 V6.8 H6.8" fill="none" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          )}
-        </button>
-        <button
-          className="tb-btn tb-close"
-          aria-label="Close"
-          title="Close"
-          onClick={() => win.close().catch(() => {})}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-          </svg>
-        </button>
+        {/* On macOS the OS owns minimize / maximize / close — the red,
+            yellow, green traffic lights on the left. Rendering our own
+            buttons next to them would be visually doubled. The theme
+            toggle stays because it isn't a window-control. */}
+        {!IS_MAC && (
+          <>
+            <button
+              className="tb-btn"
+              aria-label="Minimize"
+              title="Minimize"
+              onClick={() => win.minimize().catch(() => {})}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              className="tb-btn"
+              aria-label={isMaximized ? "Restore" : "Maximize"}
+              title={isMaximized ? "Restore" : "Maximize"}
+              onClick={() => win.toggleMaximize().catch(() => {})}
+            >
+              {isMaximized ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <rect x="2" y="3.2" width="5.5" height="5.5" fill="none" stroke="currentColor" strokeWidth="1" />
+                  <path d="M3.2 3.2 V1.5 H8.5 V6.8 H6.8" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              )}
+            </button>
+            <button
+              className="tb-btn tb-close"
+              aria-label="Close"
+              title="Close"
+              onClick={() => win.close().catch(() => {})}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              </svg>
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

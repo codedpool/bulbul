@@ -38,6 +38,14 @@ export default function Overlay() {
   const [hovered, setHovered] = useState(false);
   const [lang, setLang] = useState("auto");
   const [langOpen, setLangOpen] = useState(false);
+  // Bulbul's pipeline emits state="idle" with a message string for the
+  // two silent-rejection paths ("Too short, ignored." and "Silence —
+  // nothing to transcribe."). Without inflating those into a distinct
+  // transient state, the overlay swallows them — the pill just shrinks
+  // back to its dot with no clue why nothing was typed. Many dictation
+  // apps silently fail this same way; we surface a brief amber pill
+  // instead so users can self-diagnose.
+  const [transientReject, setTransientReject] = useState(null);
 
   useEffect(() => {
     document.body.style.background = "transparent";
@@ -45,7 +53,16 @@ export default function Overlay() {
 
     invoke("get_config").then((cfg) => setLang(cfg.language || "auto")).catch(() => {});
 
-    const un1 = listen("bulbul-status", (e) => setStatus(e.payload));
+    const un1 = listen("bulbul-status", (e) => {
+      const payload = e.payload || { state: "idle", message: null };
+      setStatus(payload);
+      if (payload.state === "idle" && payload.message) {
+        let kind = null;
+        if (/too short/i.test(payload.message)) kind = "too_short";
+        else if (/(silence|no speech)/i.test(payload.message)) kind = "silent";
+        if (kind) setTransientReject({ kind, message: payload.message });
+      }
+    });
     const un2 = listen("overlay-hover", async (e) => {
       setHovered(e.payload);
       if (e.payload) {
@@ -58,12 +75,27 @@ export default function Overlay() {
     return () => { un1.then((f) => f()); un2.then((f) => f()); };
   }, []);
 
+  // Auto-clear the transient rejection pill after a brief dwell. 2.2s
+  // matches the wizard's "done" celebration dwell — long enough to read
+  // a short label, short enough not to obstruct the next attempt.
+  useEffect(() => {
+    if (!transientReject) return;
+    const t = setTimeout(() => setTransientReject(null), 2200);
+    return () => clearTimeout(t);
+  }, [transientReject]);
+
+  // When a transient reject is showing, treat it as the active visible
+  // state for the overlay's expand/collapse + render decisions, but
+  // keep `status` (true backend state) untouched.
+  const effectiveState = transientReject ? transientReject.kind : status.state;
+  const effectiveMessage = transientReject ? transientReject.message : status.message;
+
   // Close dropdown when cursor leaves or a dictation starts.
   useEffect(() => {
-    if (!hovered || status.state !== "idle") {
+    if (!hovered || effectiveState !== "idle") {
       if (langOpen) setLangOpen(false);
     }
-  }, [hovered, status.state]);
+  }, [hovered, effectiveState]);
 
   // Resize the overlay window when the dropdown opens or closes.
   useEffect(() => {
@@ -81,8 +113,8 @@ export default function Overlay() {
     }
   }
 
-  const showSatellites = hovered && status.state === "idle";
-  const expanded = showSatellites || status.state !== "idle";
+  const showSatellites = hovered && effectiveState === "idle";
+  const expanded = showSatellites || effectiveState !== "idle";
 
   return (
     <div className={`overlay ${expanded ? "expanded" : "collapsed"} ${hovered ? "hovered" : ""}`}>
@@ -114,13 +146,13 @@ export default function Overlay() {
           </button>
         )}
 
-        <div className={`pill pill-${status.state}`}>
-          <span className="pill-icon">{renderIcon(status.state, hovered)}</span>
-          {expanded && status.state !== "idle" && (
+        <div className={`pill pill-${effectiveState}`}>
+          <span className="pill-icon">{renderIcon(effectiveState, hovered)}</span>
+          {expanded && effectiveState !== "idle" && (
             <span className="pill-label">
-              {status.state === "rate_limited"
-                ? (status.message || "Rate limited…")
-                : label(status.state)}
+              {effectiveState === "rate_limited"
+                ? (effectiveMessage || "Rate limited…")
+                : label(effectiveState)}
             </span>
           )}
         </div>
@@ -164,6 +196,9 @@ function renderIcon(state, hovered) {
       return <span className="glyph">✓</span>;
     case "error":
       return <span className="glyph">!</span>;
+    case "too_short":
+    case "silent":
+      return <span className="glyph">!</span>;
     default:
       return hovered ? <MicIcon /> : <span className="dot" aria-hidden />;
   }
@@ -186,6 +221,8 @@ function label(state) {
     case "injecting": return "Inserting";
     case "done": return "Done";
     case "error": return "Error";
+    case "too_short": return "Too short — try again";
+    case "silent": return "No audio — check mic";
     default: return "";
   }
 }

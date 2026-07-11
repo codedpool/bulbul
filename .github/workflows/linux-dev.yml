@@ -1,0 +1,102 @@
+name: Linux dev build
+
+# Rolling pre-release for the v1.1 integration branch (desktop + Android
+# unified). Every push to v1.1-integration rebuilds + replaces the
+# `linux-dev` release with fresh .AppImage + .deb + .rpm assets. The user
+# installs via `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`.
+#
+# Sibling workflows macos-dev.yml, windows-dev.yml, and android-dev.yml
+# cover the other targets of the same branch. When v1.1 ships to main,
+# drop all four.
+
+on:
+  push:
+    branches:
+      - v1.1-integration
+  workflow_dispatch:
+
+concurrency:
+  group: linux-dev
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        # libwebkit2gtk-4.1-dev + libgtk-3-dev are the WebView2-equivalent
+        # for Tauri's Linux runtime. libasound2-dev is needed by cpal
+        # (audio capture) — alsa-sys fails to build without alsa.pc on
+        # the system. The rest are bundler prerequisites for .deb, .rpm,
+        # and .AppImage. Locked to ubuntu-22.04 for AppImage portability —
+        # newer Ubuntu would bake in a glibc that breaks on older distros.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libasound2-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Wipe previous dev release
+        # Has to happen before tauri-action: when an existing linux-dev
+        # release is present, tauri-action re-uploads the bundle and
+        # standalone .sig but apparently merges-rather-than-overwrites
+        # the embedded signature in latest.json, so the manifest ends
+        # up pointing at a fresh bundle with a stale signature from
+        # the previous run and `minisign -V` fails on the tester side.
+        # Trade-off: if the build later fails, users see a 404 for the
+        # manifest until the next push — clear "wait and retry" signal,
+        # preferable to a scary-looking signature failure.
+        # `|| true` keeps the first run green when no prior release exists.
+        run: gh release delete linux-dev --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + sign dev release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: linux-dev
+          releaseName: 'Bulbul Linux dev build'
+          releaseBody: |
+            Rolling Linux dev build from the `v1.1-port` branch. **Not for general use** — the port is incomplete.
+
+            ## Install (X11 or Wayland)
+
+            ```sh
+            curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh
+            ```
+
+            On Ubuntu/Debian the script installs the `.deb` (which pulls the tray dependencies); elsewhere it falls back to the AppImage. Every artifact is minisign-verified before install, and the script prints Wayland/GNOME setup notes when they apply.
+
+            Three formats produced per build: `.AppImage` (universal), `.deb` (Ubuntu/Debian), `.rpm` (Fedora/openSUSE). Each push to `v1.1-port` replaces this release.
+          releaseDraft: false
+          prerelease: true
+          includeUpdaterJson: true
+          # Note: tauri-action signs every bundle (.deb.sig / .rpm.sig /
+          # .AppImage.sig are all attached) — install-dev.sh's deb route
+          # relies on the detached .deb.sig being present.

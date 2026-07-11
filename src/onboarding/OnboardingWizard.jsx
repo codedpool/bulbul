@@ -5,9 +5,14 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
 import { applyTheme } from "../theme.js";
+import { IS_ANDROID, IS_LINUX, IS_MAC, META_KEY_NAME } from "../platform.js";
 import "./onboarding.css";
 
-const HOTKEY_PRESETS = [
+// The stored hotkey VALUES are platform-independent — Bulbul's parser maps
+// "Win" to the OS meta key (Command on Mac, Super on Linux, Windows key on
+// Windows) and "Alt" to Option on Mac. Only the user-facing label + detail
+// copy needs to differ per platform so the wizard reads correctly.
+const HOTKEY_PRESETS_DESKTOP = [
   {
     value: "Ctrl+Win",
     label: "Ctrl + Win",
@@ -30,6 +35,56 @@ const HOTKEY_PRESETS = [
   },
 ];
 
+const HOTKEY_PRESETS_MAC = [
+  {
+    value: "Ctrl+Win",
+    label: "⌃ Control + ⌘ Command",
+    detail: "Hold both keys to dictate. Two-modifier chord — minimum reach from the home row.",
+  },
+  {
+    value: "Alt+Win",
+    label: "⌥ Option + ⌘ Command",
+    detail: "Same hold-to-talk feel, different fingers. Pick this if ⌃⌘ is taken by another app.",
+  },
+  {
+    value: "Ctrl+Shift+Space",
+    label: "⌃ Control + ⇧ Shift + Space",
+    detail: "Three keys, but almost never clashes with anything. The safest pick.",
+  },
+  {
+    value: "custom",
+    label: "Custom combo…",
+    detail: "Capture any combination you like.",
+  },
+];
+
+// Linux presets skip modifier-only chords: the Super key belongs to the
+// compositor (GNOME Activities, KDE launcher), and Wayland's shortcut
+// portal can only bind combos that contain a real key.
+const HOTKEY_PRESETS_LINUX = [
+  {
+    value: "Ctrl+Alt+Space",
+    label: "Ctrl + Alt + Space",
+    detail: "Hold to dictate. Doesn't fight the Super key, and works on both X11 and Wayland.",
+  },
+  {
+    value: "Ctrl+Shift+Space",
+    label: "Ctrl + Shift + Space",
+    detail: "Same hold-to-talk feel, different fingers. Pick this if Ctrl + Alt + Space is taken.",
+  },
+  {
+    value: "custom",
+    label: "Custom combo…",
+    detail: "Capture any combination you like.",
+  },
+];
+
+const HOTKEY_PRESETS = IS_MAC
+  ? HOTKEY_PRESETS_MAC
+  : IS_LINUX
+    ? HOTKEY_PRESETS_LINUX
+    : HOTKEY_PRESETS_DESKTOP;
+
 const VIDEO_URL = "https://www.youtube.com/watch?v=9VDbhptCzlU";
 const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/9VDbhptCzlU";
 
@@ -39,9 +94,24 @@ const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/9VDbhptCzlU";
 // feedback ("ah, that's what Raw mode means").
 const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test, and like, it looks great.";
 
+// Mac inserts a one-time Permissions step between Welcome and the API
+// key entry. Non-Mac platforms skip it (Windows has no permission gate;
+// Linux X11 needs none, Linux Wayland prompts via portal on first use).
+// Android has no global hotkey (dictation is the floating bubble) and its
+// system permissions are granted through the native setup screen, so the
+// wizard is just the essentials: welcome, key, language, done.
+const STEP_SEQUENCE = IS_ANDROID
+  ? ["welcome", "apiKey", "language", "done"]
+  : IS_MAC
+  ? ["welcome", "permissions", "apiKey", "language", "hotkey", "done"]
+  : ["welcome", "apiKey", "language", "hotkey", "done"];
+
 export default function OnboardingWizard({ config, updateConfig, onComplete }) {
   const [step, setStep] = useState(0);
-  const totalSteps = 5;
+  const totalSteps = STEP_SEQUENCE.length;
+  const currentStepName = STEP_SEQUENCE[step];
+  const goNext = () => setStep((s) => Math.min(s + 1, STEP_SEQUENCE.length - 1));
+  const goBack = () => setStep((s) => Math.max(s - 1, 0));
 
   const themePref = config.theme || "light";
   const resolvedTheme =
@@ -87,63 +157,70 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
           >
             {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
           </button>
-          <button
-            className="onb-tb-btn"
-            onClick={() => win.minimize().catch(() => {})}
-            aria-label="Minimize"
-            title="Minimize"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            </svg>
-          </button>
-          <button
-            className="onb-tb-btn onb-tb-close"
-            onClick={() => win.close().catch(() => {})}
-            aria-label="Close"
-            title="Close"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-              <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-            </svg>
-          </button>
+          {!IS_ANDROID && !IS_MAC && (
+            <>
+              <button
+                className="onb-tb-btn"
+                onClick={() => win.minimize().catch(() => {})}
+                aria-label="Minimize"
+                title="Minimize"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                </svg>
+              </button>
+              <button
+                className="onb-tb-btn onb-tb-close"
+                onClick={() => win.close().catch(() => {})}
+                aria-label="Close"
+                title="Close"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                  <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                  <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                </svg>
+              </button>
+            </>
+          )}
         </div>
       </header>
 
       <main className="onb-page" key={step}>
-        {step === 0 && (
+        {currentStepName === "welcome" && (
           <StepWelcome
             config={config}
             updateConfig={updateConfig}
-            onNext={() => setStep(1)}
+            onNext={goNext}
           />
         )}
-        {step === 1 && (
+        {currentStepName === "permissions" && (
+          <StepPermissions onBack={goBack} onNext={goNext} />
+        )}
+        {currentStepName === "apiKey" && (
           <StepApiKey
             config={config}
             updateConfig={updateConfig}
-            onBack={() => setStep(0)}
-            onNext={() => setStep(2)}
+            onBack={goBack}
+            onNext={goNext}
           />
         )}
-        {step === 2 && (
+        {currentStepName === "language" && (
           <StepLanguage
             config={config}
             updateConfig={updateConfig}
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
+            onBack={goBack}
+            onNext={goNext}
           />
         )}
-        {step === 3 && (
+        {currentStepName === "hotkey" && (
           <StepHotkey
             config={config}
             updateConfig={updateConfig}
-            onBack={() => setStep(2)}
-            onNext={() => setStep(4)}
+            onBack={goBack}
+            onNext={goNext}
           />
         )}
-        {step === 4 && (
+        {currentStepName === "done" && (
           <StepDone
             onFinish={finish}
             hotkey={config.hotkey}
@@ -175,7 +252,9 @@ function StepWelcome({ config, updateConfig, onNext }) {
       <img src={bulbulMark} alt="" className="onb-hero-mark" aria-hidden />
       <h1>Welcome to Bulbul.</h1>
       <p className="onb-lead">
-        Hold a hotkey anywhere on your computer. Speak. Text appears where your cursor is.
+        {IS_ANDROID
+          ? "Tap the floating bubble in any app. Speak. Your words appear where your cursor is."
+          : "Hold a hotkey anywhere on your computer. Speak. Text appears where your cursor is."}
       </p>
       <div className="onb-value-grid">
         <div className="onb-value">
@@ -220,6 +299,190 @@ function StepWelcome({ config, updateConfig, onNext }) {
 
       <div className="onb-actions onb-actions-center">
         <button className="onb-btn primary" onClick={commitAndNext}>Get started →</button>
+      </div>
+    </div>
+  );
+}
+
+// Mac-only permissions gate. Bulbul needs Microphone (to capture audio
+// from your dictation hotkey) and Accessibility (to inject text into
+// other apps and read which app is focused). macOS exposes both behind
+// the same Privacy & Security pane in System Settings.
+//
+// Both status checks are programmatic and polled every 1.5s while the
+// step is on screen:
+//   - AX:  AXIsProcessTrusted()
+//   - Mic: AVCaptureDevice.authorizationStatusForMediaType(.audio)
+// Continue unlocks the moment both flip to granted; no user
+// confirmation step needed.
+function StepPermissions({ onBack, onNext }) {
+  const [axGranted, setAxGranted] = useState(false);
+  const [micStatus, setMicStatus] = useState("not_determined");
+  const micGranted = micStatus === "granted";
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      try {
+        const [ax, mic] = await Promise.all([
+          invoke("check_accessibility_status_mac"),
+          invoke("check_microphone_status_mac"),
+        ]);
+        if (!cancelled) {
+          setAxGranted(!!ax);
+          setMicStatus(typeof mic === "string" ? mic : "not_determined");
+        }
+      } catch {
+        // Silent — commands rarely fail. If they do, the user can
+        // grant manually in System Settings and re-launch onboarding.
+      }
+    }
+    check();
+    const interval = setInterval(check, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Trigger the macOS mic-permission prompt once on step entry.
+  // macOS only adds Bulbul to the Microphone TCC list (visible in
+  // System Settings → Privacy → Microphone) AFTER an app has actually
+  // called AVCaptureDevice.requestAccess. Without this, the Settings
+  // pane opens but shows no Bulbul row to toggle. Idempotent — calling
+  // it after the user has already responded is a no-op.
+  //
+  // Same reasoning drives prime_accessibility_mac: enigo's Enigo::new
+  // internally calls AXIsProcessTrustedWithOptions({prompt: true})
+  // which registers Bulbul with the Accessibility TCC list AND pops
+  // the native "Bulbul wants Accessibility" system dialog. Without
+  // this priming call, the user opens Settings → Accessibility and
+  // finds no Bulbul row — they'd have to click `+` and browse to
+  // Bulbul.app themselves. Priming makes the toggle appear where
+  // they're already looking. If AX is already granted, the call
+  // succeeds silently and doesn't re-prompt.
+  useEffect(() => {
+    invoke("request_microphone_access_mac").catch(() => {});
+    invoke("prime_accessibility_mac").catch(() => {
+      // Expected on first run before user grants — the wizard's
+      // polling still drives the ✓ state, and the system dialog has
+      // already fired at this point (that's a side-effect of the
+      // AXIsProcessTrustedWithOptions call, not the Rust return
+      // value). Silent catch keeps the console clean.
+    });
+  }, []);
+
+  async function openSettings(pane) {
+    // Shelling out to the macOS `open` CLI on the backend is more
+    // reliable than tauri-plugin-opener's openUrl for custom URL
+    // schemes like x-apple.systempreferences: — the plugin's default
+    // capabilities only allow http/https and silently reject the rest.
+    //
+    // Before opening the pane for "microphone" specifically, request
+    // access again to guarantee Bulbul is in the TCC list — covers
+    // the edge case where the user reached this step without the
+    // initial useEffect having completed (rare, but cheap to defend).
+    if (pane === "microphone") {
+      try {
+        await invoke("request_microphone_access_mac");
+      } catch {}
+    }
+    try {
+      await invoke("open_mac_settings_pane", { pane });
+    } catch {
+      // Last-resort generic Privacy & Security pane.
+      try {
+        await invoke("open_mac_settings_pane", { pane: "privacy" });
+      } catch {}
+    }
+  }
+
+  const ready = axGranted && micGranted;
+
+  // Human-readable status label for the mic card. Distinguishes
+  // "not asked yet" (user hasn't opened Settings or hit the hotkey) from
+  // "explicitly denied" (different remediation: re-enable a slider
+  // they previously turned off).
+  const micStatusLabel = (() => {
+    switch (micStatus) {
+      case "granted":
+        return "Detected — ready to go.";
+      case "denied":
+        return "Microphone access is currently denied. Toggle Bulbul on in System Settings.";
+      case "restricted":
+        return "Microphone access restricted by a system policy.";
+      default:
+        return "Status updates here automatically once you grant access.";
+    }
+  })();
+
+  return (
+    <div className="onb-page-inner">
+      <header className="onb-step-head">
+        <h2>Grant macOS permissions</h2>
+        <p className="onb-sub">
+          Bulbul needs two macOS permissions to capture audio and inject text into other apps. Both grant via System Settings → Privacy &amp; Security.
+        </p>
+      </header>
+
+      <div className="onb-perm-cards">
+        <article className={`onb-perm-card ${micGranted ? "granted" : ""}`}>
+          <header className="onb-perm-head">
+            <span className="onb-perm-status" aria-hidden>
+              {micGranted ? "✓" : "○"}
+            </span>
+            <h2>Microphone</h2>
+          </header>
+          <p className="muted small">
+            Captures audio from your dictation hotkey. Without this, recording fails silently.
+          </p>
+          <div className="onb-perm-actions">
+            <button className="onb-btn" onClick={() => openSettings("microphone")}>
+              Open Microphone Settings
+            </button>
+          </div>
+          <p className="onb-perm-confirm muted small">{micStatusLabel}</p>
+        </article>
+
+        <article className={`onb-perm-card ${axGranted ? "granted" : ""}`}>
+          <header className="onb-perm-head">
+            <span className="onb-perm-status" aria-hidden>
+              {axGranted ? "✓" : "○"}
+            </span>
+            <h2>Accessibility</h2>
+          </header>
+          <p className="muted small">
+            Lets Bulbul inject text into other apps and detect which app you're dictating into. Without this, paste-after-dictation does nothing.
+          </p>
+          <div className="onb-perm-actions">
+            <button className="onb-btn" onClick={() => openSettings("accessibility")}>
+              Open Accessibility Settings
+            </button>
+            {!axGranted && (
+              <button
+                className="onb-btn ghost"
+                onClick={() => invoke("relaunch_app").catch(() => {})}
+                title="macOS sometimes won't notice the new permission until Bulbul restarts"
+              >
+                Quit &amp; Relaunch
+              </button>
+            )}
+          </div>
+          <p className="onb-perm-confirm muted small">
+            {axGranted
+              ? "Detected — ready to go."
+              : "macOS just popped a system dialog asking to grant Accessibility. Click Open System Settings in it, toggle Bulbul on, then come back. If the check mark doesn't appear within a few seconds, click Quit & Relaunch — macOS sometimes needs Bulbul to restart before the new permission takes effect."}
+          </p>
+        </article>
+      </div>
+
+      <div className="onb-actions">
+        <button className="onb-btn ghost" onClick={onBack}>
+          Back
+        </button>
+        <button className="onb-btn primary" onClick={onNext} disabled={!ready}>
+          Continue →
+        </button>
       </div>
     </div>
   );
@@ -889,7 +1152,9 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
                   )}
                   {capturing && !captureError && (
                     <div className="onb-hotkey-hint">
-                      Modifier-only chords (Ctrl+Win, Alt+Win) work too — release to confirm.
+                      {IS_LINUX
+                        ? "Include a regular key (letter, Space, F-key) — modifier-only chords can't be bound on Wayland."
+                        : "Modifier-only chords (Ctrl+Win, Alt+Win) work too — release to confirm."}
                     </div>
                   )}
                 </div>
@@ -898,7 +1163,7 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
           ))}
 
           <div className="onb-conflict-hint">
-            Already using another dictation app on <code>Ctrl + Win</code>? Pick a different combo
+            Already using another dictation app on <code>{formatComboForDisplay("Ctrl+Win")}</code>? Pick a different combo
             above and the conflict goes away.
           </div>
         </div>
@@ -952,21 +1217,37 @@ function StepDone({ onFinish, hotkey, telemetryEnabled, onToggleTelemetry }) {
       <div className="onb-done-check">✓</div>
       <h2>You're all set.</h2>
       <p className="onb-lead">
-        Press <code>{formatComboForDisplay(hotkey)}</code> anywhere — in your browser, in Word, in a terminal — speak,
-        and Bulbul will type what you said.
+        {IS_ANDROID ? (
+          <>Tap the floating bubble in any app — a chat, your notes, a browser — speak, and Bulbul types what you said.</>
+        ) : (
+          <>Press <code>{formatComboForDisplay(hotkey)}</code> anywhere — in your browser, in Word, in a terminal — speak,
+          and Bulbul will type what you said.</>
+        )}
       </p>
       <div className="onb-tour-grid">
         <div className="onb-tour-card">
           <div className="onb-tour-title">Transform selections</div>
-          <p>Select text anywhere and press <code>Alt + 1…6</code> to polish, formalize, or rephrase it in place.</p>
+          <p>
+            {IS_ANDROID
+              ? "Select text in any app and tap Bulbul in the popup toolbar to polish, formalize, or rephrase it in place."
+              : <>Select text anywhere and press <code>{displayPart(IS_MAC ? "Win" : "Alt")} + 1…6</code> to polish, formalize, or rephrase it in place.</>}
+          </p>
         </div>
         <div className="onb-tour-card">
-          <div className="onb-tour-title">Stays out of your way</div>
-          <p>Close the window to send Bulbul to the tray. Click the tray icon to bring it back.</p>
+          <div className="onb-tour-title">{IS_ANDROID ? "Your words, spelled right" : "Stays out of your way"}</div>
+          <p>
+            {IS_ANDROID
+              ? "Add names, brands, and jargon to your Dictionary, and save frequent phrases as Snippets — both apply automatically."
+              : "Close the window to send Bulbul to the tray. Click the tray icon to bring it back."}
+          </p>
         </div>
         <div className="onb-tour-card">
           <div className="onb-tour-title">Tune everything</div>
-          <p>Change hotkeys, model, theme, mic in Settings — anytime.</p>
+          <p>
+            {IS_ANDROID
+              ? "Change the bubble's size and opacity, cleanup mode, and theme in Settings — anytime."
+              : "Change hotkeys, model, theme, mic in Settings — anytime."}
+          </p>
         </div>
       </div>
 
@@ -1169,10 +1450,13 @@ const MOD_ORDER = ["Ctrl", "Shift", "Alt", "Win"];
 
 // Canonicalise modifier order for display (Ctrl → Shift → Alt → Win → key).
 // Same string the backend would have produced via hotkey.rs::format_combo,
-// independent of how the combo happens to be stored in config.
+// independent of how the combo happens to be stored in config. On Mac,
+// modifier parts are rendered as their canonical glyphs (⌃ ⌥ ⇧ ⌘) so
+// every surface showing the active hotkey matches what the rest of the
+// OS uses to describe key combinations.
 function formatComboForDisplay(combo) {
   if (!combo) return "—";
-  return parseChordParts(combo).join(" + ");
+  return parseChordParts(combo).map(displayPart).join(" + ");
 }
 
 // Split a combo string into its ordered parts (modifiers first in
@@ -1208,10 +1492,11 @@ function keyEventToName(e) {
   return null;
 }
 
-// "Win" → "Windows key", everything else stays as-is. Used in coaching
-// text where "Now also hold Win" reads awkwardly compared to "Windows".
+// "Win" → platform-appropriate name (Windows / Command / Super) in
+// coaching text where "Now also hold Win" reads awkwardly.
+// Everything else stays as-is.
 function prettyKeyName(part) {
-  return part === "Win" ? "Windows" : part;
+  return part === "Win" ? META_KEY_NAME : part;
 }
 
 // Renders the active combo as a row of pressable keycaps. Each cap lights
@@ -1237,15 +1522,44 @@ function ChordDisplay({ parts, pressedKeys }) {
   );
 }
 
+// On macOS, render modifier names as their canonical glyphs so the
+// hotkey display matches what users see everywhere else on the OS
+// (⌃ ⌥ ⇧ ⌘). Trigger keys (letters, digits, Space, F-keys) keep their
+// text form on every platform. The underlying combo string stored in
+// config is unchanged — only the visual representation differs.
+const MAC_MOD_GLYPH = {
+  Ctrl: "⌃",
+  Control: "⌃",
+  Shift: "⇧",
+  Alt: "⌥",
+  Option: "⌥",
+  Win: "⌘",
+  Cmd: "⌘",
+  Meta: "⌘",
+  Super: "⌘",
+};
+
+function displayPart(part) {
+  if (IS_MAC && MAC_MOD_GLYPH[part]) {
+    return MAC_MOD_GLYPH[part];
+  }
+  return part;
+}
+
 function KeyCap({ part, pressed }) {
-  const wide = part.length > 1;
-  const extraWide = part === "Space";
+  const display = displayPart(part);
+  const isGlyph = display !== part && display.length === 1;
+  // Glyphs are single-char and look better as the narrow keycap; long
+  // text labels ("Ctrl") get the wide cap.
+  const wide = !isGlyph && display.length > 1;
+  const extraWide = display === "Space";
   return (
     <kbd
       className={`onb-keycap ${pressed ? "pressed" : ""} ${wide ? "wide" : ""} ${extraWide ? "extra-wide" : ""}`}
       aria-pressed={pressed}
+      aria-label={part}
     >
-      {part}
+      {display}
     </kbd>
   );
 }

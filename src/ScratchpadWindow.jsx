@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ConfirmDialog from "./components/ConfirmDialog.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
+import { IS_MAC } from "./platform.js";
 import "./ScratchpadWindow.css";
 
 const AUTOSAVE_DELAY_MS = 600;
@@ -31,6 +32,58 @@ export default function ScratchpadWindow() {
     load();
     invoke("list_transforms").then(setTransforms).catch(() => {});
     const un = listen("notes-changed", () => loadKeepSelection());
+    return () => { un.then((f) => f()); };
+  }, []);
+
+  // Dictation into the scratchpad: when the orchestrator (lib.rs)
+  // decides the scratchpad is the target it emits `scratchpad-append`
+  // with the cleaned transcript instead of firing OS-level Cmd+V /
+  // Ctrl+V. That path is fragile on Mac (self-paste through System
+  // Events depends on TCC + key-window state) and touches the user's
+  // clipboard; IPC insert skips both.
+  //
+  // Register the listener ONCE (empty deps). An earlier version had
+  // `[body]` in the deps to keep the append-fallback in sync, but that
+  // tore down + re-registered the listener on every keystroke — events
+  // fired during the async tear-down window were being dropped.
+  // Instead we read live text length off the DOM node when we need the
+  // end-of-body fallback, which is always current.
+  useEffect(() => {
+    const un = listen("scratchpad-append", (event) => {
+      const incoming = String(event.payload || "");
+      if (!incoming) return;
+      const el = bodyRef.current;
+      let start;
+      let end;
+      if (el && document.activeElement === el) {
+        // Live selection — textarea has focus, use its caret directly.
+        start = el.selectionStart;
+        end = el.selectionEnd;
+      } else if (selRef.current && Number.isFinite(selRef.current.start)) {
+        // Textarea lost focus (transform panel click etc.) — resume at
+        // the caret we remembered on the last blur.
+        start = selRef.current.start;
+        end = selRef.current.end;
+      } else {
+        // First dictation of the session, textarea never focused. Read
+        // length off the DOM so we don't need `body` in deps.
+        const len = el?.value.length ?? 0;
+        start = len;
+        end = len;
+      }
+      setBody((prev) => {
+        dirtyRef.current = true;
+        return prev.slice(0, start) + incoming + prev.slice(end);
+      });
+      requestAnimationFrame(() => {
+        const node = bodyRef.current;
+        if (!node) return;
+        const caret = start + incoming.length;
+        node.focus();
+        node.setSelectionRange(caret, caret);
+        selRef.current = { start: caret, end: caret };
+      });
+    });
     return () => { un.then((f) => f()); };
   }, []);
 
@@ -335,6 +388,13 @@ export default function ScratchpadWindow() {
 
 function SpTitleBar() {
   const win = getCurrentWindow();
+  // On macOS the OS owns the traffic-light controls — render an empty
+  // drag region so the window stays draggable but we don't duplicate
+  // the OS buttons. Cmd+W / red traffic-light close still fires
+  // CloseRequested in Rust, which hides the window.
+  if (IS_MAC) {
+    return <div className="sp-titlebar" data-tauri-drag-region />;
+  }
   return (
     <div className="sp-titlebar" data-tauri-drag-region>
       <div className="sp-titlebar-spacer" data-tauri-drag-region />

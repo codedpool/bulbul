@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import FeatureHero from "../components/FeatureHero.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
+import { IS_ANDROID } from "../platform.js";
 
 const AUTOSAVE_DELAY_MS = 600;
 
@@ -27,6 +28,38 @@ export default function ScratchpadView() {
     load();
     invoke("list_transforms").then(setTransforms).catch(() => {});
     const un = listen("notes-changed", () => loadKeepSelection());
+    return () => { un.then((f) => f()); };
+  }, []);
+
+  // Dictation into the INLINE scratchpad view (dashboard sidebar →
+  // Scratchpad). The orchestrator emits `bulbul-focused-insert` to the
+  // main window when Bulbul is foreground on Mac but the standalone
+  // scratchpad isn't the target. We only consume when this textarea is
+  // the current document focus — a stray emit from Home/Insights is a
+  // silent no-op that way, and the standalone window's own listener
+  // (which fires on `scratchpad-append`, a different event) still owns
+  // its case.
+  useEffect(() => {
+    const un = listen("bulbul-focused-insert", (event) => {
+      const incoming = String(event.payload || "");
+      if (!incoming) return;
+      const el = bodyRef.current;
+      if (!el || document.activeElement !== el) return;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      setBody((prev) => {
+        dirtyRef.current = true;
+        return prev.slice(0, start) + incoming + prev.slice(end);
+      });
+      requestAnimationFrame(() => {
+        const node = bodyRef.current;
+        if (!node) return;
+        const caret = start + incoming.length;
+        node.focus();
+        node.setSelectionRange(caret, caret);
+        selRef.current = { start: caret, end: caret };
+      });
+    });
     return () => { un.then((f) => f()); };
   }, []);
 
@@ -195,6 +228,142 @@ export default function ScratchpadView() {
       (n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q),
     );
   }, [notes, search]);
+
+  async function backToList() {
+    if (dirtyRef.current) await flushSave();
+    setActiveId(null);
+    setTitle("");
+    setBody("");
+    setTransformError("");
+  }
+
+  // ─────────── Mobile: master (note list) / detail (full editor) ───────────
+  if (IS_ANDROID) {
+    const inEditor = activeId != null;
+    return (
+      <div className="page scratchpad-page m-scratch">
+        {!inEditor ? (
+          <div className="m-scratch-list-view">
+            <header className="m-scratch-list-head">
+              <h1>Scratchpad</h1>
+              <button className="primary" onClick={startNewNote}>
+                <PlusIcon /> New note
+              </button>
+            </header>
+            <div className="search-input scratch-search">
+              <SearchIcon />
+              <input
+                type="text"
+                placeholder="Search notes…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                spellCheck={false}
+              />
+              {search && (
+                <button className="clear-search" onClick={() => setSearch("")} aria-label="Clear search">×</button>
+              )}
+            </div>
+            <div className="m-note-stack">
+              {loading ? (
+                <div className="muted small list-empty">Loading…</div>
+              ) : filtered.length === 0 ? (
+                <div className="empty-state">
+                  <p className="muted">{search ? "No matches." : "No notes yet. Tap \"New note\" to start."}</p>
+                </div>
+              ) : (
+                filtered.map((n) => (
+                  <button className="m-note-card" key={n.id} onClick={() => openNote(n)}>
+                    <span className="m-note-card-main">
+                      <span className="m-note-card-title">{n.title || "Untitled"}</span>
+                      <span className="m-note-card-preview">
+                        {(n.body || "").trim().split("\n")[0] || "(no content)"}
+                      </span>
+                    </span>
+                    <span className="m-note-card-meta">
+                      <span className="m-note-card-time">{relativeTime(n.updated_at)}</span>
+                      <span
+                        className="m-note-card-del"
+                        role="button"
+                        aria-label="Delete"
+                        onClick={(e) => { e.stopPropagation(); removeNote(n.id); }}
+                      >
+                        <TrashIcon />
+                      </span>
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="m-scratch-editor-view">
+            <div className="m-scratch-editor-head">
+              <button className="m-icon-btn" onClick={backToList} aria-label="Back to notes">
+                <BackArrowIcon />
+              </button>
+              <input
+                type="text"
+                className="scratch-title m-scratch-title"
+                placeholder="Untitled"
+                value={title}
+                onChange={(e) => onTitleChange(e.target.value)}
+                spellCheck={false}
+              />
+              <SaveBadge state={saveState} />
+            </div>
+            {transforms.length > 0 && (
+              <div className="scratch-transforms">
+                <span className="scratch-transforms-label">
+                  {hasSelection ? "Rewrite selection:" : "Select text to rewrite:"}
+                </span>
+                {transforms.map((t) => (
+                  <button
+                    key={t.id}
+                    className="scratch-transform-chip"
+                    disabled={!hasSelection || runningTransformId != null}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => applyTransform(t)}
+                    title={t.description || t.name}
+                  >
+                    {runningTransformId === t.id ? "Rewriting…" : t.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {transformError && <div className="scratch-transform-err m-scratch-err">{transformError}</div>}
+            <textarea
+              ref={bodyRef}
+              className="scratch-body m-scratch-body"
+              placeholder="Start typing, or tap the floating bubble to dictate…"
+              value={body}
+              onChange={(e) => onBodyChange(e.target.value)}
+              onSelect={rememberSelection}
+              onMouseUp={rememberSelection}
+              onKeyUp={rememberSelection}
+              onBlur={rememberSelection}
+            />
+          </div>
+        )}
+
+        <ConfirmDialog
+          open={pendingDelete !== null}
+          title="Delete this note?"
+          message="This can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
+        <ConfirmDialog
+          open={errorMsg !== null}
+          title="Something went wrong"
+          message={errorMsg}
+          cancelLabel={null}
+          onConfirm={() => setErrorMsg(null)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="page scratchpad-page">
@@ -386,6 +555,16 @@ function SearchIcon() {
     </svg>
   );
 }
+
+function BackArrowIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
+    </svg>
+  );
+}
+
 
 function TrashIcon() {
   return (

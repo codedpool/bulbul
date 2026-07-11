@@ -165,6 +165,13 @@ pub struct Config {
     #[serde(default = "default_privacy_ack")]
     pub privacy_acknowledged: bool,
 
+    /// One-shot migration marker (see `migrate` in this file). True once
+    /// the Linux Ctrl+Win → Ctrl+Alt+Space rewrite has run, so a user
+    /// who deliberately re-picks Ctrl+Win afterwards keeps it. Harmless
+    /// (always false, never read) on Windows/macOS.
+    #[serde(default)]
+    pub linux_hotkey_migrated: bool,
+
     #[serde(default = "default_open_dashboard")]
     pub open_dashboard_on_launch: bool,
 
@@ -231,6 +238,20 @@ pub struct Config {
     /// the full taxonomy.
     #[serde(default = "default_telemetry_enabled")]
     pub telemetry_enabled: bool,
+
+    /// Floating overlay bubble appearance (Android only). `overlay_opacity`
+    /// is 0.3–1.0, `overlay_size` is the bubble diameter in dp. Desktop
+    /// ignores these — its pill is sized by the window/CSS — but they live
+    /// in the shared Config so the mobile Settings page (React) and the
+    /// Kotlin foreground service agree on where the values are stored.
+    #[serde(default = "default_overlay_opacity")]
+    pub overlay_opacity: f32,
+    #[serde(default = "default_overlay_size")]
+    pub overlay_size: u32,
+    /// How long the overlay stays snoozed when dropped on the snooze target,
+    /// in minutes (Android only). Default 1 hour.
+    #[serde(default = "default_overlay_snooze_minutes")]
+    pub overlay_snooze_minutes: u32,
 }
 
 fn default_polish_hotkey() -> String {
@@ -242,12 +263,25 @@ fn default_polish_hotkey() -> String {
 }
 
 fn default_hotkey() -> String {
-    // Modifier-only chord, hold-to-talk. The keyboard
+    // Linux: Ctrl+Alt+Space instead of the modifier-only chord. Two
+    // reasons: (a) the Super key belongs to the compositor on most
+    // desktops (GNOME opens the Activities overview on release, KDE the
+    // launcher) so a Ctrl+Win chord fights the shell, and (b) the
+    // Wayland GlobalShortcuts portal can only bind triggers that
+    // contain a real key — a pure modifier chord isn't representable.
+    #[cfg(target_os = "linux")]
+    {
+        "Ctrl+Alt+Space".to_string()
+    }
+    // Windows + macOS: modifier-only chord, hold-to-talk. The keyboard
     // hook (see hotkey.rs::spawn_modifier_chord_watcher) detects this as
     // a dictation press once both modifiers have been held for ~80ms.
     // Existing users with a previously-saved hotkey keep theirs; this
     // default only applies to fresh installs.
-    "Ctrl+Win".to_string()
+    #[cfg(not(target_os = "linux"))]
+    {
+        "Ctrl+Win".to_string()
+    }
 }
 fn default_stt_model() -> String {
     "whisper-large-v3-turbo".to_string()
@@ -278,6 +312,9 @@ fn default_personalize_cleanup() -> bool { false }
 fn default_learn_corrections() -> bool { true }
 fn default_theme() -> String { "light".to_string() }
 fn default_telemetry_enabled() -> bool { true }
+fn default_overlay_opacity() -> f32 { 0.65 }
+fn default_overlay_size() -> u32 { 52 }
+fn default_overlay_snooze_minutes() -> u32 { 60 }
 fn default_style_personal() -> String { "casual".to_string() }
 fn default_style_work() -> String { "casual".to_string() }
 fn default_style_email() -> String { "formal".to_string() }
@@ -313,15 +350,17 @@ pub fn friendly_app_name(exe: &str) -> String {
     let lower = exe.to_lowercase();
     let stem = lower.trim_end_matches(".exe");
     let mapped = match stem {
-        // Editors / IDEs
+        // Editors / IDEs — Windows exe stems + Linux WM_CLASS (most overlap)
         "code" => "VS Code",
         "cursor" => "Cursor",
         "windsurf" => "Windsurf",
         "devenv" => "Visual Studio",
-        "idea64" | "idea" => "IntelliJ IDEA",
-        "pycharm64" | "pycharm" => "PyCharm",
-        "webstorm64" | "webstorm" => "WebStorm",
+        "idea64" | "idea" | "jetbrains-idea" => "IntelliJ IDEA",
+        "pycharm64" | "pycharm" | "jetbrains-pycharm" => "PyCharm",
+        "webstorm64" | "webstorm" | "jetbrains-webstorm" => "WebStorm",
         "sublime_text" => "Sublime Text",
+        "gedit" | "org.gnome.gedit" | "gnome-text-editor" => "GNOME Text Editor",
+        "kate" | "org.kde.kate" => "Kate",
         // Shells / terminals
         "windowsterminal" => "Windows Terminal",
         "pwsh" => "PowerShell",
@@ -329,24 +368,28 @@ pub fn friendly_app_name(exe: &str) -> String {
         "cmd" => "Command Prompt",
         "wezterm-gui" | "wezterm" => "WezTerm",
         "alacritty" => "Alacritty",
+        "org.gnome.terminal" | "gnome-terminal" | "gnome-terminal-server" => "GNOME Terminal",
+        "org.kde.konsole" | "konsole" => "Konsole",
+        "xterm" => "XTerm",
         // Chat / collab
         "slack" => "Slack",
         "teams" | "ms-teams" => "Microsoft Teams",
         "discord" => "Discord",
         "whatsapp" => "WhatsApp",
-        "telegram" => "Telegram",
-        "signal" => "Signal",
+        "telegram" | "telegramdesktop" => "Telegram",
+        "signal" | "signal-desktop" => "Signal",
         "messenger" => "Messenger",
         "zoom" => "Zoom",
         // Email
         "outlook" => "Outlook",
-        "thunderbird" => "Thunderbird",
+        "thunderbird" | "mozilla thunderbird" => "Thunderbird",
         "hostedgmaildesktopapp" => "Gmail",
+        "evolution" => "Evolution",
         // Browsers (weak signal — let the model decide)
-        "chrome" => "Google Chrome",
+        "chrome" | "google-chrome" => "Google Chrome",
         "msedge" => "Microsoft Edge",
-        "firefox" => "Firefox",
-        "brave" => "Brave",
+        "firefox" | "navigator" => "Firefox",
+        "brave" | "brave-browser" => "Brave",
         "arc" => "Arc",
         // Notes / docs
         "notion" => "Notion",
@@ -357,9 +400,60 @@ pub fn friendly_app_name(exe: &str) -> String {
         "powerpnt" => "Microsoft PowerPoint",
         "onenote" => "OneNote",
         "notepad" => "Notepad",
+        "libreoffice" | "libreoffice-writer" | "libreoffice-calc" => "LibreOffice",
         // Other
         "linear" => "Linear",
         "figma" => "Figma",
+        "spotify" => "Spotify",
+
+        // --- macOS bundle IDs ---
+        // Apple
+        "com.apple.safari" => "Safari",
+        "com.apple.terminal" => "Terminal",
+        "com.apple.mail" => "Mail",
+        "com.apple.messages" => "Messages",
+        "com.apple.finder" => "Finder",
+        "com.apple.notes" => "Notes",
+        "com.apple.textedit" => "TextEdit",
+        "com.apple.dt.xcode" => "Xcode",
+        "com.apple.iwork.pages" => "Pages",
+        "com.apple.iwork.numbers" => "Numbers",
+        "com.apple.iwork.keynote" => "Keynote",
+        // Microsoft on Mac
+        "com.microsoft.vscode" => "VS Code",
+        "com.microsoft.word" => "Microsoft Word",
+        "com.microsoft.excel" => "Microsoft Excel",
+        "com.microsoft.powerpoint" => "Microsoft PowerPoint",
+        "com.microsoft.outlook" => "Outlook",
+        "com.microsoft.teams" | "com.microsoft.teams2" => "Microsoft Teams",
+        "com.microsoft.edgemac" => "Microsoft Edge",
+        // Chat / collab
+        "com.tinyspeck.slackmacgap" => "Slack",
+        "com.hnc.discord" => "Discord",
+        "ru.keepcoder.telegram" | "org.telegram.desktop" => "Telegram",
+        "net.whatsapp.whatsapp" => "WhatsApp",
+        "org.whispersystems.signal-desktop" => "Signal",
+        "us.zoom.xos" => "Zoom",
+        // Browsers
+        "com.brave.browser" => "Brave",
+        "com.google.chrome" => "Google Chrome",
+        "org.mozilla.firefox" => "Firefox",
+        "company.thebrowser.browser" => "Arc",
+        // Notes / docs
+        "notion.id" | "com.notion.id" => "Notion",
+        "md.obsidian" => "Obsidian",
+        "com.evernote.evernote" => "Evernote",
+        // Dev tools / editors
+        "com.todesktop.230313mzl4w4u92" => "Cursor",
+        "com.exafunction.windsurf" => "Windsurf",
+        "com.jetbrains.intellij" => "IntelliJ IDEA",
+        "com.jetbrains.pycharm" => "PyCharm",
+        "com.sublimetext.4" | "com.sublimetext.3" => "Sublime Text",
+        // Productivity
+        "com.figma.desktop" => "Figma",
+        "com.linear-app.linear" => "Linear",
+        "com.spotify.client" => "Spotify",
+
         _ => "",
     };
     if !mapped.is_empty() {
@@ -383,9 +477,23 @@ pub fn style_category_for_app(exe: Option<&str>) -> &'static str {
     let lower = exe.to_lowercase();
     let stem = lower.trim_end_matches(".exe");
     match stem {
-        "whatsapp" | "telegram" | "signal" | "messenger" => "personal",
-        "slack" | "teams" | "discord" => "work",
-        "outlook" | "thunderbird" | "hostedgmaildesktopapp" => "email",
+        // Personal chat
+        "whatsapp" | "telegram" | "telegramdesktop" | "signal" | "signal-desktop"
+        | "messenger"
+        | "com.apple.messages"
+        | "net.whatsapp.whatsapp"
+        | "ru.keepcoder.telegram" | "org.telegram.desktop"
+        | "org.whispersystems.signal-desktop" => "personal",
+        // Work chat / collab
+        "slack" | "teams" | "ms-teams" | "discord"
+        | "com.tinyspeck.slackmacgap"
+        | "com.microsoft.teams" | "com.microsoft.teams2"
+        | "com.hnc.discord" => "work",
+        // Email
+        "outlook" | "thunderbird" | "mozilla thunderbird" | "hostedgmaildesktopapp"
+        | "evolution"
+        | "com.apple.mail"
+        | "com.microsoft.outlook" => "email",
         _ => "other",
     }
 }
@@ -401,6 +509,7 @@ impl Default for Config {
             chat_model: default_chat_model(),
             min_recording_seconds: default_min_seconds(),
             privacy_acknowledged: default_privacy_ack(),
+            linux_hotkey_migrated: false,
             open_dashboard_on_launch: default_open_dashboard(),
             display_name: default_display_name(),
             hide_tray: default_hide_tray(),
@@ -416,6 +525,9 @@ impl Default for Config {
             theme: default_theme(),
             onboarding_completed: false,
             telemetry_enabled: default_telemetry_enabled(),
+            overlay_opacity: default_overlay_opacity(),
+            overlay_size: default_overlay_size(),
+            overlay_snooze_minutes: default_overlay_snooze_minutes(),
         }
     }
 }
@@ -482,7 +594,7 @@ pub fn load() -> Config {
             return Config::default();
         }
     };
-    match fs::read_to_string(&path) {
+    let cfg = match fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str::<Config>(&text) {
             Ok(cfg) => cfg,
             Err(e) => {
@@ -491,7 +603,33 @@ pub fn load() -> Config {
             }
         },
         Err(_) => Config::default(),
+    };
+    migrate(cfg)
+}
+
+/// One-shot fixups for configs written by earlier builds. Runs on every
+/// load; each rule must be a no-op once applied.
+fn migrate(cfg: Config) -> Config {
+    #[allow(unused_mut)]
+    let mut cfg = cfg;
+    // Linux builds before the port fix shipped the Windows default
+    // ("Ctrl+Win") which never worked here — the Super key belongs to
+    // the compositor and the Wayland portal can't bind modifier-only
+    // chords. Rewriting is safe: the combo cannot have been chosen
+    // because it worked. Runs once (marker below), so a user who
+    // deliberately re-picks Ctrl+Win in Settings afterwards keeps it.
+    #[cfg(target_os = "linux")]
+    if !cfg.linux_hotkey_migrated {
+        if cfg.hotkey == "Ctrl+Win" {
+            tracing::info!("migrating Linux dictation hotkey Ctrl+Win → Ctrl+Alt+Space");
+            cfg.hotkey = "Ctrl+Alt+Space".to_string();
+        }
+        cfg.linux_hotkey_migrated = true;
+        if let Err(e) = save(&cfg) {
+            tracing::warn!("could not persist hotkey migration: {e:#}");
+        }
     }
+    cfg
 }
 
 pub fn save(cfg: &Config) -> Result<()> {

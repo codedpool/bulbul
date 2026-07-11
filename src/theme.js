@@ -35,6 +35,13 @@ function setAttrAnimated(pref) {
     setAttr(pref); // no visible change (e.g. system→system) — skip the fade
     return;
   }
+  // On Android the whole-page color crossfade animates hundreds of
+  // elements at once and drops frames on low-end phones — it reads as
+  // laggy. An instant swap is snappier there.
+  if (document.documentElement.classList.contains("platform-android")) {
+    setAttr(pref);
+    return;
+  }
   const root = document.documentElement;
   root.classList.add(ANIM_CLASS);
   setAttr(pref);

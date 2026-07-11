@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Bulbul accessibility service — subscribed events + capabilities.
+
+  accessibilityEventTypes:
+    typeViewFocused — when the user taps into an editable field; this
+      is our primary "show the bubble" trigger.
+    typeWindowStateChanged — when the IME (soft keyboard) opens or
+      closes; gives us a second confirmation signal.
+
+  canRetrieveWindowContent: required so we can later walk the node
+    tree to find the focused EditText and call performAction
+    (ACTION_SET_TEXT) for injection.
+
+  flagRetrieveInteractiveWindows: needed so getWindows() returns the
+    IME window — we cross-reference its presence to confirm the
+    keyboard is actually on screen.
+
+  notificationTimeout: 100ms keeps us responsive without burning CPU
+    on every micro-event the system fires while typing.
+
+  packageNames is intentionally OMITTED so the service receives
+    events from every app — Bulbul has to work anywhere the user
+    types, and per-app gating would mean maintaining a hand-curated
+    allowlist that's wrong on day one.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewFocused|typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="100"
+    android:description="@string/accessibility_service_description" />

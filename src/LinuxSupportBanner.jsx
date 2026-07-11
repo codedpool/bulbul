@@ -1,0 +1,146 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+
+// Linux-only dashboard banner. The backend reports how the global
+// hotkey ended up wired (Wayland portal / X11 poller / nowhere) plus
+// which injection tools are installed; this surfaces the ones that
+// need user action, with the exact command to run. Renders nothing
+// when the session is fully working — most X11 and KDE users never
+// see it.
+//
+// Dismissal is remembered per issue-set: fixing one problem (or a
+// backend regression creating a new one) resurfaces the banner.
+// v2: guidance changed (portal-first paste, ydotool daemon detection) —
+// bumping the key resurfaces the banner for users who dismissed v1.
+const DISMISS_KEY = "bulbul-linux-banner-dismissed-v2";
+
+export default function LinuxSupportBanner() {
+  const [info, setInfo] = useState(null);
+  const [status, setStatus] = useState(null); // hotkey {backend, detail}
+  const [paste, setPaste] = useState(null); // paste {backend, detail}
+  const [dismissed, setDismissed] = useState(
+    () => localStorage.getItem(DISMISS_KEY) || "",
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    invoke("get_linux_support_info")
+      .then((v) => {
+        if (!mounted || !v) return;
+        setInfo(v);
+        if (v.hotkey_backend && v.hotkey_backend !== "unknown") {
+          setStatus({ backend: v.hotkey_backend, detail: v.hotkey_detail });
+        }
+        if (v.paste_backend && v.paste_backend !== "unknown") {
+          setPaste({ backend: v.paste_backend, detail: v.paste_detail });
+        }
+      })
+      .catch(() => {});
+    // Both backends can flip after the initial fetch — the Wayland
+    // portals resolve a beat after boot (permission dialogs, D-Bus
+    // round-trips), so keep listening and re-render when they land.
+    const unHotkey = listen("linux-hotkey-status", (e) => {
+      if (mounted && e.payload) setStatus(e.payload);
+    });
+    const unPaste = listen("linux-paste-status", (e) => {
+      if (mounted && e.payload) setPaste(e.payload);
+    });
+    return () => {
+      mounted = false;
+      unHotkey.then((f) => f()).catch(() => {});
+      unPaste.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  if (!info) return null;
+
+  const issues = [];
+
+  // Highest priority: the .deb granted input access but this login
+  // session predates it. That one relogin switches on BOTH the instant
+  // hold-to-talk hotkey (evdev) and typing (uinput) — so collapse the
+  // separate hotkey/paste nags into a single clear instruction.
+  const needsRelogin = info.uinput_grant_installed && !info.uinput_ready;
+
+  if (needsRelogin) {
+    issues.push({
+      key: "relogin",
+      text: "Almost there — log out and back in once to finish setup. That turns on the instant hold-to-talk hotkey and typing into other apps. Until you do, dictation is copied to the clipboard (paste with Ctrl+V).",
+      command: null,
+    });
+  } else {
+    if (status?.backend === "none") {
+      issues.push({
+        key: "hotkey",
+        text:
+          (status.detail ||
+            "The dictation hotkey couldn't be registered on this desktop.") +
+          " For an instant hold-to-talk hotkey, install the .deb package (it reads the keyboard directly after one logout/login).",
+        command: info.toggle_command,
+        commandHint:
+          "Or bind this command to a shortcut in Settings → Keyboard → Custom Shortcuts — press once to start, again to stop. (It signals the running app instantly; don’t use “bulbul --toggle-dictation”, which is laggy.)",
+      });
+    }
+
+    // Typing works when uinput is granted (covers every compositor) or a
+    // fallback path is live (portal / working tool).
+    const pasteWorks =
+      info.uinput_ready ||
+      paste?.backend === "portal" ||
+      info.wtype_usable ||
+      info.ydotool_ready;
+    if (info.wayland && !pasteWorks) {
+      issues.push({
+        key: "paste",
+        text: "Auto-typing into other apps isn’t enabled on this install. The .deb package sets it up (one logout/login) — with the AppImage, dictation is copied to the clipboard instead, ready to paste with Ctrl+V.",
+        command: null,
+      });
+    }
+  }
+
+  if (info.gnome) {
+    issues.push({
+      key: "tray",
+      text: "GNOME hides tray icons by default — install the “AppIndicator and KStatusNotifierItem” Shell extension to see Bulbul in the top bar. Dictation works either way.",
+    });
+  }
+
+  if (issues.length === 0) return null;
+
+  const fingerprint = issues.map((i) => i.key).join(",");
+  if (dismissed === fingerprint) return null;
+
+  return (
+    <div className="linux-banner" role="status">
+      <div className="linux-banner-head">
+        <span className="linux-banner-dot" aria-hidden />
+        <strong>Linux setup{info.wayland ? " (Wayland session)" : ""}</strong>
+        <button
+          className="linux-banner-dismiss"
+          onClick={() => {
+            localStorage.setItem(DISMISS_KEY, fingerprint);
+            setDismissed(fingerprint);
+          }}
+          aria-label="Dismiss"
+          title="Dismiss until something changes"
+        >
+          ✕
+        </button>
+      </div>
+      <ul className="linux-banner-list">
+        {issues.map((i) => (
+          <li key={i.key}>
+            {i.text}
+            {i.command && (
+              <>
+                {i.commandHint ? ` ${i.commandHint}` : null}
+                <code className="linux-banner-code">{i.command}</code>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

@@ -4,6 +4,23 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-07-12
+
+One codebase, four platforms: this release brings Bulbul to **macOS**, **Linux**, and **Android**, alongside the existing Windows app.
+
+### Added
+
+- **macOS support** — full hold-to-talk dictation on macOS 11+, including modifier-chord hotkeys (⌃⌘, ⌥⌘, ⌃⇧Space), retina-aware menu-bar tray icon with template-image dark-mode tinting, native NSPasteboard paste with transient/concealed markers (so clipboard managers skip the entry), AppleScript-driven Cmd+V keystroke through System Events (more reliable across macOS versions than CGEvent posting, especially on Tahoe), TIS/UCKeyTranslate-aware modifier polling, AXIsProcessTrusted accessibility-permission detection, AVFoundation mic-permission status check + programmatic request, NSAppleEventsUsageDescription declared, ad-hoc signing with hardened-runtime entitlement. Native window chrome with a Wispr-style floating sidebar toggle next to the traffic lights. Universal binary covers Apple Silicon + Intel.
+- **Linux support** — hold-to-talk dictation on X11 and Wayland. Hotkeys read `/dev/input` directly (evdev) for instant, compositor-independent hold-to-talk, with the GNOME/KDE shortcut portal and X11 grabs as fallbacks; typing goes through a kernel `uinput` virtual keyboard (the path GNOME can't block), falling back to the RemoteDesktop portal and `wl-clipboard` paste. The `.deb` grants input-group and uinput access on install (log out once after installing to activate); `.AppImage` and `.rpm` also provided. A dashboard banner reports the live session's hotkey/paste capabilities.
+- **Android support** — Bulbul on phones (arm64 APK). A floating bubble appears whenever the keyboard does; hold or tap it to dictate into any app, with the transcript injected directly into the focused field via the accessibility service (no clipboard round-trip, no paste toast). Includes: native first-run permission walker + in-app onboarding wizard, dictionary corrections and snippet expansion applied to every dictation, per-app detection with history badges and a per-app Style pass (beta), text-selection transforms via the system popup toolbar, in-app scratchpad dictation, drag-to-snooze for the bubble (with resume in Settings), bubble opacity/size controls, opt-in anonymous telemetry, and dark/light theming that follows the in-app theme.
+- **Mac-aware onboarding wizard** — Permissions step inserted between Welcome and API key (Microphone + Accessibility cards, both polled every 1.5s for live status), hotkey-preset labels rendered with native ⌃⌥⇧⌘ glyphs, "Quit & Relaunch" button on the Accessibility card for cases where the OS doesn't refresh TCC trust mid-process.
+- **Visible rejection feedback** — when the dictation pipeline drops a take (too short, silence-induced hallucination), the overlay pill now briefly turns amber with a short label ("Too short — try again" / "No audio — check mic") instead of silently shrinking. Same diagnostic visibility applies to the dashboard: every transcript Whisper returns is persisted to history, including hallucination-filter drops, so users can see exactly what was heard regardless of injection outcome.
+- **In-app usage guides** — dismissible "How to dictate" and "How transforms work" cards on the Home and Transforms pages (they return on relaunch), plus platform-aware copy across the app (hotkey wording on desktop, bubble wording on Android).
+
+### Contributors
+
+- [@Pskuntal1248](https://github.com/Pskuntal1248) (Parth singh) — macOS paste-keystroke hardening (switching the Cmd+V path from CGEvent to AppleScript via System Events, which delivers reliably on macOS Tahoe where the CGEvent path could silently no-op) and per-platform transform-slot bindings (Cmd+1..9 on macOS in place of Alt+1..9, which on Mac would globally capture the special-character chords ¡™£¢∞§¶•ª). Verified end-to-end on real Tahoe hardware. ([#1](https://github.com/codedpool/bulbul/pull/1))
+
 ## [1.0.1] — 2026-07-02
 
 ### Added
@@ -37,7 +54,6 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 - Click-to-talk overlay — mouse-driven entry point with X / waveform / ✓ controls, alongside the existing hold-to-talk hotkey
 - Per-app dictionary scoping — substitutions that only fire in specific apps
-- macOS port
 
 ## [1.0.0] — 2026-06-02
 
