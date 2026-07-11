@@ -131,3 +131,53 @@ jobs:
           includeUpdaterJson: true
 
           args: ${{ matrix.args }}
+
+  # Android APK, attached to the same draft release the desktop matrix
+  # created. Runs after publish-tauri so the release exists to upload
+  # into. Debug-signed via the gradle fallback (the release keystore is
+  # not in the repo) — installs fine for sideload; Play uploads get
+  # re-signed by Play App Signing anyway.
+  publish-android:
+    needs: publish-tauri
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Rust toolchain (Android arm64)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build APK (arm64)
+        # tauri runs beforeBuildCommand (npm run build) itself, then the
+        # Rust .so build + gradle assemble for the tracked gen/android
+        # project. NDK comes preinstalled on the runner image.
+        run: npx tauri android build --apk --target aarch64
+
+      - name: Upload APK to the release
+        run: |
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -path '*release*' | head -n1)
+          if [ -z "$APK" ]; then echo "No APK produced"; exit 1; fi
+          OUT="bulbul-${GITHUB_REF_NAME#v}-arm64.apk"
+          cp "$APK" "$OUT"
+          gh release upload "$GITHUB_REF_NAME" "$OUT" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
