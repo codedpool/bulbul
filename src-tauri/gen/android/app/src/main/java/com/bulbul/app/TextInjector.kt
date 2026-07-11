@@ -115,10 +115,15 @@ object TextInjector {
     /// Focused-editable discovery, most-reliable first:
     ///   1. service findFocus  2. per-window-root findFocus
     ///   3. DFS for a focused editable  4. DFS for any editable.
+    ///
+    /// Password/PIN fields are never a target at any step — a transcript
+    /// landing in a credential prompt is always wrong (and dictating a
+    /// secret aloud was never the intent), so we drop rather than fall
+    /// through to a password node.
     private fun findTarget(svc: AccessibilityService): AccessibilityNodeInfo? {
         try {
             svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let {
-                if (it.isEditable) return it else it.recycle()
+                if (it.isEditable && !it.isPassword) return it else it.recycle()
             }
         } catch (_: Throwable) {}
         return try {
@@ -126,16 +131,16 @@ object TextInjector {
             for (w in windows) {
                 val root = w.root ?: continue
                 root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let {
-                    if (it.isEditable) return it else it.recycle()
+                    if (it.isEditable && !it.isPassword) return it else it.recycle()
                 }
             }
             for (w in windows) {
                 val root = w.root ?: continue
-                dfs(root, 0) { it.isEditable && it.isFocused }?.let { return it }
+                dfs(root, 0) { it.isEditable && !it.isPassword && it.isFocused }?.let { return it }
             }
             for (w in windows) {
                 val root = w.root ?: continue
-                dfs(root, 0) { it.isEditable }?.let { return it }
+                dfs(root, 0) { it.isEditable && !it.isPassword }?.let { return it }
             }
             null
         } catch (t: Throwable) {

@@ -1244,7 +1244,21 @@ fn set_overlay_height(height: f64, app: AppHandle) {
     }
 }
 
-
+// TODO(v1.1.1): make autostart self-healing. Today it is registered in
+// exactly one place — `complete_onboarding` calls enable() once — and the
+// intended state is never persisted (get_autostart just reads the OS
+// registration live). Two gaps this leaves:
+//   1. Any install that skips onboarding (e.g. a dev reinstalling over a
+//      config with onboarding_completed=true) never gets registered, so
+//      the app never autostarts even though a fresh install would.
+//   2. If enable() fails (auto-launch/current_exe quirks) or the Run key
+//      is later removed (AV, cleanup, stale dev-build path), nothing
+//      re-registers it, and the frontend swallows the toggle error so the
+//      failure is invisible.
+// Fix: persist an `autostart` intent in Config, reconcile it on every
+// startup (if intent==on but the OS registration is missing or points at
+// a stale exe, re-register with the current exe), and surface set_autostart
+// errors in the UI instead of only console.error'ing them.
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> Result<bool, String> {
     app.autolaunch().is_enabled().map_err(|e| format!("{e}"))

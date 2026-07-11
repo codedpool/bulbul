@@ -23,11 +23,27 @@
     events from every app — Bulbul has to work anywhere the user
     types, and per-app gating would mean maintaining a hand-curated
     allowlist that's wrong on day one.
+
+  isAccessibilityTool: declares to the OS (and to apps that scan the
+    enabled-services list) that this is a genuine accessibility aid —
+    hands-free voice input — not an app borrowing the a11y API for
+    something else. Ignored below API 30. Kept as the honest declaration,
+    but note: on-device isolation testing (2026-07-12) proved UPI apps'
+    payment blocks (Paytm, BHIM) do NOT key on this attribute, the
+    overlay, or the service's capabilities. They key on INSTALLER
+    PROVENANCE: "sideloaded app + enabled accessibility service" is the
+    fraud fingerprint. The same APK re-installed with Play attribution
+    (pm install -i com.android.vending) passed Paytm payment with
+    accessibility ON and this config unchanged. The production fix is
+    Play Store distribution (a closed-testing track suffices); sideload
+    users' workaround is the system accessibility shortcut (hold both
+    volume keys) to pause Bulbul during payment.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeViewFocused|typeWindowStateChanged|typeWindowsChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="true"
     android:notificationTimeout="100"
     android:description="@string/accessibility_service_description" />
