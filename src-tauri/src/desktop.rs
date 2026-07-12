@@ -1360,22 +1360,38 @@ fn get_linux_support_info() -> serde_json::Value {
 // TODO(v1.1.1): RECURRING BUG — on a fresh install the Accessibility card
 // never turns green: the user enables Bulbul in System Settings, the
 // toggle shows ON, yet AXIsProcessTrusted() here keeps returning false.
-// The launch-time caching case was already handled (see relaunch_app
-// below — "Quit & Relaunch" refreshes trust). What relaunch CANNOT fix,
-// and the likely reason this came back, is the ad-hoc code signature:
-// Bulbul is ad-hoc signed, so every build has a different cdhash, and
-// macOS binds the TCC Accessibility grant to the signature. A reinstall /
-// new build then inherits a STALE grant — listed + toggled on, but it
-// doesn't match the running binary, so AXIsProcessTrusted() is false and
-// toggling or relaunching won't clear it. Fixes, in order of root-ness:
-//   1. Sign with a STABLE identity (Developer ID, or at least a persistent
-//      self-signed cert) so the TCC grant survives across builds. This is
-//      the real fix — ad-hoc signing is the root cause.
-//   2. Detect the stuck state (AXIsProcessTrusted false after a relaunch
-//      while the app is in the Accessibility list) and steer the user to
-//      REMOVE Bulbul from the list and re-add, or `tccutil reset
-//      Accessibility com.bulbul.app` (same clean-permissions path as the
-//      uninstall flow), instead of leaving them on a never-green card.
+// There are TWO distinct walls, and they need DIFFERENT recoveries:
+//
+//   CASE 1 — first-time grant (relaunch DOES fix it). Bulbul launched
+//   with AX off; the user flips it ON afterwards; macOS caches the
+//   launch-time trust value, so this call stays false until restart.
+//   Handled today by relaunch_app below ("Quit & Relaunch"). This is
+//   also what a manual deactivate/re-enable of the grant does.
+//
+//   CASE 2 — stale grant from a prior install (relaunch does NOT fix it).
+//   Bulbul is ad-hoc signed, so every build has a different cdhash, and
+//   macOS binds the TCC Accessibility grant to the signature. A reinstall
+//   / new build inherits a STALE grant — listed + toggled ON, but bound
+//   to the OLD signature, so AXIsProcessTrusted() is false no matter how
+//   many times the user quits, relaunches, or toggles off/on. These are
+//   the "I enabled it, it's ON, relaunch does nothing" reports, and today
+//   they are STRANDED with no in-app way out.
+//
+// Fixes, in order of root-ness:
+//   1. ROOT — sign releases with a STABLE identity (Developer ID; ad-hoc
+//      locally is fine, CI injects the real cert via signing secrets).
+//      A stable cdhash means the grant never goes stale, so Case 2 stops
+//      existing. This is the real fix. See memory
+//      project_v111_mac_accessibility_never_green for details.
+//   2. INTERIM (so Case-2 users aren't stranded before the cert lands) —
+//      when AXIsProcessTrusted() is STILL false after a relaunch while
+//      Bulbul IS in the Accessibility list, the wizard card must stop
+//      offering "Quit & Relaunch" (which we know won't help this case)
+//      and instead offer a "Reset permission" action that runs
+//      `tccutil reset Accessibility com.bulbul.app` (same clean path as
+//      the uninstall flow) and then re-primes, so a fresh, correctly
+//      bound grant can form. Add a reset_accessibility_mac command
+//      alongside relaunch_app and wire it to that button.
 #[cfg(target_os = "macos")]
 #[tauri::command]
 fn check_accessibility_status_mac() -> bool {
