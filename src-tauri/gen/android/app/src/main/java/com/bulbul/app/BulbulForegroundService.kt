@@ -123,6 +123,8 @@ class BulbulForegroundService : Service() {
                 pendingAppPackage = BulbulAccessibilityService.targetPackage
                 bubbleView?.setRecording(true)
             } else {
+                // TODO(v1.1.1): silent failure — surface via the
+                // permission-recovery notification (see startInForeground).
                 Log.w(TAG, "recorder failed to start — RECORD_AUDIO probably not granted")
             }
         }
@@ -368,6 +370,20 @@ class BulbulForegroundService : Service() {
     }
 
     private fun startInForeground() {
+        // TODO(v1.1.1): make this notification a permission-recovery CTA.
+        // Today it's a static "Tap the bubble to dictate", so when a
+        // permission is revoked mid-use the app degrades SILENTLY (see the
+        // two catch sites below: overlay BadTokenException and mic
+        // recorder-failed-to-start are Log-only, invisible to the user).
+        // Plan: when the bubble can't be shown or the recorder can't start
+        // because a permission is missing, flip this notification to
+        // "Bulbul is paused — accessibility/overlay/mic turned off. Tap to
+        // fix." with a PendingIntent into SetupActivity (or the relevant
+        // system settings screen), and restore the normal text once
+        // permissions are back. Pairs with the MainActivity onResume
+        // re-check (which re-surfaces setup on return) so a revoked
+        // permission has a visible, tappable recovery path instead of
+        // three silent failures.
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Bulbul")
             .setContentText("Tap the bubble to dictate")
@@ -474,6 +490,9 @@ class BulbulForegroundService : Service() {
         } catch (t: Throwable) {
             // BadTokenException — overlay permission was revoked
             // mid-session. Surface it so we know what's wrong.
+            // TODO(v1.1.1): also surface to the USER, not just logcat —
+            // flip the fg-service notification to the permission-recovery
+            // CTA (see startInForeground).
             Log.e(TAG, "showBubble: addView FAILED", t)
         }
     }
