@@ -46,7 +46,17 @@ body, html, #root {
    sunken background + subtle bottom border read as an explicit
    header, so the RGB row doesn't float ambiguously over the sidebar
    content below. Sidebar + main content padding-top offsets clear
-   this strip. */
+   this strip.
+
+   TODO(v1.1.1): this strip + the sidebar toggle at (left: 82px) reserve
+   space for the traffic-light cluster. When the window is maximized /
+   fullscreen, macOS moves the traffic lights to its own native position,
+   so this header strip and the ~78px gap to its left are left BLANK —
+   the toggle is orphaned and the top-left looks broken. Detect the
+   maximized/fullscreen state (App.jsx already has `isMaximized`; may also
+   need an explicit fullscreen listen) and adapt on macOS: collapse/hide
+   this strip and reflow the toggle to the far left when the OS owns the
+   traffic-light placement, so no empty gap remains. */
 .platform-mac .app-shell::before {
   content: '';
   position: fixed;
