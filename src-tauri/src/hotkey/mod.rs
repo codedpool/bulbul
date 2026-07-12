@@ -561,6 +561,24 @@ fn derive_slot_number(h: &ParsedHotkey) -> Option<u8> {
     }
 }
 
+// TODO(v1.1.1): these modifier labels are Windows-centric. The `combo`
+// string this produces is shown verbatim in the Transforms UI slot chips
+// (TransformSlotStatus.combo → TransformCard), so on macOS a Cmd+1..9
+// transform slot displays as "Win+1" (wrong), and on Linux `meta` would
+// read "Win" instead of "Super". Make the labels platform-aware: macOS
+// ⌘/⌥/⌃/⇧ (or Command/Option/Control/Shift), Linux Super, Windows as-is —
+// either here via cfg!(target_os), or by returning structured modifiers
+// and formatting in the frontend (which already has META_KEY_NAME).
+// Related v1.1.1 transform work: (a) make transform-slot keys USER-
+// EDITABLE across all platforms (today they're fixed at Alt/Cmd+1..9 —
+// add a per-transform hotkey recorder like the dictation HotkeyControl,
+// and the displayed key must reflect the custom binding); (b) fix the
+// in-dashboard scratchpad (ScratchpadView, the sidebar one — NOT the
+// pill) where pressing a transform hotkey does nothing on macOS because
+// the global-shortcut path captures the OS selection and never reaches
+// the in-app textarea (the click-the-chip path via run_transform_on_text
+// works). Route a transform hotkey to the in-app transform when Bulbul's
+// own window is focused.
 fn format_combo(h: &ParsedHotkey) -> String {
     let mut parts: Vec<String> = Vec::new();
     if h.ctrl {

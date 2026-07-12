@@ -70,6 +70,13 @@ export default function ScratchpadView() {
     setHasSelection(el.selectionEnd > el.selectionStart);
   }
 
+  // TODO(v1.1.1): transforms here only fire when the user CLICKS a chip.
+  // Pressing the transform hotkey (e.g. Cmd+1 on macOS) inside this
+  // in-dashboard scratchpad does nothing — the global-shortcut path
+  // captures the OS selection and never sees this webview textarea. When
+  // Bulbul's own window is focused, a transform hotkey should call this
+  // applyTransform on the current textarea selection instead. (See the
+  // format_combo TODO in hotkey/mod.rs for the companion label/edit work.)
   async function applyTransform(transform) {
     const { start, end } = selRef.current;
     if (end <= start) return;
