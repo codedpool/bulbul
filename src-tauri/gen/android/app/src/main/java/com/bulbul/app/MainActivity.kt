@@ -34,6 +34,19 @@ class MainActivity : TauriActivity() {
     // Doing this in onCreate (not onResume) means the webview keeps
     // loading underneath — by the time the user finishes setup the
     // dashboard is ready, so they don't see a second loading spinner.
+    //
+    // TODO(v1.1.1): this only fires in onCreate, so it's one-shot. If the
+    // user presses BACK out of SetupActivity without granting anything,
+    // they land on the webview (onboarding wizard) with no permissions,
+    // and the setup walker is never shown again — MainActivity is already
+    // created, so onCreate won't re-run, and nothing re-checks on return.
+    // Net: the app is unusable (no mic/overlay/a11y) and never re-prompts,
+    // even after the user later disables a permission. Fix: re-evaluate in
+    // onResume and re-launch SetupActivity when permissions are still
+    // missing — guarded against a relaunch loop (e.g. don't relaunch while
+    // SetupActivity is the thing that just returned, or gate on a "user
+    // explicitly deferred" flag) so BACK can't trap them but a genuinely
+    // unpermissioned app is always steered back to setup.
     if (!hasAllPermissions()) {
       startActivity(Intent(this, SetupActivity::class.java))
     }
@@ -44,6 +57,9 @@ class MainActivity : TauriActivity() {
     // Catch a theme change made while we were backgrounded (or an OS
     // theme flip when the app is set to "system").
     applyBarAppearance()
+    // TODO(v1.1.1): also re-check permissions here (see onCreate note) so
+    // backing out of setup, or revoking a permission, re-surfaces the
+    // setup walker instead of leaving the app silently non-functional.
   }
 
   override fun onDestroy() {
