@@ -1,19 +1,19 @@
 name: macOS dev build
 
-# Rolling pre-release for the v1.1 integration branch (desktop + Android
-# unified). Every push to v1.1-integration rebuilds + replaces the
+# Rolling pre-release for the v1.1.1 branch (desktop + Android
+# unified). Every push to v1.1.1 rebuilds + replaces the
 # `macos-dev` release. The tester pulls via
 # `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`, so no
 # clone/build is needed on their machine.
 #
 # Sibling workflows linux-dev.yml, windows-dev.yml, and android-dev.yml
-# cover the other targets of the same branch. When v1.1 ships to main,
+# cover the other targets of the same branch. When v1.1.1 ships to main,
 # drop all four.
 
 on:
   push:
     branches:
-      - v1.1-integration
+      - v1.1.1
   workflow_dispatch:
 
 concurrency:
