@@ -1220,8 +1220,48 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
             let _ = win_handle.hide();
         }
     });
+    disable_fullscreen_mac(&window);
     Ok(())
 }
+
+/// Mac: stop the window from ever entering native fullscreen. In
+/// TitleBarStyle::Overlay mode our content reserves a strip for the
+/// traffic-light cluster and inlines the sidebar toggle beside it; when
+/// macOS goes fullscreen it hides the traffic lights, leaving that strip
+/// and the ~78px gap blank and the toggle orphaned (the "traffic lights
+/// vanish, sidebar looks odd" bug). We keep the window resizable but drop
+/// the FullScreenPrimary/Auxiliary collection behaviors and set
+/// FullScreenNone, so the green button reverts to zoom — already disabled
+/// via `maximizable: false` — and the traffic lights are always present.
+#[cfg(target_os = "macos")]
+fn disable_fullscreen_mac(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    // NSWindowCollectionBehavior bit flags (AppKit).
+    const FULLSCREEN_PRIMARY: usize = 1 << 7;
+    const FULLSCREEN_AUXILIARY: usize = 1 << 8;
+    const FULLSCREEN_NONE: usize = 1 << 9;
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    if ns_window.is_null() {
+        return;
+    }
+    // SAFETY: ns_window() returns a live NSWindow pointer while the window
+    // exists; we only send it AppKit selectors it responds to. Runs on the
+    // main thread (Tauri setup callback), as AppKit requires.
+    unsafe {
+        let ns_window = ns_window as *mut AnyObject;
+        let current: usize = msg_send![ns_window, collectionBehavior];
+        let updated = (current & !(FULLSCREEN_PRIMARY | FULLSCREEN_AUXILIARY)) | FULLSCREEN_NONE;
+        let _: () = msg_send![ns_window, setCollectionBehavior: updated];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn disable_fullscreen_mac(_window: &tauri::WebviewWindow) {}
 
 /// Resize the overlay window to a new logical height while keeping the
 /// width constant and re-anchoring the bottom edge above the taskbar.
@@ -1886,6 +1926,7 @@ pub fn run() {
                 // hides its Win-style min/max/close on .platform-mac and
                 // adds 80px of leading padding so the sidebar toggle sits
                 // clear of the traffic lights.
+                disable_fullscreen_mac(&window);
                 let cfg = handle.state::<AppState>().config.clone();
                 let want_show = {
                     let c = cfg.lock();

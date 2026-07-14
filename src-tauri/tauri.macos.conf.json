@@ -13,6 +13,7 @@
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
+        "maximizable": false,
         "visible": false,
         "center": true
       }
