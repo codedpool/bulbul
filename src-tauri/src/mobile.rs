@@ -28,6 +28,7 @@ mod config;
 use config::Config;
 use serde_json::{json, Value};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 
 /// Where Bulbul keeps mobile config on disk. Tauri's app_data_dir on
 /// Android resolves to Context.getFilesDir() (i.e.
@@ -92,23 +93,119 @@ fn set_autostart(_enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// No in-app updater on Android yet — distribution is sideloaded APK.
-/// Returning None means the React updater banner stays hidden.
-///
-/// TODO(release): before the public GitHub release, wire the Android
-/// updater to GitHub Releases. `check_for_updates` below should query the
-/// latest release tag and compare it to CARGO_PKG_VERSION; on a newer tag
-/// these two should surface the version and deep-link the user to the APK
-/// download (Android can't self-install a staged binary the way desktop
-/// does, so "install" means opening the APK, not applying it in-process).
-#[tauri::command]
-fn get_staged_update_version() -> Option<String> {
-    None
+// ---------- Android in-app updater (GitHub Releases) ----------
+//
+// Distribution is a GitHub-release APK, so "update" = detect a newer
+// release, then hand the APK to the system installer (Android can't
+// self-apply a binary like desktop). check_for_updates and the top banner
+// both go through latest_github_release(); install_staged_update opens the
+// captured APK URL. NOTE: a GitHub-sideload update does NOT carry the
+// com.android.vending installer attribution, so a Paytm user who updates
+// this way can re-trigger the payment block — Play distribution is the
+// eventual fix for that case (see memory project_v111_paytm_accessibility).
+
+const GITHUB_RELEASES_API: &str =
+    "https://api.github.com/repos/codedpool/bulbul/releases/latest";
+const GITHUB_RELEASES_PAGE: &str = "https://github.com/codedpool/bulbul/releases/latest";
+
+/// Direct download URL of the latest arm64 APK, captured whenever an update
+/// check finds a newer release so `install_staged_update` can open the
+/// exact asset instead of the generic release page.
+static LATEST_APK_URL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// GET the latest GitHub release; return Some((version, apk_url)) when its
+/// tag is strictly newer than this build, else None. Errors on network or
+/// parse failure so the caller can decide whether to surface or swallow.
+async fn latest_github_release() -> Result<Option<(String, String)>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client init failed: {e}"))?;
+    let resp = client
+        .get(GITHUB_RELEASES_API)
+        // GitHub's API returns 403 without a User-Agent.
+        .header("User-Agent", "Bulbul-Android-Updater")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub returned {}", resp.status()));
+    }
+    let v: Value = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
+    let tag = v["tag_name"].as_str().unwrap_or_default().trim_start_matches('v');
+    if tag.is_empty() {
+        return Err("release has no tag_name".into());
+    }
+    if !is_newer(tag, env!("CARGO_PKG_VERSION")) {
+        return Ok(None);
+    }
+    // Prefer the arm64 APK asset's direct URL; fall back to the release
+    // page if asset naming ever changes.
+    let apk_url = v["assets"]
+        .as_array()
+        .and_then(|assets| {
+            assets.iter().find_map(|a| {
+                let name = a["name"].as_str()?;
+                if name.ends_with("-arm64.apk") {
+                    a["browser_download_url"].as_str().map(str::to_string)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| GITHUB_RELEASES_PAGE.to_string());
+    Ok(Some((tag.to_string(), apk_url)))
 }
 
+/// True when dotted version `candidate` is strictly greater than `current`.
+/// Tolerant parse: missing components count as 0, non-numeric as 0.
+fn is_newer(candidate: &str, current: &str) -> bool {
+    fn parts(s: &str) -> Vec<u32> {
+        s.split('.').map(|p| p.trim().parse::<u32>().unwrap_or(0)).collect()
+    }
+    let (a, b) = (parts(candidate), parts(current));
+    for i in 0..a.len().max(b.len()) {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// Drives the top update banner (App.jsx fetches this on mount). Android
+/// has no background installer-staging like desktop, so "staged" is
+/// reinterpreted as "a newer GitHub release exists": check the latest
+/// release and, if newer than this build, return its version so the banner
+/// appears. Failures return None so a flaky network never blocks the UI or
+/// shows a phantom update.
 #[tauri::command]
-fn install_staged_update() -> Result<(), String> {
-    Err("Updates are not yet supported on Android — reinstall the APK manually.".to_string())
+async fn get_staged_update_version() -> Option<String> {
+    match latest_github_release().await {
+        Ok(Some((version, apk_url))) => {
+            *LATEST_APK_URL.lock().unwrap() = Some(apk_url);
+            Some(version)
+        }
+        _ => None,
+    }
+}
+
+/// "Install" on Android = open the latest release APK so the system package
+/// installer takes over (we can't apply a binary in-process like desktop).
+/// Opens the exact arm64 asset URL captured during the update check,
+/// falling back to the release page if we don't have it yet.
+#[tauri::command]
+fn install_staged_update(app: tauri::AppHandle) -> Result<(), String> {
+    let url = LATEST_APK_URL
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| GITHUB_RELEASES_PAGE.to_string());
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("Couldn't open the download: {e}"))
 }
 
 /// Tray doesn't exist on Android — there's a foreground service
@@ -1155,17 +1252,19 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
     }
 }
 
-/// Always reports "up to date" on Android today — there is no server to
-/// check against while distribution is a hand-shared APK.
-///
-/// TODO(release): before the public GitHub release, replace the stub with
-/// a GitHub Releases check — GET the `releases/latest` tag for the repo,
-/// parse the version, and return Some(version) when it's newer than
-/// CARGO_PKG_VERSION so the Settings ▸ About check offers the new APK.
-/// See the matching TODO on get_staged_update_version above.
+/// Manual "Check for updates" in Settings ▸ About. Queries the latest
+/// GitHub release and returns Some(version) when it's newer than this build
+/// (shown as "Update available: vX"), or None when up to date. Errors
+/// bubble up so the UI can show what went wrong (offline, rate-limited).
 #[tauri::command]
 async fn check_for_updates() -> Result<Option<String>, String> {
-    Ok(None)
+    match latest_github_release().await? {
+        Some((version, apk_url)) => {
+            *LATEST_APK_URL.lock().unwrap() = Some(apk_url);
+            Ok(Some(version))
+        }
+        None => Ok(None),
+    }
 }
 
 // ---------- Overlay / scratchpad windows (desktop-only concepts) ----------

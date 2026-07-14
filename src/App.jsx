@@ -206,9 +206,12 @@ function App() {
   async function installUpdate() {
     setInstalling(true);
     try {
-      // The Rust command returns only on failure — on success the
-      // installer kills this process mid-call.
+      // Desktop: returns only on failure — on success the installer kills
+      // this process mid-call. Android: opens the release APK in the system
+      // installer and returns normally (the app keeps running), so clear
+      // the spinner afterward.
       await invoke("install_staged_update");
+      if (IS_ANDROID) setInstalling(false);
     } catch (e) {
       console.error("install_staged_update failed:", e);
       setInstalling(false);
@@ -515,14 +518,24 @@ function App() {
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />
             <span className="update-banner-text">
-              <strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.
+              {IS_ANDROID ? (
+                <><strong>Bulbul v{stagedUpdate}</strong> is available on GitHub.</>
+              ) : (
+                <><strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.</>
+              )}
             </span>
             <button
               className="update-banner-btn"
               onClick={installUpdate}
               disabled={installing}
             >
-              {installing ? "Installing…" : "Install & restart"}
+              {installing
+                ? IS_ANDROID
+                  ? "Opening…"
+                  : "Installing…"
+                : IS_ANDROID
+                  ? "Update"
+                  : "Install & restart"}
             </button>
           </div>
         )}
