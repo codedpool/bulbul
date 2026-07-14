@@ -1397,10 +1397,11 @@ fn get_linux_support_info() -> serde_json::Value {
 /// once granted. On other platforms returns true unconditionally so the
 /// wizard's Mac-specific step is effectively a no-op there.
 //
-// TODO(v1.1.1): RECURRING BUG — on a fresh install the Accessibility card
-// never turns green: the user enables Bulbul in System Settings, the
-// toggle shows ON, yet AXIsProcessTrusted() here keeps returning false.
-// There are TWO distinct walls, and they need DIFFERENT recoveries:
+// RECURRING BUG (interim fix SHIPPED, root fix deferred) — on a fresh
+// install the Accessibility card can stay not-green: the user enables
+// Bulbul in System Settings, the toggle shows ON, yet AXIsProcessTrusted()
+// here keeps returning false. There are TWO distinct walls, and they need
+// DIFFERENT recoveries:
 //
 //   CASE 1 — first-time grant (relaunch DOES fix it). Bulbul launched
 //   with AX off; the user flips it ON afterwards; macOS caches the
@@ -1418,20 +1419,16 @@ fn get_linux_support_info() -> serde_json::Value {
 //   they are STRANDED with no in-app way out.
 //
 // Fixes, in order of root-ness:
-//   1. ROOT — sign releases with a STABLE identity (Developer ID; ad-hoc
-//      locally is fine, CI injects the real cert via signing secrets).
-//      A stable cdhash means the grant never goes stale, so Case 2 stops
-//      existing. This is the real fix. See memory
-//      project_v111_mac_accessibility_never_green for details.
-//   2. INTERIM (so Case-2 users aren't stranded before the cert lands) —
-//      when AXIsProcessTrusted() is STILL false after a relaunch while
-//      Bulbul IS in the Accessibility list, the wizard card must stop
-//      offering "Quit & Relaunch" (which we know won't help this case)
-//      and instead offer a "Reset permission" action that runs
-//      `tccutil reset Accessibility com.bulbul.app` (same clean path as
-//      the uninstall flow) and then re-primes, so a fresh, correctly
-//      bound grant can form. Add a reset_accessibility_mac command
-//      alongside relaunch_app and wire it to that button.
+//   1. ROOT (DEFERRED until traction — needs a paid Apple Developer ID) —
+//      sign releases with a STABLE identity so a stable cdhash means the
+//      grant never goes stale and Case 2 stops existing. The real fix; not
+//      yet done. See memory project_v111_mac_accessibility_never_green.
+//   2. INTERIM (SHIPPED) — reset_accessibility_mac below runs `tccutil
+//      reset Accessibility com.bulbul.app` and re-primes; the wizard card
+//      swaps "Quit & Relaunch" for "Reset permission" once a relaunch
+//      hasn't cleared the false reading (Case 2 — tracked via a
+//      localStorage flag in StepPermissions), so stranded users have an
+//      in-app way out until the Developer ID lands.
 #[cfg(target_os = "macos")]
 #[tauri::command]
 fn check_accessibility_status_mac() -> bool {
@@ -1487,6 +1484,38 @@ fn prime_accessibility_mac() -> Result<(), String> {
 #[tauri::command]
 fn relaunch_app(app: tauri::AppHandle) {
     app.restart();
+}
+
+/// Mac-only escape hatch for Case 2 (stale TCC grant): clear Bulbul's
+/// Accessibility grant with `tccutil reset`, then re-prime. When a prior
+/// ad-hoc-signed install left a grant bound to an old signature,
+/// AXIsProcessTrusted() stays false even though Bulbul is listed +
+/// toggled ON, and no relaunch or toggle clears it. `tccutil reset` wipes
+/// the grant so a fresh, correctly-bound one can form; re-priming
+/// immediately re-registers Bulbul with TCC and re-pops the grant dialog
+/// so the user can grant cleanly (then a relaunch refreshes trust, as in
+/// Case 1). Wired to the wizard's "Reset permission" button.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn reset_accessibility_mac() -> Result<(), String> {
+    let status = std::process::Command::new("tccutil")
+        .args(["reset", "Accessibility", "com.bulbul.app"])
+        .status()
+        .map_err(|e| format!("couldn't run tccutil: {e}"))?;
+    if !status.success() {
+        return Err(format!("tccutil reset failed (exit {:?})", status.code()));
+    }
+    // Re-add Bulbul to the Accessibility list + re-pop the grant dialog.
+    // Err is expected here (AX is not-yet-granted right after a reset);
+    // priming's side-effect of re-registering is what we're after.
+    let _ = inject::prime_enigo();
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn reset_accessibility_mac() -> Result<(), String> {
+    Ok(())
 }
 
 // Pull in AVFoundation so the AVCaptureDevice class symbol below
@@ -1758,6 +1787,7 @@ pub fn run() {
             request_microphone_access_mac,
             open_mac_settings_pane,
             relaunch_app,
+            reset_accessibility_mac,
             get_config,
             save_config,
             validate_api_key,
