@@ -34,6 +34,7 @@ package com.bulbul.app
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -63,6 +64,11 @@ class BulbulForegroundService : Service() {
     private var bubbleView: BubbleView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
     private var recorder: AudioRecorder? = null
+
+    /// True while the fg notification is showing the permission-recovery
+    /// CTA (a mic/overlay permission was revoked mid-use). Lets us repaint
+    /// back to the normal notification exactly once when it recovers.
+    private var inRecovery = false
 
     /// The foreground app captured when the current recording started, so
     /// the transcript is tagged with the app it was dictated into even if
@@ -122,10 +128,13 @@ class BulbulForegroundService : Service() {
             if (ok) {
                 pendingAppPackage = BulbulAccessibilityService.targetPackage
                 bubbleView?.setRecording(true)
+                restoreNormalNotification()
             } else {
-                // TODO(v1.1.1): silent failure — surface via the
-                // permission-recovery notification (see startInForeground).
+                // Mic revoked mid-use: the recorder can't start. Surface it
+                // via the tappable recovery notification instead of failing
+                // silently (the bubble would otherwise just do nothing).
                 Log.w(TAG, "recorder failed to start — RECORD_AUDIO probably not granted")
+                showPermissionRecovery("Microphone is off")
             }
         }
     }
@@ -139,6 +148,10 @@ class BulbulForegroundService : Service() {
             if (r.start()) {
                 pendingAppPackage = BulbulAccessibilityService.targetPackage
                 bubbleView?.setRecording(true)
+                restoreNormalNotification()
+            } else {
+                Log.w(TAG, "recorder failed to start on long-press — RECORD_AUDIO probably not granted")
+                showPermissionRecovery("Microphone is off")
             }
         }
     }
@@ -370,27 +383,7 @@ class BulbulForegroundService : Service() {
     }
 
     private fun startInForeground() {
-        // TODO(v1.1.1): make this notification a permission-recovery CTA.
-        // Today it's a static "Tap the bubble to dictate", so when a
-        // permission is revoked mid-use the app degrades SILENTLY (see the
-        // two catch sites below: overlay BadTokenException and mic
-        // recorder-failed-to-start are Log-only, invisible to the user).
-        // Plan: when the bubble can't be shown or the recorder can't start
-        // because a permission is missing, flip this notification to
-        // "Bulbul is paused — accessibility/overlay/mic turned off. Tap to
-        // fix." with a PendingIntent into SetupActivity (or the relevant
-        // system settings screen), and restore the normal text once
-        // permissions are back. Pairs with the MainActivity onResume
-        // re-check (which re-surfaces setup on return) so a revoked
-        // permission has a visible, tappable recovery path instead of
-        // three silent failures.
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Bulbul")
-            .setContentText("Tap the bubble to dictate")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+        val notification = buildNotification(NORMAL_TEXT, recovery = false)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // FOREGROUND_SERVICE_TYPE_MICROPHONE is required from
@@ -405,6 +398,50 @@ class BulbulForegroundService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+    }
+
+    /// Builds the fg-service notification in one of two states:
+    ///  - normal: "Tap the bubble to dictate"; tapping opens the app.
+    ///  - recovery: shown when a permission Bulbul needs was revoked
+    ///    mid-use (mic can't record, or the overlay can't be drawn).
+    ///    Tapping jumps straight to SetupActivity to re-grant. Without
+    ///    this the failures are logcat-only and the app looks dead.
+    private fun buildNotification(text: String, recovery: Boolean): Notification {
+        val target = if (recovery) SetupActivity::class.java else MainActivity::class.java
+        val intent = Intent(this, target).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        val contentIntent = PendingIntent.getActivity(this, if (recovery) 1 else 0, intent, piFlags)
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(if (recovery) "Bulbul is paused" else "Bulbul")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
+            .setContentIntent(contentIntent)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    /// Flip the notification to the tappable permission-recovery CTA. Called
+    /// from the silent-failure sites (recorder can't start, overlay addView
+    /// throws) so a revoked permission has a one-tap path back to setup
+    /// instead of the bubble just quietly not working.
+    private fun showPermissionRecovery(reason: String) {
+        inRecovery = true
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIFICATION_ID, buildNotification("$reason — tap to fix.", recovery = true))
+    }
+
+    /// Restore the normal notification once the previously failing action
+    /// succeeds again (permission re-granted). No-op unless we were in
+    /// recovery, so the happy path doesn't repaint on every bubble tap.
+    private fun restoreNormalNotification() {
+        if (!inRecovery) return
+        inRecovery = false
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIFICATION_ID, buildNotification(NORMAL_TEXT, recovery = false))
     }
 
     private fun createNotificationChannel() {
@@ -487,13 +524,14 @@ class BulbulForegroundService : Service() {
             bubbleView = view
             bubbleParams = params
             Log.i(TAG, "showBubble: addView succeeded")
+            restoreNormalNotification()
         } catch (t: Throwable) {
-            // BadTokenException — overlay permission was revoked
-            // mid-session. Surface it so we know what's wrong.
-            // TODO(v1.1.1): also surface to the USER, not just logcat —
-            // flip the fg-service notification to the permission-recovery
-            // CTA (see startInForeground).
+            // BadTokenException — overlay permission was revoked mid-session.
+            // Surface it to the USER via the tappable recovery notification
+            // (not just logcat) so the missing bubble has an explanation and
+            // a one-tap path back to setup.
             Log.e(TAG, "showBubble: addView FAILED", t)
+            showPermissionRecovery("Screen overlay is off")
         }
     }
 
@@ -612,6 +650,7 @@ class BulbulForegroundService : Service() {
         private const val TAG = "BulbulFG"
         private const val CHANNEL_ID = "bulbul.bubble"
         private const val NOTIFICATION_ID = 1001
+        private const val NORMAL_TEXT = "Tap the bubble to dictate"
         private const val BUBBLE_SIZE_DP = 56
         private const val SNOOZE_TARGET_DP = 68
         // Mirrors MOBILE_CONFIG_FILE on the Rust side — same file,
