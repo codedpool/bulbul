@@ -106,6 +106,7 @@ function App() {
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [autostart, setAutostart] = useState(false);
+  const [autostartError, setAutostartError] = useState("");
   const [stagedUpdate, setStagedUpdate] = useState(null);
   const [installing, setInstalling] = useState(false);
   const [systemDark, setSystemDark] = useState(
@@ -224,11 +225,15 @@ function App() {
   }
 
   async function toggleAutostart(next) {
+    // Optimistic: flip the switch now, revert if the OS write fails so the
+    // toggle never lies about the real state — and say why.
+    setAutostart(next);
+    setAutostartError("");
     try {
       await invoke("set_autostart", { enabled: next });
-      setAutostart(next);
     } catch (e) {
-      console.error("autostart toggle failed", e);
+      setAutostart(!next);
+      setAutostartError(`Couldn't ${next ? "enable" : "disable"} launch at login: ${e}`);
     }
   }
 
@@ -388,6 +393,7 @@ function App() {
         updateConfig={updateConfig}
         autostart={autostart}
         onAutostartChange={toggleAutostart}
+        autostartError={autostartError}
         onHideTrayChange={toggleHideTray}
         section={settingsSection}
         onSectionChange={setSettingsSection}
@@ -549,6 +555,7 @@ function App() {
       updateConfig={updateConfig}
       autostart={autostart}
       onAutostartChange={toggleAutostart}
+      autostartError={autostartError}
       onHideTrayChange={toggleHideTray}
     />
     <TooltipProvider />

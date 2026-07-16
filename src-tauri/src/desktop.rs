@@ -739,6 +739,10 @@ fn complete_onboarding(
 ) -> Result<(), String> {
     let mut cfg = state.config.lock();
     cfg.onboarding_completed = true;
+    // Persist the launch-at-login intent so the startup reconcile keeps it
+    // registered even if this enable() fails or the entry is later lost.
+    // Fresh installs default to on, matching prior behavior.
+    cfg.autostart = Some(true);
     config::save(&cfg).map_err(|e| format!("{e:#}"))?;
     drop(cfg); // release the lock before the autostart write, in case it blocks
     if let Err(e) = app.autolaunch().enable() {
@@ -1284,34 +1288,64 @@ fn set_overlay_height(height: f64, app: AppHandle) {
     }
 }
 
-// TODO(v1.1.1): make autostart self-healing. Today it is registered in
-// exactly one place — `complete_onboarding` calls enable() once — and the
-// intended state is never persisted (get_autostart just reads the OS
-// registration live). Two gaps this leaves:
-//   1. Any install that skips onboarding (e.g. a dev reinstalling over a
-//      config with onboarding_completed=true) never gets registered, so
-//      the app never autostarts even though a fresh install would.
-//   2. If enable() fails (auto-launch/current_exe quirks) or the Run key
-//      is later removed (AV, cleanup, stale dev-build path), nothing
-//      re-registers it, and the frontend swallows the toggle error so the
-//      failure is invisible.
-// Fix: persist an `autostart` intent in Config, reconcile it on every
-// startup (if intent==on but the OS registration is missing or points at
-// a stale exe, re-register with the current exe), and surface set_autostart
-// errors in the UI instead of only console.error'ing them.
+/// Self-healing autostart. The user's launch-at-login INTENT lives in
+/// Config (`autostart`); the OS registration (Windows Run key / macOS
+/// LaunchAgent / Linux .desktop) can drift from it — an install that skips
+/// onboarding never registers, and the entry can be removed by AV / a
+/// cleanup tool or left pointing at a stale exe. This runs on every startup
+/// and repairs the drift; get/set persist the intent so it survives.
+fn reconcile_autostart(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let intent = { state.config.lock().autostart };
+    match intent {
+        // First run since this field existed: adopt whatever the OS
+        // currently says, so we never flip an existing user's choice.
+        None => {
+            let on = app.autolaunch().is_enabled().unwrap_or(false);
+            let mut cfg = state.config.lock();
+            cfg.autostart = Some(on);
+            let _ = config::save(&cfg);
+        }
+        // Intent is ON — re-assert enable() every launch. Idempotent, and
+        // it rewrites the registration with the CURRENT exe, so it fixes
+        // both a missing entry and a stale/old exe path.
+        Some(true) => {
+            if let Err(e) = app.autolaunch().enable() {
+                tracing::warn!("autostart self-heal (enable) failed: {e:#}");
+            }
+        }
+        // Intent is OFF — the user disabled it; leave the OS alone.
+        Some(false) => {}
+    }
+}
+
+/// Returns the persisted launch-at-login intent (the source of truth once
+/// set); falls back to the live OS registration only before the first
+/// reconcile has seeded it.
 #[tauri::command]
-fn get_autostart(app: AppHandle) -> Result<bool, String> {
+fn get_autostart(state: tauri::State<'_, AppState>, app: AppHandle) -> Result<bool, String> {
+    if let Some(v) = state.config.lock().autostart {
+        return Ok(v);
+    }
     app.autolaunch().is_enabled().map_err(|e| format!("{e}"))
 }
 
 #[tauri::command]
-fn set_autostart(enabled: bool, app: AppHandle) -> Result<(), String> {
+fn set_autostart(
+    enabled: bool,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     let mgr = app.autolaunch();
     if enabled {
-        mgr.enable().map_err(|e| format!("{e}"))
+        mgr.enable().map_err(|e| format!("{e}"))?;
     } else {
-        mgr.disable().map_err(|e| format!("{e}"))
+        mgr.disable().map_err(|e| format!("{e}"))?;
     }
+    // Persist the intent so the startup reconcile keeps the OS in sync.
+    let mut cfg = state.config.lock();
+    cfg.autostart = Some(enabled);
+    config::save(&cfg).map_err(|e| format!("{e}"))
 }
 
 /// Toggle the system-tray icon at runtime. Persists `cfg.hide_tray` so
@@ -1947,6 +1981,7 @@ pub fn run() {
             setup_tray(&handle, has_key_on_boot)?;
             setup_overlay_window(&handle)?;
             setup_scratchpad_window(&handle)?;
+            reconcile_autostart(&handle);
 
             if let Some(window) = handle.get_webview_window("main") {
                 // Mac uses the borderless + transparent + overlay-titlebar

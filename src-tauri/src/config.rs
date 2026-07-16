@@ -175,6 +175,15 @@ pub struct Config {
     #[serde(default = "default_open_dashboard")]
     pub open_dashboard_on_launch: bool,
 
+    /// Persisted "launch at login" intent — the source of truth the startup
+    /// reconcile keeps the OS registration in sync with (see
+    /// reconcile_autostart in desktop.rs). `None` = not yet determined
+    /// (seeded from the live OS state on the first run of a build that has
+    /// this field, so existing users keep their current setting);
+    /// `Some(true/false)` = the user's chosen state.
+    #[serde(default)]
+    pub autostart: Option<bool>,
+
     /// User's preferred first name / display name. Optional. Stays
     /// local — never sent to any backend. Used for:
     ///   - "Welcome back, X" greeting on the Home page
@@ -511,6 +520,7 @@ impl Default for Config {
             privacy_acknowledged: default_privacy_ack(),
             linux_hotkey_migrated: false,
             open_dashboard_on_launch: default_open_dashboard(),
+            autostart: None,
             display_name: default_display_name(),
             hide_tray: default_hide_tray(),
             language: default_language(),
