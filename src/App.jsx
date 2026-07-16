@@ -514,7 +514,7 @@ function App() {
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
           </div>
-          <div className="version muted small">v1.1.0 · MIT</div>
+          <div className="version muted small">v1.1.1 · MIT</div>
         </div>
       </aside>
 
