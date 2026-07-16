@@ -2457,6 +2457,21 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                 }
                 HotkeyEvent::TransformTriggered(transform_id) => {
                     tracing::info!("TransformTriggered received: id={}", transform_id);
+                    // If Bulbul's own dashboard window is focused, the user is
+                    // working in the in-app scratchpad, not another app — route
+                    // the transform to the webview's textarea selection rather
+                    // than the OS-selection pipeline (which can't read/replace a
+                    // webview selection, so on macOS the hotkey did nothing
+                    // there). Mirrors the bulbul-focused-insert dictation route;
+                    // the ScratchpadView listener no-ops if there's no selection.
+                    let main_focused = handle
+                        .get_webview_window("main")
+                        .and_then(|w| w.is_focused().ok())
+                        .unwrap_or(false);
+                    if main_focused {
+                        let _ = handle.emit_to("main", "run-transform-in-app", transform_id);
+                        continue;
+                    }
                     let state = handle.state::<AppState>();
                     let cfg = state.config.lock().clone();
                     if !cfg.has_api_key() {
