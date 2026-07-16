@@ -567,11 +567,12 @@ fn derive_slot_number(h: &ParsedHotkey) -> Option<u8> {
 // scratchpad hotkey routing is also handled now — see the
 // "run-transform-in-app" emit in the TransformTriggered handler.)
 //
-// TODO(v1.1.1): transform-slot keys are still FIXED (Alt+1..9 on Win/Linux,
-// ⌘1..9 on Mac) — make them USER-EDITABLE across platforms: add a
-// per-transform hotkey recorder like the dictation HotkeyControl, persist
-// the custom binding, register it in refresh_transform_bindings, and have
-// this combo reflect the custom key.
+// TODO(post-1.1.1): transform-slot keys are still FIXED (Alt+1..9 on
+// Win/Linux, ⌘1..9 on Mac). Making them USER-EDITABLE (a per-transform
+// hotkey recorder like the dictation HotkeyControl, a persisted custom
+// binding, registration in refresh_transform_bindings, and this combo
+// reflecting the custom key) is a feature deferred past 1.1.1 by the user
+// on 2026-07-17 — it needs a schema change + new UI, not shipped for launch.
 fn format_combo(h: &ParsedHotkey) -> String {
     // macOS shows shortcuts as glyphs with no separators (⌃⌥⇧⌘ + key), in
     // that canonical modifier order. Windows/Linux use "Mod+Mod+Key" — with
