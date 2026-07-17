@@ -42,6 +42,12 @@ modprobe uinput 2>/dev/null || true
 udevadm control --reload-rules 2>/dev/null || true
 udevadm trigger --subsystem-match=misc --attr-match=name=uinput 2>/dev/null \
     || udevadm trigger 2>/dev/null || true
+# udevadm trigger is ASYNCHRONOUS, and the installer launches Bulbul moments
+# after this script returns — so without settling, the uaccess ACL can land
+# after Bulbul has already probed /dev/uinput and decided it has no access.
+# That race would silently reinstate the "log out and back in" first run this
+# whole rule exists to remove. Bounded so a stuck udev can't hang the install.
+udevadm settle --timeout=5 2>/dev/null || true
 if [ -e /dev/uinput ]; then
     chgrp input /dev/uinput 2>/dev/null || true
     chmod 0660 /dev/uinput 2>/dev/null || true
