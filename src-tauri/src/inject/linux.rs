@@ -159,7 +159,34 @@ pub fn inject_text(text: &str) -> Result<()> {
     }
 }
 
+/// uinput first, in EVERY session — not just Wayland. The kernel virtual
+/// keyboard injects below the X server/compositor, so it lands in every app,
+/// and it is already the primary path for typing (see `inject_text`, which
+/// tries it regardless of session). Sending the combo straight to XTEST on
+/// X11 is why transforms' Ctrl+C never fired even while uinput was live and
+/// happily typing dictations into the same apps: `inject_text` used uinput,
+/// these helpers didn't. Returns true when the combo was delivered.
+fn try_uinput_combo(combo: Combo) -> bool {
+    if !super::linux_uinput::is_ready() {
+        return false;
+    }
+    let kc = match combo {
+        Combo::CtrlV => super::linux_uinput::KEY_V,
+        Combo::CtrlC => super::linux_uinput::KEY_C,
+    };
+    match super::linux_uinput::send_combo(kc) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!("uinput combo failed; falling back to the session path: {e}");
+            false
+        }
+    }
+}
+
 pub fn send_ctrl_v() -> Result<()> {
+    if try_uinput_combo(Combo::CtrlV) {
+        return Ok(());
+    }
     if is_wayland() {
         send_combo_wayland(Combo::CtrlV).or_else(|e| {
             tracing::warn!("Wayland Ctrl+V failed, trying XWayland: {e:#}");
@@ -171,6 +198,9 @@ pub fn send_ctrl_v() -> Result<()> {
 }
 
 pub fn send_ctrl_c() -> Result<()> {
+    if try_uinput_combo(Combo::CtrlC) {
+        return Ok(());
+    }
     if is_wayland() {
         send_combo_wayland(Combo::CtrlC).or_else(|e| {
             tracing::warn!("Wayland Ctrl+C failed, trying XWayland: {e:#}");
