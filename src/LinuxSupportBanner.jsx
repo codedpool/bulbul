@@ -61,7 +61,14 @@ export default function LinuxSupportBanner() {
   // session predates it. That one relogin switches on BOTH the instant
   // hold-to-talk hotkey (evdev) and typing (uinput) — so collapse the
   // separate hotkey/paste nags into a single clear instruction.
-  const needsRelogin = info.uinput_grant_installed && !info.uinput_ready;
+  //
+  // WAYLAND ONLY. uinput is the only path that types under Wayland, so the
+  // relogin genuinely matters there. On X11 it's irrelevant — hotkeys
+  // register via X11 and typing goes through XTEST, both without any group
+  // membership — so showing this told X11 users to log out for nothing and
+  // wrongly claimed dictation was clipboard-only.
+  const needsRelogin =
+    info.wayland && info.uinput_grant_installed && !info.uinput_ready;
 
   if (needsRelogin) {
     issues.push({

@@ -55,6 +55,15 @@ const YDOTOOL_KEY_C: &str = "46";
 
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(40);
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(250);
+// X11 selection ownership is IN-PROCESS: whoever called set_text must stay
+// alive to answer the target's SelectionRequest. Ctrl+V is asynchronous —
+// the app gets the key, THEN asks us for the text — so we have to keep
+// owning the selection across that round-trip. Dropping the clipboard right
+// after posting the combo (what we used to do) released ownership before the
+// request arrived, and the paste silently got nothing on every X11 session.
+// The Wayland path doesn't need this because wl-copy forks its own process
+// to serve the selection.
+const CLIPBOARD_POST_COMBO: Duration = Duration::from_millis(150);
 // Wayland paste timing. A short settle lets wl-copy's forked selection
 // owner take hold before we fire the combo; a short post-combo wait lets
 // the target app consume the paste before we restore the prior clipboard
@@ -424,6 +433,11 @@ fn inject_text_x11(text: &str) -> Result<()> {
     thread::sleep(CLIPBOARD_SETTLE);
 
     post_x11_combo(Combo::CtrlV).context("posting Ctrl+V")?;
+
+    // Hold selection ownership while the target fetches the text — see
+    // CLIPBOARD_POST_COMBO. Dropping here immediately is what made
+    // auto-typing silently fail on X11.
+    thread::sleep(CLIPBOARD_POST_COMBO);
 
     drop(clipboard);
     if let Some(prev) = previous {
