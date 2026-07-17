@@ -20,6 +20,14 @@
       if (location.hash === "#overlay" || location.hash === "#scratchpad") {
         document.documentElement.setAttribute("data-noboot", "");
       }
+      // The overlay (pill) window must be transparent from the FIRST paint,
+      // not only after Overlay.jsx mounts and sets body transparent — on
+      // Linux/WebKitGTK that mount lag showed the opaque #0e0e0e window as a
+      // black rectangle where the pill should float. Flag it now so the CSS
+      // below zeroes the background before anything paints.
+      if (location.hash === "#overlay") {
+        document.documentElement.setAttribute("data-overlay", "");
+      }
     </script>
     <!-- Boot splash, rendered from the very first HTML paint — BEFORE the
          JS bundle parses and React mounts — so there is no black gap
@@ -30,6 +38,10 @@
     <style>
       html, body { margin: 0; }
       body { background: var(--bg, #0e0e0e); }
+      /* Overlay (pill) window: transparent from first paint — no black
+         rectangle before Overlay.jsx mounts. */
+      :root[data-overlay],
+      :root[data-overlay] body { background: transparent !important; }
       #boot-splash {
         position: fixed;
         inset: 0;
