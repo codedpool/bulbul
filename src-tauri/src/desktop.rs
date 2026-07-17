@@ -2567,11 +2567,18 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     // Ctrl+C copy was unreliable because the transform hotkey fires while
     // its own modifier is still held, corrupting the combo. Fall back to
     // Ctrl+C for apps that don't maintain a primary selection.
+    // Read the PRIMARY selection — whatever the user has highlighted — on BOTH
+    // sessions. This was Wayland-only, with X11 hardcoded to None, which forced
+    // X11 down the clear-clipboard → Ctrl+C → read-back fallback below. That
+    // fallback captured nothing on Mint/Cinnamon, so every transform in an
+    // external app failed with "no selection captured" while the identical
+    // transform worked on Wayland — purely because Wayland took this path.
+    // PRIMARY is an X11 feature Wayland copied; X11 has always had it.
     #[cfg(target_os = "linux")]
     let selected_primary = if use_wl {
         inject::wayland_primary_read().filter(|s| !s.trim().is_empty())
     } else {
-        None
+        inject::x11_primary_read().filter(|s| !s.trim().is_empty())
     };
     #[cfg(not(target_os = "linux"))]
     let selected_primary: Option<String> = None;

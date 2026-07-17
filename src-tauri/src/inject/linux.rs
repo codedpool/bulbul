@@ -444,6 +444,27 @@ pub fn wayland_primary_read() -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
+/// The X11 twin of `wayland_primary_read`. PRIMARY is an X11 invention that
+/// Wayland later copied: it holds whatever is currently highlighted, updated
+/// the instant the user selects text — no Ctrl+C, no clipboard clobbering, no
+/// synthetic keystroke.
+///
+/// The transform pipeline read PRIMARY on Wayland but was hardcoded to None on
+/// X11, so X11 fell back to the fragile clear-clipboard → send Ctrl+C → read
+/// dance. That fallback silently captured nothing on Mint/Cinnamon and every
+/// transform failed with "no selection captured" — while the very same
+/// transform worked on Wayland, purely because Wayland took this path instead.
+pub fn x11_primary_read() -> Option<String> {
+    use arboard::{Clipboard, GetExtLinux, LinuxClipboardKind};
+    let mut cb = Clipboard::new().ok()?;
+    let s = cb
+        .get()
+        .clipboard(LinuxClipboardKind::Primary)
+        .text()
+        .ok()?;
+    (!s.is_empty()).then_some(s)
+}
+
 /// Write text to the clipboard via wl-copy. Best-effort.
 pub fn wayland_clipboard_write(text: &str) -> Result<()> {
     wl_copy_write(text)
