@@ -10,6 +10,17 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Playfair+Display:ital,wght@1,500;1,600&display=swap"
     />
     <title>Bulbul</title>
+    <script>
+      // The overlay (pill) and scratchpad windows load this SAME index.html
+      // (index.html#overlay / #scratchpad). The boot splash below is for the
+      // main dashboard only — on the pill it showed as a black brand card
+      // covering the pill's spot for a beat. Mark satellite windows on <html>
+      // now, before <body> parses, so the CSS rule hides the splash before it
+      // can paint.
+      if (location.hash === "#overlay" || location.hash === "#scratchpad") {
+        document.documentElement.setAttribute("data-noboot", "");
+      }
+    </script>
     <!-- Boot splash, rendered from the very first HTML paint — BEFORE the
          JS bundle parses and React mounts — so there is no black gap
          between the OS launch window and the loader. A tiny inline script
@@ -31,6 +42,8 @@
         transition: opacity 320ms ease;
       }
       #boot-splash.hide { opacity: 0; }
+      /* Satellite windows (pill / scratchpad) never show the splash. */
+      :root[data-noboot] #boot-splash { display: none !important; }
       #boot-splash .bs-inner {
         display: flex;
         flex-direction: column;
@@ -97,6 +110,11 @@
       (function () {
         var splash = document.getElementById("boot-splash");
         if (!splash) return;
+        // Satellite windows (pill / scratchpad) skip the splash entirely.
+        if (document.documentElement.hasAttribute("data-noboot")) {
+          splash.remove();
+          return;
+        }
         var start = performance.now();
         var done = false;
         function dismiss() {

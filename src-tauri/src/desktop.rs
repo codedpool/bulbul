@@ -2703,15 +2703,19 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
-    // Wayland: type the result straight in (uinput direct typing) — no
-    // clipboard write to lose to Wayland's unreliable background clipboard,
-    // and no flicker. Every other platform keeps the arboard + Ctrl+V path.
+    // On ALL Linux sessions, type the result straight in via inject_text
+    // (uinput first). Typing over the still-active selection replaces it, and
+    // it avoids arboard entirely. The X11 branch used to go through
+    // clipboard_set_and_paste (arboard clipboard write + Ctrl+V), but arboard
+    // is unreliable on X11/Cinnamon — the same crate whose PRIMARY read
+    // returned nothing while xclip worked — so the clipboard write silently
+    // didn't take on many attempts and Ctrl+V pasted stale/empty content. The
+    // keystroke still "succeeded", so the pill said done while nothing was
+    // replaced (the intermittent 2-of-8 transforms). uinput is what already
+    // makes dictation reliable here; use it for transforms too.
     #[cfg(target_os = "linux")]
-    let inject_result: Result<(), String> = if use_wl {
-        inject::inject_text(&final_text).map_err(|e| format!("{e:#}"))
-    } else {
-        clipboard_set_and_paste(&mut clipboard, &final_text).await
-    };
+    let inject_result: Result<(), String> =
+        inject::inject_text(&final_text).map_err(|e| format!("{e:#}"));
     #[cfg(not(target_os = "linux"))]
     let inject_result: Result<(), String> =
         clipboard_set_and_paste(&mut clipboard, &final_text).await;
