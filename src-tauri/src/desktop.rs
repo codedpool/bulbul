@@ -80,6 +80,13 @@ struct PendingDictation {
 struct IconVariants {
     active: OwnedIcon,
     no_key: OwnedIcon,
+    // Shown in the tray while a dictation is in flight — the Wayland
+    // "listening" cue, since the overlay pill can't render there. Teal-
+    // tinted so it reads as "live" and never collides with the red
+    // no-key state. Only ever read on Linux/Wayland; built everywhere to
+    // keep the struct uniform.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    recording: OwnedIcon,
 }
 
 #[derive(Clone)]
@@ -117,6 +124,25 @@ impl OwnedIcon {
             height: self.height,
         }
     }
+    /// Pull each opaque pixel toward the brand teal (#5EC8C0). Used for
+    /// the Wayland tray "listening" cue — a live/active colour that stays
+    /// distinct from the red no-key state.
+    fn tinted_accent(&self) -> Self {
+        let mut rgba = self.rgba.clone();
+        for chunk in rgba.chunks_exact_mut(4) {
+            if chunk[3] == 0 {
+                continue;
+            }
+            chunk[0] = (((chunk[0] as u32) + 0x5e * 2) / 3) as u8;
+            chunk[1] = (((chunk[1] as u32) + 0xc8 * 2) / 3) as u8;
+            chunk[2] = (((chunk[2] as u32) + 0xc0 * 2) / 3) as u8;
+        }
+        Self {
+            rgba,
+            width: self.width,
+            height: self.height,
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -139,6 +165,10 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
     // in flight. When off (default), the overlay stays visible across
     // every state.
     apply_overlay_visibility_for_state(app, state);
+    // Wayland has no overlay pill, so mirror the dictation state onto the
+    // system tray icon (or a one-shot notification when there's no tray).
+    // No-op everywhere else.
+    set_tray_activity(app, state);
     // Force the overlay above Bulbul's own main window when an active state
     // begins. `always_on_top: true` was set at window creation but Windows
     // doesn't reliably honour that between same-process windows — we have
@@ -629,6 +659,71 @@ fn update_tray_icon(app: &AppHandle, has_key: bool) {
     };
     let _ = tray.set_tooltip(Some(tooltip));
 }
+
+/// Wayland-only "listening" cue routed through the system tray, because
+/// the overlay pill can't render on Wayland (no global window
+/// positioning; Mutter doesn't implement layer-shell). While a dictation
+/// is in flight we tint the tray icon teal and update its tooltip; on the
+/// terminal/idle transition we revert to the normal (or no-key) icon.
+///
+/// No-op on X11, Windows and macOS — those all get the overlay pill, and
+/// flickering the tray on every dictation there would be noise, not
+/// signal. When no StatusNotifierItem host is on the bus (GNOME without
+/// the AppIndicator extension) the tray icon is invisible, so we fall back
+/// to a single per-session notification — enough to teach that the state
+/// exists without a per-dictation notification storm.
+#[cfg(target_os = "linux")]
+fn set_tray_activity(app: &AppHandle, state: &str) {
+    if !linux_env::is_wayland() {
+        return;
+    }
+    let active = matches!(state, "listening" | "processing" | "injecting");
+
+    if !linux_env::sni_host_present() {
+        // No tray to tint. Fire one notification per session, on the first
+        // listening transition, then stay quiet.
+        static NOTIFIED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if state == "listening"
+            && NOTIFIED
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_ok()
+        {
+            notify(
+                app,
+                "Bulbul is listening",
+                "Recording your dictation. Install the AppIndicator GNOME extension to see a live indicator in the tray.",
+            );
+        }
+        return;
+    }
+
+    let Some(tray) = app.tray_by_id("bulbul-tray") else {
+        return;
+    };
+    if active {
+        let icon = app.state::<AppState>().icons.recording.to_image();
+        let _ = tray.set_icon(Some(icon));
+        let tooltip = if state == "listening" {
+            "Bulbul — listening…"
+        } else {
+            "Bulbul — transcribing…"
+        };
+        let _ = tray.set_tooltip(Some(tooltip));
+    } else {
+        // Back to rest: restore the correct idle icon (normal / no-key).
+        let has_key = app.state::<AppState>().config.lock().has_api_key();
+        update_tray_icon(app, has_key);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_tray_activity(_app: &AppHandle, _state: &str) {}
 
 #[tauri::command]
 fn get_config(state: tauri::State<'_, AppState>) -> Config {
@@ -1993,9 +2088,11 @@ pub fn run() {
             let no_key_icon = active_icon.clone();
             #[cfg(not(target_os = "macos"))]
             let no_key_icon = active_icon.tinted_red();
+            let recording_icon = active_icon.tinted_accent();
             let icons = Arc::new(IconVariants {
                 active: active_icon,
                 no_key: no_key_icon,
+                recording: recording_icon,
             });
 
             let db_handle = match db::open() {

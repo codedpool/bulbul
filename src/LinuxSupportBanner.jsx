@@ -106,7 +106,11 @@ export default function LinuxSupportBanner() {
     }
   }
 
-  if (info.gnome) {
+  // Only nag about the tray extension when the tray genuinely isn't
+  // working. sni_host_present is true once a StatusNotifierItem host is on
+  // the bus (the AppIndicator extension, or KDE natively) — telling those
+  // users to install the extension they already have is a false alarm.
+  if (info.gnome && !info.sni_host_present) {
     issues.push({
       key: "tray",
       text: "GNOME hides tray icons by default — install the “AppIndicator and KStatusNotifierItem” Shell extension to see Bulbul in the top bar. Dictation works either way.",
