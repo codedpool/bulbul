@@ -463,25 +463,51 @@ fn post_x11_combo(combo: Combo) -> Result<()> {
         .ok_or_else(|| anyhow!("no screen {screen_num} on X server"))?
         .root;
 
+    // Negotiate XTEST explicitly. The server rejects fake-input from a client
+    // that hasn't queried the extension, and this surfaces "XTEST missing" as
+    // a real error rather than four silently-dropped requests.
+    conn.xtest_get_version(2, 2)
+        .context("querying XTEST")?
+        .reply()
+        .context("XTEST extension unavailable on this X server")?;
+
     // Force-release Win/Alt/Shift (the dictation hotkey may have any of
     // them held). Ctrl is left alone — we explicitly press it as part
     // of the combo.
     for &mod_kc in MODS_TO_RELEASE {
         let _ = conn
             .xtest_fake_input(KEY_RELEASE_EVENT, mod_kc, 0, root, 0, 0, 0)
-            .context("releasing modifier")?;
+            .context("releasing modifier")?
+            .check();
     }
 
+    // Every fake_input is .check()ed rather than fired and forgotten.
+    // xtest_fake_input returns a VoidCookie, and X reports errors for void
+    // requests ASYNCHRONOUSLY — so `?` on the cookie alone only catches a
+    // failure to write the bytes, never the server rejecting the request. The
+    // old code flushed and dropped the connection immediately, so a
+    // server-side rejection (or the requests never being processed before we
+    // disconnected) was completely invisible: send_ctrl_c() returned Ok and
+    // nothing ever reached the target app. .check() round-trips, which both
+    // surfaces the real error AND guarantees the server processed each event
+    // before we move on (incidentally spacing them, as xdotool does).
     let keycode = combo.x11_keycode();
     conn.xtest_fake_input(KEY_PRESS_EVENT, KC_CONTROL_L, 0, root, 0, 0, 0)
-        .context("Ctrl press")?;
+        .context("Ctrl press")?
+        .check()
+        .context("X server rejected the Ctrl press")?;
     conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, root, 0, 0, 0)
-        .context("key press")?;
+        .context("key press")?
+        .check()
+        .context("X server rejected the key press")?;
     conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, root, 0, 0, 0)
-        .context("key release")?;
+        .context("key release")?
+        .check()
+        .context("X server rejected the key release")?;
     conn.xtest_fake_input(KEY_RELEASE_EVENT, KC_CONTROL_L, 0, root, 0, 0, 0)
-        .context("Ctrl release")?;
+        .context("Ctrl release")?
+        .check()
+        .context("X server rejected the Ctrl release")?;
 
-    conn.flush().context("flushing X requests")?;
     Ok(())
 }
