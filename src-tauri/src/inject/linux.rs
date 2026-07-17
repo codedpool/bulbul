@@ -454,14 +454,24 @@ pub fn wayland_primary_read() -> Option<String> {
 /// dance. That fallback silently captured nothing on Mint/Cinnamon and every
 /// transform failed with "no selection captured" — while the very same
 /// transform worked on Wayland, purely because Wayland took this path instead.
+/// Shells out to `xclip`, deliberately mirroring `wayland_primary_read`'s use
+/// of `wl-paste` rather than reading PRIMARY in-process. arboard's PRIMARY
+/// read returns nothing on Mint/Cinnamon even when the selection is plainly
+/// there (`xclip -o -selection primary` prints it), which sent every X11
+/// transform down the Ctrl+C fallback and straight into "no selection
+/// captured". Every Linux path that actually works here is an external tool
+/// (wl-paste, wl-copy, uinput); the in-process crates are the ones that fail.
+/// `xclip` is a .deb dependency, same as `wl-clipboard`; if it is missing we
+/// return None and the Ctrl+C fallback still applies.
 pub fn x11_primary_read() -> Option<String> {
-    use arboard::{Clipboard, GetExtLinux, LinuxClipboardKind};
-    let mut cb = Clipboard::new().ok()?;
-    let s = cb
-        .get()
-        .clipboard(LinuxClipboardKind::Primary)
-        .text()
+    let output = Command::new("xclip")
+        .args(["-o", "-selection", "primary"])
+        .output()
         .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).into_owned();
     (!s.is_empty()).then_some(s)
 }
 
