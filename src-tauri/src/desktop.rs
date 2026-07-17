@@ -1433,6 +1433,14 @@ fn set_tray_visible(
         // Restore the always-visible behaviour when revealing the tray
         // again — even in idle, the pill should be back on screen.
         let _ = overlay.show();
+        // Re-assert the position: X11 window managers run their own
+        // placement every time a window is mapped, so a plain show() drops
+        // the pill wherever the WM likes (Cinnamon: top-left). Every show()
+        // site has to re-position — missing it here is why the pill landed
+        // wrong after a hide/unhide but snapped back to bottom-centre on the
+        // next dictation, which does go through
+        // apply_overlay_visibility_for_state.
+        position_overlay_bottom_center(&app);
     }
     Ok(())
 }
