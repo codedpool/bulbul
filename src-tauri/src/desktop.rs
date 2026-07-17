@@ -288,6 +288,34 @@ fn position_overlay_bottom_center(app: &AppHandle) {
     let y = anchor_bottom - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
     if let Err(e) = window.set_position(LogicalPosition::new(x, y)) {
         tracing::warn!("overlay: set_position({x}, {y}) failed: {e}");
+        return;
+    }
+
+    // set_position returning Ok does NOT mean the pill actually moved: X11
+    // window managers (Muffin/Cinnamon especially) run their own placement
+    // policy when a window maps and can quietly ignore the position we asked
+    // for. The only way to know is to read back where it really landed — so
+    // log the monitor geometry, what we wanted, and what we got, then
+    // re-assert once if the WM relocated us. Without this the pill drifts to
+    // mid-screen with no error anywhere.
+    #[cfg(target_os = "linux")]
+    {
+        let (want_px_x, want_px_y) = (x * scale, y * scale);
+        match window.outer_position() {
+            Ok(got) => {
+                let dx = (got.x as f64 - want_px_x).abs();
+                let dy = (got.y as f64 - want_px_y).abs();
+                tracing::info!(
+                    "overlay: monitor {}x{} scale={scale} | want logical ({x:.0},{y:.0}) = px ({want_px_x:.0},{want_px_y:.0}) | got px ({},{}) | off by ({dx:.0},{dy:.0})",
+                    size.width, size.height, got.x, got.y
+                );
+                if dx > 8.0 || dy > 8.0 {
+                    tracing::warn!("overlay: the WM moved the pill — re-asserting position once");
+                    let _ = window.set_position(LogicalPosition::new(x, y));
+                }
+            }
+            Err(e) => tracing::warn!("overlay: couldn't read back position: {e}"),
+        }
     }
 }
 
