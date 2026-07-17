@@ -79,9 +79,15 @@ export default function ScratchpadView() {
   // desktop.rs). The old global-shortcut-only path couldn't reach this
   // webview textarea, which is why the hotkey did nothing here on macOS.
   async function applyTransform(transform) {
+    // Read from the LIVE textarea, not the `body` state, so a re-render lag
+    // can't leave us slicing a stale string and wiping the note. Fall back to
+    // `body` only if the ref isn't mounted.
+    const el = bodyRef.current;
+    const source = el ? el.value : body;
     const { start, end } = selRef.current;
-    if (end <= start) return;
-    const selected = body.slice(start, end);
+    if (end <= start || start < 0 || end > source.length) return;
+    const selected = source.slice(start, end);
+    if (!selected.trim()) return;
     setRunningTransformId(transform.id);
     setTransformError("");
     try {
@@ -89,7 +95,14 @@ export default function ScratchpadView() {
         transformId: transform.id,
         text: selected,
       });
-      const next = body.slice(0, start) + out + body.slice(end);
+      // Never delete the selection for an empty result — that's the "text
+      // disappears when I press a transform key" bug. Leave the note as-is
+      // and surface why instead.
+      if (out == null || out === "") {
+        setTransformError("Transform returned nothing — text left unchanged.");
+        return;
+      }
+      const next = source.slice(0, start) + out + source.slice(end);
       onBodyChange(next);
       // Put the caret just after the rewritten span on the next paint.
       requestAnimationFrame(() => {

@@ -962,6 +962,33 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
     ? (customCombo || config.hotkey)
     : selected.value;
 
+  // Deliver the dictation into the test box. During onboarding Bulbul's own
+  // window is focused, so the orchestrator detects Bulbul as the foreground
+  // app and routes the transcript as a `bulbul-focused-insert` event to the
+  // main window instead of OS-typing it into the focused field. Only
+  // ScratchpadView listened for that, so on platforms with working
+  // foreground detection (Linux/X11) the wizard's test box received nothing
+  // even though dictation worked everywhere else. Insert it at the caret,
+  // mirroring ScratchpadView. On platforms/paths that OS-type into the
+  // textarea instead, this event isn't emitted, so there's no double insert.
+  useEffect(() => {
+    const un = listen("bulbul-focused-insert", (event) => {
+      const text = String(event.payload || "");
+      const el = textareaRef.current;
+      if (!text || !el) return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      const caret = start + text.length;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      setTranscript(el.value);
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
   // Subscribe to the same status events the production overlay uses. The
   // wizard window may not have focus when the user holds their hotkey
   // (intentional — chord hotkeys fire globally), so we can't rely on
