@@ -60,7 +60,8 @@
           "libgtk-3-0",
           "libayatana-appindicator3-1",
           "wl-clipboard",
-          "xclip"
+          "xclip",
+          "acl"
         ],
         "recommends": [
           "gnome-shell-extension-appindicator"
@@ -74,7 +75,8 @@
           "webkit2gtk4.1",
           "gtk3",
           "wl-clipboard",
-          "xclip"
+          "xclip",
+          "acl"
         ],
         "recommends": [
           "ydotool",

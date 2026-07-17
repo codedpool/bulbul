@@ -61,4 +61,21 @@ if [ -e /dev/uinput ]; then
     fi
 fi
 
+# 4. Same immediate-access bridge for the KEYBOARD devices (evdev), so the
+#    hold-to-talk hotkey works in THIS session without the input-group
+#    relogin. On Wayland the hotkey reads /dev/input/event* directly (the
+#    GNOME global-shortcut portal isn't usable), and evdev needs the `input`
+#    group — which is what forced a logout/login on Wayland even after the
+#    uinput uaccess rule removed it for typing. /dev/input/event* is already
+#    group `input`, so this ACL grants exactly what the group would, just
+#    applied to the current session now. evdev needs read for key events and
+#    write to grab the device. The group (step 2) remains the persistent
+#    mechanism across reboots / hotplugged keyboards, since these ACLs don't
+#    survive a freshly-created device node.
+if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+    for dev in /dev/input/event*; do
+        [ -e "$dev" ] && setfacl -m "u:$SUDO_USER:rw" "$dev" 2>/dev/null || true
+    done
+fi
+
 exit 0
