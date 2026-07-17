@@ -180,6 +180,14 @@ fn apply_overlay_visibility_for_state(app: &AppHandle, state: &str) {
     if let Err(e) = result {
         tracing::warn!("overlay visibility toggle failed (state={state}): {e}");
     }
+    // X11 window managers re-place a window every time it's mapped, so the
+    // position set at creation is thrown away on the next show and the pill
+    // reappears wherever the WM likes (seen on Cinnamon: mid-screen, and
+    // somewhere new after each hide/unhide). Re-assert it on every show —
+    // cheap, and a no-op when it's already in the right spot.
+    if should_show {
+        position_overlay_bottom_center(app);
+    }
 }
 
 /// Pull the overlay to the very top of the system z-order without taking
@@ -247,7 +255,23 @@ fn position_overlay_bottom_center(app: &AppHandle) {
     let Some(window) = app.get_webview_window("overlay") else {
         return;
     };
-    let Ok(Some(monitor)) = window.primary_monitor() else {
+    // primary_monitor() can legitimately return None (seen on X11 inside a
+    // VM). We used to bail out silently here, which left the pill wherever
+    // the compositor happened to drop it — mid-screen, looking broken. Fall
+    // back to the window's current monitor, then to any monitor at all,
+    // before giving up, and say so when we do.
+    let monitor = match window.primary_monitor() {
+        Ok(Some(m)) => Some(m),
+        _ => match window.current_monitor() {
+            Ok(Some(m)) => Some(m),
+            _ => window
+                .available_monitors()
+                .ok()
+                .and_then(|ms| ms.into_iter().next()),
+        },
+    };
+    let Some(monitor) = monitor else {
+        tracing::warn!("overlay: no monitor resolved — leaving the pill where the compositor put it");
         return;
     };
     let scale = monitor.scale_factor();
@@ -262,7 +286,9 @@ fn position_overlay_bottom_center(app: &AppHandle) {
 
     let x = (logical_w - OVERLAY_WIDTH) / 2.0;
     let y = anchor_bottom - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
-    let _ = window.set_position(LogicalPosition::new(x, y));
+    if let Err(e) = window.set_position(LogicalPosition::new(x, y)) {
+        tracing::warn!("overlay: set_position({x}, {y}) failed: {e}");
+    }
 }
 
 /// Hover-aware click-through: a polling thread that watches the cursor.
