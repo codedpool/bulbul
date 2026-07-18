@@ -32,6 +32,16 @@ class BulbulAccessibilityService : AccessibilityService() {
     /// flicker the notification icon every time the IME state ticks).
     private var bubbleRequested = false
 
+    /// True while the focused field is a password/PIN input. The bubble
+    /// stays down on these: dictating a secret aloud is never the right
+    /// input path, and banking apps treat an overlay near a credential
+    /// field as an attack. Set from TYPE_VIEW_FOCUSED (the event source
+    /// is the only reliable carrier of isPassword — see findFocus notes
+    /// below), refreshed on window changes. Volatile: written on the
+    /// a11y thread, read wherever the injector checks it.
+    @Volatile
+    private var passwordFocused = false
+
     /// Posts hide requests with a small delay so a transient IME
     /// flicker (keyboard animation, soft-input refresh during text
     /// selection) doesn't take the bubble down only to put it right
@@ -76,6 +86,26 @@ class BulbulAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                    // The event source is the node that just took focus —
+                    // the most reliable password signal we get (findFocus
+                    // is null on many OEMs mid-typing, so we can't poll it
+                    // on demand). Track it here and gate the bubble on it.
+                    passwordFocused = try {
+                        event.source?.isPassword == true
+                    } catch (t: Throwable) {
+                        false
+                    }
+                }
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    // New window/screen: the focus event that set the flag
+                    // belongs to the old screen. Re-derive from the current
+                    // focus if the platform gives it to us; if it won't
+                    // (null), fail open — a wrongly-hidden bubble in normal
+                    // apps is worse than a briefly-visible one here, and
+                    // the next TYPE_VIEW_FOCUSED corrects it anyway.
+                    passwordFocused = currentFocusIsPassword()
+                }
                 if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                     event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED
                 ) {
@@ -84,6 +114,16 @@ class BulbulAccessibilityService : AccessibilityService() {
                 reevaluateBubble()
             }
         }
+    }
+
+    private fun currentFocusIsPassword(): Boolean = try {
+        findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let {
+            val pw = it.isPassword
+            it.recycle()
+            pw
+        } ?: false
+    } catch (t: Throwable) {
+        false
     }
 
     /// Remembers the last real foreground app package so the foreground
@@ -149,8 +189,12 @@ class BulbulAccessibilityService : AccessibilityService() {
     /// dictation into the in-app scratchpad — the one place users most
     /// expect the same bubble. So the bubble now shows over our own app
     /// too; the injector appends into whatever field is focused.
+    ///
+    /// Password/PIN fields are the exception: the bubble goes (and stays)
+    /// down while one is focused, so we never draw over a credential
+    /// prompt and never invite dictating a secret out loud.
     private fun shouldShowBubble(): Boolean {
-        return isImeVisible() && !BulbulConfig.isSnoozed(this)
+        return isImeVisible() && !passwordFocused && !BulbulConfig.isSnoozed(this)
     }
 
     /// Called by the foreground service when the user snoozes: forget that

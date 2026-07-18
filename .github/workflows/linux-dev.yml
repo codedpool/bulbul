@@ -1,18 +1,18 @@
 name: Linux dev build
 
-# Rolling pre-release for the v1.1 integration branch (desktop + Android
-# unified). Every push to v1.1-integration rebuilds + replaces the
+# Rolling pre-release for the v1.1.1 branch (desktop + Android
+# unified). Every push to v1.1.1 rebuilds + replaces the
 # `linux-dev` release with fresh .AppImage + .deb + .rpm assets. The user
 # installs via `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`.
 #
 # Sibling workflows macos-dev.yml, windows-dev.yml, and android-dev.yml
-# cover the other targets of the same branch. When v1.1 ships to main,
+# cover the other targets of the same branch. When v1.1.1 ships to main,
 # drop all four.
 
 on:
   push:
     branches:
-      - v1.1-integration
+      - v1.1.1
   workflow_dispatch:
 
 concurrency:

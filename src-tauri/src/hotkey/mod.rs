@@ -561,22 +561,61 @@ fn derive_slot_number(h: &ParsedHotkey) -> Option<u8> {
     }
 }
 
+// The labels below are platform-aware: macOS glyphs (⌃⌥⇧⌘), Linux "Super",
+// Windows "Win". The `combo` string is shown verbatim in the Transforms UI
+// slot chips (TransformSlotStatus.combo → TransformCard). (The in-dashboard
+// scratchpad hotkey routing is also handled now — see the
+// "run-transform-in-app" emit in the TransformTriggered handler.)
+//
+// TODO(post-1.1.1): transform-slot keys are still FIXED (Alt+1..9 on
+// Win/Linux, ⌘1..9 on Mac). Making them USER-EDITABLE (a per-transform
+// hotkey recorder like the dictation HotkeyControl, a persisted custom
+// binding, registration in refresh_transform_bindings, and this combo
+// reflecting the custom key) is a feature deferred past 1.1.1 by the user
+// on 2026-07-17 — it needs a schema change + new UI, not shipped for launch.
 fn format_combo(h: &ParsedHotkey) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if h.ctrl {
-        parts.push("Ctrl".into());
+    // macOS shows shortcuts as glyphs with no separators (⌃⌥⇧⌘ + key), in
+    // that canonical modifier order. Windows/Linux use "Mod+Mod+Key" — with
+    // the meta key labelled "Win" on Windows and "Super" on Linux (never the
+    // Windows-centric "Win" on Linux).
+    #[cfg(target_os = "macos")]
+    {
+        let mut s = String::new();
+        if h.ctrl {
+            s.push('⌃');
+        }
+        if h.alt {
+            s.push('⌥');
+        }
+        if h.shift {
+            s.push('⇧');
+        }
+        if h.meta {
+            s.push('⌘');
+        }
+        if let Some(k) = &h.key {
+            s.push_str(k);
+        }
+        s
     }
-    if h.shift {
-        parts.push("Shift".into());
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut parts: Vec<String> = Vec::new();
+        if h.ctrl {
+            parts.push("Ctrl".into());
+        }
+        if h.shift {
+            parts.push("Shift".into());
+        }
+        if h.alt {
+            parts.push("Alt".into());
+        }
+        if h.meta {
+            parts.push(if cfg!(target_os = "linux") { "Super" } else { "Win" }.into());
+        }
+        if let Some(k) = &h.key {
+            parts.push(k.clone());
+        }
+        parts.join("+")
     }
-    if h.alt {
-        parts.push("Alt".into());
-    }
-    if h.meta {
-        parts.push("Win".into());
-    }
-    if let Some(k) = &h.key {
-        parts.push(k.clone());
-    }
-    parts.join("+")
 }

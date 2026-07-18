@@ -106,6 +106,7 @@ function App() {
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [autostart, setAutostart] = useState(false);
+  const [autostartError, setAutostartError] = useState("");
   const [stagedUpdate, setStagedUpdate] = useState(null);
   const [installing, setInstalling] = useState(false);
   const [systemDark, setSystemDark] = useState(
@@ -206,9 +207,12 @@ function App() {
   async function installUpdate() {
     setInstalling(true);
     try {
-      // The Rust command returns only on failure — on success the
-      // installer kills this process mid-call.
+      // Desktop: returns only on failure — on success the installer kills
+      // this process mid-call. Android: opens the release APK in the system
+      // installer and returns normally (the app keeps running), so clear
+      // the spinner afterward.
       await invoke("install_staged_update");
+      if (IS_ANDROID) setInstalling(false);
     } catch (e) {
       console.error("install_staged_update failed:", e);
       setInstalling(false);
@@ -221,11 +225,15 @@ function App() {
   }
 
   async function toggleAutostart(next) {
+    // Optimistic: flip the switch now, revert if the OS write fails so the
+    // toggle never lies about the real state — and say why.
+    setAutostart(next);
+    setAutostartError("");
     try {
       await invoke("set_autostart", { enabled: next });
-      setAutostart(next);
     } catch (e) {
-      console.error("autostart toggle failed", e);
+      setAutostart(!next);
+      setAutostartError(`Couldn't ${next ? "enable" : "disable"} launch at login: ${e}`);
     }
   }
 
@@ -385,6 +393,7 @@ function App() {
         updateConfig={updateConfig}
         autostart={autostart}
         onAutostartChange={toggleAutostart}
+        autostartError={autostartError}
         onHideTrayChange={toggleHideTray}
         section={settingsSection}
         onSectionChange={setSettingsSection}
@@ -515,14 +524,24 @@ function App() {
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />
             <span className="update-banner-text">
-              <strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.
+              {IS_ANDROID ? (
+                <><strong>Bulbul v{stagedUpdate}</strong> is available on GitHub.</>
+              ) : (
+                <><strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.</>
+              )}
             </span>
             <button
               className="update-banner-btn"
               onClick={installUpdate}
               disabled={installing}
             >
-              {installing ? "Installing…" : "Install & restart"}
+              {installing
+                ? IS_ANDROID
+                  ? "Opening…"
+                  : "Installing…"
+                : IS_ANDROID
+                  ? "Update"
+                  : "Install & restart"}
             </button>
           </div>
         )}
@@ -536,6 +555,7 @@ function App() {
       updateConfig={updateConfig}
       autostart={autostart}
       onAutostartChange={toggleAutostart}
+      autostartError={autostartError}
       onHideTrayChange={toggleHideTray}
     />
     <TooltipProvider />

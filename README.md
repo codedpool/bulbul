@@ -1,6 +1,6 @@
 # Bulbul
 
-**Free, open-source Windows voice dictation. Hold a hotkey, talk anywhere, watch the text appear.**
+**Free, open-source voice dictation for Windows, macOS, Linux, and Android. Hold a hotkey, talk anywhere, watch the text appear.**
 
 Bulbul talks directly to [Groq](https://groq.com) using your own API key — no Bulbul-owned server in between, no subscription, no usage caps beyond Groq's own free tier. Your dictation history, dictionary, snippets, and settings all live in a local SQLite file on your machine.
 
@@ -70,14 +70,14 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 
 ## Requirements
 
-- **Windows 10 or 11** (x64)
+- **Windows** 10/11 (x64), **macOS** 11+ (Apple Silicon or Intel), **Linux** (X11 or Wayland; `.deb`/`.rpm`/AppImage), or **Android** (arm64)
 - A **free Groq API key** — sign up at [console.groq.com](https://console.groq.com)
 - An internet connection (Groq is cloud-hosted)
 - A microphone
 
-macOS and Linux support is in development on the `v1.1-port` branch (rolling dev builds via `curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh`). Stable releases are Windows-only for now.
+On macOS and Linux, install with `curl -fsSL https://bulbultypes.xyz/install.sh | sh`; the Android APK is on the [Releases](https://github.com/codedpool/bulbul/releases/latest) page.
 
-### Linux dev-build notes
+### Linux notes
 
 - **X11 sessions**: hotkey + paste work out of the box, same as Windows.
 - **Wayland sessions**: Bulbul uses xdg-desktop-portal — no external tools required. On first launch it asks for two permissions via system dialogs (approve once, the grant is remembered):

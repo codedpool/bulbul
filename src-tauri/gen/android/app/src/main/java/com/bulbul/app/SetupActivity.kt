@@ -21,6 +21,7 @@ package com.bulbul.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -275,16 +276,26 @@ class SetupActivity : Activity() {
     companion object {
         private const val REQ_MIC = 1001
 
-        /// Walks Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES for the
-        /// fully-qualified component name of [serviceClass]. There's no
-        /// API that just answers "is my service on?" — the colon-
-        /// separated string from Settings.Secure is what every
-        /// accessibility-using app on Android ends up parsing.
+        /// Walks Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES for
+        /// [serviceClass]. There's no API that just answers "is my service
+        /// on?" — the colon-separated string from Settings.Secure is what
+        /// every accessibility-using app ends up parsing.
+        ///
+        /// Compare by ComponentName, NOT raw string. Android stores each
+        /// enabled entry in either flattened form — "pkg/pkg.Class" (full)
+        /// or "pkg/.Class" (short, leading dot) — and which one lands here
+        /// depends on how the service was enabled: the system Settings
+        /// toggle writes the SHORT form. A plain string equals against the
+        /// full form then misses the short form and reports "not granted"
+        /// even though the service is on (seen after a reinstall drops the
+        /// grant and the user re-enables via Settings). unflattenFromString
+        /// resolves the leading dot to the package, so ComponentName
+        /// equality matches both forms.
         fun isAccessibilityServiceEnabled(
             context: Context,
             serviceClass: Class<*>,
         ): Boolean {
-            val expected = "${context.packageName}/${serviceClass.name}"
+            val expected = ComponentName(context.packageName, serviceClass.name)
             val enabled = Settings.Secure.getString(
                 context.contentResolver,
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
@@ -292,7 +303,7 @@ class SetupActivity : Activity() {
             val splitter = TextUtils.SimpleStringSplitter(':')
             splitter.setString(enabled)
             while (splitter.hasNext()) {
-                if (splitter.next().equals(expected, ignoreCase = true)) return true
+                if (ComponentName.unflattenFromString(splitter.next()) == expected) return true
             }
             return false
         }

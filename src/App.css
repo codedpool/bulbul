@@ -46,7 +46,16 @@ body, html, #root {
    sunken background + subtle bottom border read as an explicit
    header, so the RGB row doesn't float ambiguously over the sidebar
    content below. Sidebar + main content padding-top offsets clear
-   this strip. */
+   this strip.
+
+   NOTE: this strip + the sidebar toggle at (left: 82px) reserve space for
+   the traffic-light cluster, which only lines up in the window's normal
+   (non-fullscreen) state. Native fullscreen would hide the traffic lights
+   and leave this strip + the ~78px gap to its left BLANK. Rather than
+   adapt to that, we PREVENT fullscreen on macOS entirely — see
+   disable_fullscreen_mac() in desktop.rs (FullScreenNone + maximizable:
+   false) — so the traffic lights are always present and this strip always
+   has its cluster. */
 .platform-mac .app-shell::before {
   content: '';
   position: fixed;

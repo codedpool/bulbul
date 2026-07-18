@@ -1,12 +1,12 @@
 name: Android dev build
 
-# Rolling pre-release for the v1.1 integration branch (desktop + Android
-# unified). Every push to v1.1-integration rebuilds + replaces the
+# Rolling pre-release for the v1.1.1 branch (desktop + Android
+# unified). Every push to v1.1.1 rebuilds + replaces the
 # `android-dev` release with a fresh arm64 APK that testers sideload
 # directly onto their phones.
 #
 # Sibling workflows linux-dev.yml, macos-dev.yml, and windows-dev.yml
-# cover the desktop targets of the same branch. When v1.1 ships to main,
+# cover the desktop targets of the same branch. When v1.1.1 ships to main,
 # drop all four.
 #
 # Notes on this build:
@@ -27,7 +27,7 @@ name: Android dev build
 on:
   push:
     branches:
-      - v1.1-integration
+      - v1.1.1
   workflow_dispatch:
 
 # One build per branch: a newer push cancels an in-flight run so two
@@ -94,8 +94,8 @@ jobs:
             "${{ steps.apk.outputs.path }}" \
             --title 'Bulbul Android dev build' \
             --prerelease \
-            --notes 'Rolling Android dev build from the `v1.1-integration` branch. **Not for general use** — this is a pre-release for testing the merged desktop + Android v1.1.
+            --notes 'Rolling Android dev build from the `v1.1.1` branch. **Not for general use** — this is a pre-release for testing the merged desktop + Android v1.1.
 
-          Sideload the `.apk` below (arm64 phones). It is debug-signed, so if you previously installed a differently-signed Bulbul you may need to uninstall first. Enabling Accessibility on a sideloaded install still needs the manual steps shown on the app'"'"'s permission screen. Each push to `v1.1-integration` replaces this release.'
+          Sideload the `.apk` below (arm64 phones). It is debug-signed, so if you previously installed a differently-signed Bulbul you may need to uninstall first. Enabling Accessibility on a sideloaded install still needs the manual steps shown on the app'"'"'s permission screen. Each push to `v1.1.1` replaces this release.'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -4,18 +4,35 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
-## [1.1.0] — 2026-07-12
+## [1.1.0] — 2026-07-18
 
-One codebase, four platforms: this release brings Bulbul to **macOS**, **Linux**, and **Android**, alongside the existing Windows app.
+One codebase, four platforms: this release brings Bulbul to **macOS**, **Linux**, and **Android**, alongside the existing Windows app — with a round of cross-platform audio-quality and Linux polish on top.
 
 ### Added
 
 - **macOS support** — full hold-to-talk dictation on macOS 11+, including modifier-chord hotkeys (⌃⌘, ⌥⌘, ⌃⇧Space), retina-aware menu-bar tray icon with template-image dark-mode tinting, native NSPasteboard paste with transient/concealed markers (so clipboard managers skip the entry), AppleScript-driven Cmd+V keystroke through System Events (more reliable across macOS versions than CGEvent posting, especially on Tahoe), TIS/UCKeyTranslate-aware modifier polling, AXIsProcessTrusted accessibility-permission detection, AVFoundation mic-permission status check + programmatic request, NSAppleEventsUsageDescription declared, ad-hoc signing with hardened-runtime entitlement. Native window chrome with a Wispr-style floating sidebar toggle next to the traffic lights. Universal binary covers Apple Silicon + Intel.
-- **Linux support** — hold-to-talk dictation on X11 and Wayland. Hotkeys read `/dev/input` directly (evdev) for instant, compositor-independent hold-to-talk, with the GNOME/KDE shortcut portal and X11 grabs as fallbacks; typing goes through a kernel `uinput` virtual keyboard (the path GNOME can't block), falling back to the RemoteDesktop portal and `wl-clipboard` paste. The `.deb` grants input-group and uinput access on install (log out once after installing to activate); `.AppImage` and `.rpm` also provided. A dashboard banner reports the live session's hotkey/paste capabilities.
+- **Linux support** — hold-to-talk dictation on X11 and Wayland. Hotkeys read `/dev/input` directly (evdev) for instant, compositor-independent hold-to-talk, with the GNOME/KDE shortcut portal and X11 grabs as fallbacks; typing goes through a kernel `uinput` virtual keyboard (the path GNOME can't block), falling back to the RemoteDesktop portal and `wl-clipboard` paste. The `.deb` and `.rpm` grant `uinput`/evdev access on install via a udev `uaccess` rule — so hold-to-talk and typing work immediately, with no logout/login (`.AppImage` is also provided for other distros). A dashboard banner reports the live session's hotkey/paste capabilities.
 - **Android support** — Bulbul on phones (arm64 APK). A floating bubble appears whenever the keyboard does; hold or tap it to dictate into any app, with the transcript injected directly into the focused field via the accessibility service (no clipboard round-trip, no paste toast). Includes: native first-run permission walker + in-app onboarding wizard, dictionary corrections and snippet expansion applied to every dictation, per-app detection with history badges and a per-app Style pass (beta), text-selection transforms via the system popup toolbar, in-app scratchpad dictation, drag-to-snooze for the bubble (with resume in Settings), bubble opacity/size controls, opt-in anonymous telemetry, and dark/light theming that follows the in-app theme.
 - **Mac-aware onboarding wizard** — Permissions step inserted between Welcome and API key (Microphone + Accessibility cards, both polled every 1.5s for live status), hotkey-preset labels rendered with native ⌃⌥⇧⌘ glyphs, "Quit & Relaunch" button on the Accessibility card for cases where the OS doesn't refresh TCC trust mid-process.
 - **Visible rejection feedback** — when the dictation pipeline drops a take (too short, silence-induced hallucination), the overlay pill now briefly turns amber with a short label ("Too short — try again" / "No audio — check mic") instead of silently shrinking. Same diagnostic visibility applies to the dashboard: every transcript Whisper returns is persisted to history, including hallucination-filter drops, so users can see exactly what was heard regardless of injection outcome.
 - **In-app usage guides** — dismissible "How to dictate" and "How transforms work" cards on the Home and Transforms pages (they return on relaunch), plus platform-aware copy across the app (hotkey wording on desktop, bubble wording on Android).
+
+### Changed
+
+- **Audio capture quality on every platform** — the same microphone transcribed better on Windows than on Linux/macOS/Android, because Windows silently pre-cleans mic input while the others hand over the raw signal. Bulbul now cleans it itself: on desktop an 80 Hz high-pass strips rumble and a loudness-target auto-gain lifts quiet or uneven speech (bounded so it never clips and never boosts less than before); on Android, capture uses the speech-recognition source plus the phone's noise-suppression and auto-gain effects, with a software-normalization backstop.
+- **Transform slot hotkey labels are platform-aware** — slot chips show ⌘ on macOS and Super on Linux instead of the Windows-key glyph.
+- **Self-healing autostart (desktop)** — "start on login" now persists the user's intent and reconciles it on every launch, so it survives an OS update or anything that drops the registry/login entry.
+- **Fedora / openSUSE first-run parity** — the `.rpm` now ships the same input-access post-install scriptlet as the `.deb`, and `install.sh` routes rpm-based distros to it, so hold-to-talk and typing work there with no logout/login.
+- **Android self-update** — Android checks GitHub Releases and updates itself, matching the desktop flow.
+
+### Fixed
+
+- **Linux X11 typing and transforms** — text now injects into other apps reliably (routed through the kernel `uinput` device instead of the in-process clipboard path, which delivered nothing on some desktops), and highlighted-text transforms read the X11 PRIMARY selection directly. XTEST errors are no longer silently swallowed.
+- **Linux tray-extension banner** — only nudges GNOME users to install the AppIndicator extension when a system tray isn't already present, instead of always.
+- **Linux overlay pill** — survives X11 window managers that re-place it on every show, and paints transparent from the first frame (no black flash). The native WebKitGTK tooltip no longer appears alongside Bulbul's themed one.
+- **Onboarding wizard test box on Linux** accepted no dictation, and the scratchpad transform could blank text on an empty selection — both fixed.
+- **macOS window chrome** — maximizing or entering fullscreen no longer relocates the traffic-light buttons off Bulbul's title strip; added a Reset-permission escape hatch for a stale Accessibility grant.
+- **Android permission recovery** — recovers from missing or revoked permissions instead of failing silently (re-checks on resume); the accessibility service is matched by component identity; accessibility-tool status is declared with an automatic pause in password fields.
 
 ### Contributors
 
@@ -102,5 +119,7 @@ The first public release. Everything below is in the box.
 - **Local SQLite** — dictation history, dictionary, snippets, transforms, notes all in `%APPDATA%\Bulbul\bulbul.db`
 - **Anonymous usage telemetry** — opt-out — counts, durations, error categories, mode and language. Never your transcripts, audio, dictionary, or the foreground app name. Toggleable in Settings → Privacy
 
-[Unreleased]: https://github.com/codedpool/bulbul/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/codedpool/bulbul/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/codedpool/bulbul/releases/tag/v1.1.0
+[1.0.1]: https://github.com/codedpool/bulbul/releases/tag/v1.0.1
 [1.0.0]: https://github.com/codedpool/bulbul/releases/tag/v1.0.0

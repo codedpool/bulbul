@@ -39,13 +39,25 @@ export default function TooltipProvider() {
       }
     }
 
-    function showFor(target) {
+    // Strip the title the instant the cursor enters — NOT after the show
+    // delay. The OS-native tooltip (WebKitGTK on Linux, WebView2 on Windows)
+    // has its own hover delay that can fire inside our SHOW_DELAY_MS window,
+    // so a delayed strip loses the race and the native bubble appears anyway
+    // (seen on Mint/X11). Stashing here means the attribute is gone before
+    // any native timer elapses; the themed pill still waits for the delay.
+    function stripTitle(target) {
+      if (stashed.has(target)) return;
       const text = target.getAttribute("title");
       if (!text || !text.trim()) return;
       stashed.set(target, text);
-      // Removing the attribute prevents the native tooltip from ever
-      // appearing. It will be restored on mouseout.
       target.removeAttribute("title");
+    }
+
+    function showFor(target) {
+      // Title was already stripped in onOver; read it back from the stash.
+      const text = stashed.get(target) || target.getAttribute("title");
+      if (!text || !text.trim()) return;
+      stripTitle(target);
 
       // Skip rendering when the title text just repeats the element's
       // visible label — those add zero information and turn every named
@@ -93,6 +105,13 @@ export default function TooltipProvider() {
 
       const target = e.target.closest("[title]");
       if (!target || target === activeTarget) return;
+      // Suppress the native tooltip NOW, before its hover timer can fire;
+      // the themed pill still appears only after SHOW_DELAY_MS. Mark this the
+      // active target immediately so mouseout always restores its title —
+      // otherwise a quick leave (before the pill shows) could leave the
+      // attribute stripped, since mouseout may fire from an inner child.
+      stripTitle(target);
+      activeTarget = target;
       clearTimeout(showTimer);
       showTimer = setTimeout(() => showFor(target), SHOW_DELAY_MS);
     }

@@ -79,6 +79,7 @@ export default function SettingsView({
   updateConfig,
   autostart,
   onAutostartChange,
+  autostartError,
   onHideTrayChange,
   // Android drill-down nav is lifted to App so the hardware-back handler can
   // step through it. null = the section list; a section id = its detail.
@@ -424,6 +425,7 @@ export default function SettingsView({
                 updateConfig={updateConfig}
                 autostart={autostart}
                 onAutostartChange={onAutostartChange}
+                autostartError={autostartError}
                 onHideTrayChange={onHideTrayChange}
               />
             )}
@@ -745,7 +747,7 @@ function PanePersonalization({ config, updateConfig }) {
   );
 }
 
-function PaneStartup({ config, updateConfig, autostart, onAutostartChange, onHideTrayChange }) {
+function PaneStartup({ config, updateConfig, autostart, onAutostartChange, autostartError, onHideTrayChange }) {
   return (
     <>
       <ToggleRow
@@ -754,6 +756,9 @@ function PaneStartup({ config, updateConfig, autostart, onAutostartChange, onHid
         checked={autostart}
         onChange={onAutostartChange}
       />
+      {autostartError && (
+        <p className="err small" role="alert">{autostartError}</p>
+      )}
       <ToggleRow
         title="Open this window when Bulbul starts"
         hint="Off = land straight in the tray."

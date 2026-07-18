@@ -319,6 +319,14 @@ function StepPermissions({ onBack, onNext }) {
   const [axGranted, setAxGranted] = useState(false);
   const [micStatus, setMicStatus] = useState("not_determined");
   const micGranted = micStatus === "granted";
+  // Case 2 (stale grant) detection: set right before a "Quit & Relaunch".
+  // If the app comes back and AX is STILL not granted, relaunching didn't
+  // help — so the card offers "Reset permission" (tccutil reset) instead.
+  // Persisted in localStorage so it survives the relaunch; cleared once AX
+  // finally reads granted.
+  const [relaunchTried, setRelaunchTried] = useState(
+    () => localStorage.getItem("bulbul_ax_relaunched") === "1",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -331,6 +339,12 @@ function StepPermissions({ onBack, onNext }) {
         if (!cancelled) {
           setAxGranted(!!ax);
           setMicStatus(typeof mic === "string" ? mic : "not_determined");
+          if (ax) {
+            // Grant finally landed — clear the Case-2 relaunch flag so a
+            // later not-granted state starts fresh at "Quit & Relaunch".
+            localStorage.removeItem("bulbul_ax_relaunched");
+            setRelaunchTried(false);
+          }
         }
       } catch {
         // Silent — commands rarely fail. If they do, the user can
@@ -397,6 +411,27 @@ function StepPermissions({ onBack, onNext }) {
     }
   }
 
+  function doRelaunch() {
+    // Mark that we tried a relaunch, so if AX is still false when we come
+    // back we can offer the Case-2 reset instead. localStorage survives
+    // the restart (same webview data dir).
+    localStorage.setItem("bulbul_ax_relaunched", "1");
+    invoke("relaunch_app").catch(() => {});
+  }
+
+  async function doResetAccessibility() {
+    try {
+      await invoke("reset_accessibility_mac");
+    } catch {
+      // Quiet — if tccutil fails, the manual System Settings path still
+      // works and the 1.5s polling keeps driving the ✓ state.
+    }
+    // Fresh slate: clear the flag so the card returns to the normal
+    // grant → relaunch flow for the newly-reset permission.
+    localStorage.removeItem("bulbul_ax_relaunched");
+    setRelaunchTried(false);
+  }
+
   const ready = axGranted && micGranted;
 
   // Human-readable status label for the mic card. Distinguishes
@@ -458,20 +493,31 @@ function StepPermissions({ onBack, onNext }) {
             <button className="onb-btn" onClick={() => openSettings("accessibility")}>
               Open Accessibility Settings
             </button>
-            {!axGranted && (
+            {!axGranted && !relaunchTried && (
               <button
                 className="onb-btn ghost"
-                onClick={() => invoke("relaunch_app").catch(() => {})}
+                onClick={doRelaunch}
                 title="macOS sometimes won't notice the new permission until Bulbul restarts"
               >
                 Quit &amp; Relaunch
+              </button>
+            )}
+            {!axGranted && relaunchTried && (
+              <button
+                className="onb-btn ghost"
+                onClick={doResetAccessibility}
+                title="Relaunching didn't help — clear a stale permission left by a previous install, then grant again"
+              >
+                Reset permission
               </button>
             )}
           </div>
           <p className="onb-perm-confirm muted small">
             {axGranted
               ? "Detected — ready to go."
-              : "macOS just popped a system dialog asking to grant Accessibility. Click Open System Settings in it, toggle Bulbul on, then come back. If the check mark doesn't appear within a few seconds, click Quit & Relaunch — macOS sometimes needs Bulbul to restart before the new permission takes effect."}
+              : relaunchTried
+                ? "Still not detected after a relaunch — this usually means a stale permission left by a previous install. Click Reset permission to clear it, then toggle Bulbul on when the dialog reappears and relaunch once more."
+                : "macOS just popped a system dialog asking to grant Accessibility. Click Open System Settings in it, toggle Bulbul on, then come back. If the check mark doesn't appear within a few seconds, click Quit & Relaunch — macOS sometimes needs Bulbul to restart before the new permission takes effect."}
           </p>
         </article>
       </div>
@@ -915,6 +961,33 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
   const activeHotkey = selected.value === "custom"
     ? (customCombo || config.hotkey)
     : selected.value;
+
+  // Deliver the dictation into the test box. During onboarding Bulbul's own
+  // window is focused, so the orchestrator detects Bulbul as the foreground
+  // app and routes the transcript as a `bulbul-focused-insert` event to the
+  // main window instead of OS-typing it into the focused field. Only
+  // ScratchpadView listened for that, so on platforms with working
+  // foreground detection (Linux/X11) the wizard's test box received nothing
+  // even though dictation worked everywhere else. Insert it at the caret,
+  // mirroring ScratchpadView. On platforms/paths that OS-type into the
+  // textarea instead, this event isn't emitted, so there's no double insert.
+  useEffect(() => {
+    const un = listen("bulbul-focused-insert", (event) => {
+      const text = String(event.payload || "");
+      const el = textareaRef.current;
+      if (!text || !el) return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      const caret = start + text.length;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      setTranscript(el.value);
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
   // Subscribe to the same status events the production overlay uses. The
   // wizard window may not have focus when the user holds their hotkey

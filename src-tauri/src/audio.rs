@@ -139,7 +139,8 @@ impl PersistentAudio {
                         let mut g = st.samples.lock();
                         g.reserve(data.len());
                         for &s in data {
-                            g.push((s as i32 - i16::MAX as i32) as i16);
+                            // u16 silence sits at 32768, not i16::MAX (32767).
+                            g.push((s as i32 - 32768) as i16);
                         }
                     },
                     err_fn,
@@ -250,11 +251,33 @@ impl Recorder {
             mono.len() as f32 / self.sample_rate as f32
         };
 
-        // Peak-normalize AGC. Whisper hallucinates on low-amplitude input;
-        // boosting a whisper to normal-speech amplitude makes the model
-        // treat it like any other clip. Gain is clamped so a near-silent
-        // buffer can't multiply pure noise into garbage.
-        let (normalized, applied_gain) = normalize_peak(mono, TARGET_PEAK_DBFS, MAX_GAIN_LINEAR);
+        // Strip sub-speech rumble and DC before AGC + upload. Windows'
+        // microphone enhancement already high-passes the raw capture;
+        // ALSA/PulseAudio (Linux) and CoreAudio (macOS) hand us the raw
+        // signal, so low-frequency noise (fans, desk thumps, HVAC, DC
+        // offset) otherwise survives all the way to Whisper and drags
+        // accuracy down. 80 Hz sits below the speech fundamental, so
+        // nothing intelligible is removed. This is why the same mic
+        // transcribes cleanly on Windows but noisier on Linux/macOS.
+        let mono = high_pass(mono, self.sample_rate, HIGH_PASS_HZ);
+
+        // Loudness-target AGC. Whisper mistranscribes low-amplitude input,
+        // so we lift quiet speech to a healthy level. A pure peak-normalize
+        // is fooled by a single click that pins the peak while the actual
+        // speech stays quiet — common on raw Linux/macOS capture — so we
+        // also target the loudest 30 ms window's RMS and take whichever
+        // asks for MORE gain. The result is always >= the old peak-only
+        // gain, so the already-clean Windows path is never boosted less
+        // than before; a -1 dBFS peak ceiling guards against clipping and
+        // MAX_GAIN stops near-silence exploding into hiss.
+        let (normalized, applied_gain) = normalize_loudness(
+            mono,
+            self.sample_rate,
+            TARGET_PEAK_DBFS,
+            TARGET_RMS_DBFS,
+            PEAK_CEILING_DBFS,
+            MAX_GAIN_LINEAR,
+        );
         if applied_gain > 1.01 {
             tracing::info!(
                 "AGC boost: peak {:.1} dBFS -> ~{:.1} dBFS (gain {:.1}x)",
@@ -406,16 +429,47 @@ fn compute_max_window_rms_dbfs(samples: &[i16], sample_rate: u32) -> f32 {
     }
 }
 
-/// Target the post-AGC peak just below 0 dBFS so we never clip on the
-/// loudest sample after rounding. -3 dBFS = ~0.708 of full scale.
+/// The floor target: bring the peak to just below 0 dBFS so we never clip
+/// on the loudest sample after rounding. -3 dBFS = ~0.708 of full scale.
+/// This is the old peak-normalize target, kept as a lower bound so the
+/// Windows path is never boosted less than it was before this change.
 const TARGET_PEAK_DBFS: f32 = -3.0;
+
+/// The loudness target: bring the loudest 30 ms window's RMS up to here.
+/// Speech RMS typically sits 12–16 dB below its peak, so -16 dBFS RMS
+/// pairs with a peak comfortably under the -1 dBFS ceiling. This is what
+/// actually rescues quiet-but-clicky Linux/macOS capture, where the peak
+/// target alone under-boosts because a stray transient pins the peak.
+const TARGET_RMS_DBFS: f32 = -16.0;
+
+/// Never let the post-gain peak exceed this — headroom against clipping
+/// when the RMS target demands aggressive gain.
+const PEAK_CEILING_DBFS: f32 = -1.0;
+
+/// High-pass corner. Below the speech fundamental (~85 Hz for a low male
+/// voice), so it removes only rumble/DC, never intelligible content.
+const HIGH_PASS_HZ: f32 = 80.0;
 
 /// Hard ceiling on how much we'll amplify. +29.5 dB lifts a -50 dBFS
 /// whisper to ~-20 dBFS — comfortably above Whisper's confidence floor —
 /// without letting near-silent buffers explode into hiss.
 const MAX_GAIN_LINEAR: f32 = 30.0;
 
-fn normalize_peak(mut samples: Vec<i16>, target_dbfs: f32, max_gain: f32) -> (Vec<i16>, f32) {
+/// Loudness-target auto-gain. Computes the gain that would hit the peak
+/// target AND the gain that would hit the loudest-window RMS target, then
+/// applies whichever is LARGER — clamped by a peak ceiling (no clipping)
+/// and MAX_GAIN (no exploding near-silence). Because the peak-target gain
+/// is always one of the candidates and we take the max, the result is
+/// never smaller than the previous peak-only normalize, so the clean
+/// Windows path can't regress. Only ever amplifies (gain >= 1.0).
+fn normalize_loudness(
+    mut samples: Vec<i16>,
+    sample_rate: u32,
+    target_peak_dbfs: f32,
+    target_rms_dbfs: f32,
+    ceiling_dbfs: f32,
+    max_gain: f32,
+) -> (Vec<i16>, f32) {
     let peak = samples
         .iter()
         .map(|&s| s.unsigned_abs() as u32)
@@ -424,18 +478,84 @@ fn normalize_peak(mut samples: Vec<i16>, target_dbfs: f32, max_gain: f32) -> (Ve
     if peak == 0 {
         return (samples, 1.0);
     }
-    let target_amp = 10f32.powf(target_dbfs / 20.0) * i16::MAX as f32;
-    let gain = (target_amp / peak as f32).clamp(1.0, max_gain);
+    let full = i16::MAX as f32;
+    let peak_f = peak as f32;
+
+    // Gain to reach the peak target (the floor — old behaviour).
+    let gain_peak = 10f32.powf(target_peak_dbfs / 20.0) * full / peak_f;
+
+    // Gain to bring the loudest 30 ms window's RMS up to target. Uses the
+    // windowed RMS (not clip-wide) so leading/trailing silence doesn't
+    // drag it down and over-boost.
+    let win_rms_dbfs = compute_max_window_rms_dbfs(&samples, sample_rate);
+    let gain_rms = if win_rms_dbfs <= -119.0 {
+        1.0
+    } else {
+        10f32.powf((target_rms_dbfs - win_rms_dbfs) / 20.0)
+    };
+
+    // Take the more aggressive of the two, but never push the peak past
+    // the ceiling, and never exceed MAX_GAIN.
+    let ceiling_gain = 10f32.powf(ceiling_dbfs / 20.0) * full / peak_f;
+    let gain = gain_peak
+        .max(gain_rms)
+        .min(ceiling_gain)
+        .clamp(1.0, max_gain);
+
     if (gain - 1.0).abs() < 0.01 {
         return (samples, 1.0);
     }
-    let max = i16::MAX as f32;
+    let max = full;
     let min = i16::MIN as f32;
     for s in samples.iter_mut() {
         let v = (*s as f32 * gain).clamp(min, max);
         *s = v as i16;
     }
     (samples, gain)
+}
+
+/// Second-order Butterworth high-pass (RBJ biquad, Q = 0.707) applied in
+/// f32 to avoid quantisation. Removes DC offset and low-frequency rumble
+/// that raw Linux/macOS capture carries and Windows' mic enhancement
+/// already strips. Returns the input untouched for empty buffers or an
+/// unusable sample rate.
+fn high_pass(samples: Vec<i16>, sample_rate: u32, fc_hz: f32) -> Vec<i16> {
+    if samples.is_empty() || sample_rate == 0 {
+        return samples;
+    }
+    let sr = sample_rate as f32;
+    // Guard: the corner must be below Nyquist or the filter is meaningless.
+    if fc_hz <= 0.0 || fc_hz >= sr / 2.0 {
+        return samples;
+    }
+    let w0 = 2.0 * std::f32::consts::PI * fc_hz / sr;
+    let cos_w0 = w0.cos();
+    let sin_w0 = w0.sin();
+    let q = std::f32::consts::FRAC_1_SQRT_2; // 0.7071 → Butterworth
+    let alpha = sin_w0 / (2.0 * q);
+
+    let a0 = 1.0 + alpha;
+    let b0 = ((1.0 + cos_w0) / 2.0) / a0;
+    let b1 = (-(1.0 + cos_w0)) / a0;
+    let b2 = ((1.0 + cos_w0) / 2.0) / a0;
+    let a1 = (-2.0 * cos_w0) / a0;
+    let a2 = (1.0 - alpha) / a0;
+
+    let mut x1 = 0.0f32;
+    let mut x2 = 0.0f32;
+    let mut y1 = 0.0f32;
+    let mut y2 = 0.0f32;
+    let mut out = Vec::with_capacity(samples.len());
+    for &s in &samples {
+        let x0 = s as f32;
+        let y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1;
+        x1 = x0;
+        y2 = y1;
+        y1 = y0;
+        out.push(y0.clamp(i16::MIN as f32, i16::MAX as f32) as i16);
+    }
+    out
 }
 
 /// 48 kHz → 16 kHz decimate-by-3 with a Hamming-windowed sinc anti-alias

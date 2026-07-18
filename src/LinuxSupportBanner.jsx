@@ -61,6 +61,13 @@ export default function LinuxSupportBanner() {
   // session predates it. That one relogin switches on BOTH the instant
   // hold-to-talk hotkey (evdev) and typing (uinput) — so collapse the
   // separate hotkey/paste nags into a single clear instruction.
+  //
+  // EVERY session, not just Wayland. This was briefly gated on info.wayland
+  // on the theory that X11 didn't need uinput (hotkeys register via X11,
+  // typing via XTEST). Testing on Mint/X11 disproved it: the X11 typing path
+  // (arboard + XTEST) doesn't actually deliver, so uinput is what makes
+  // typing work there too — the relogin is genuinely required on X11 as well.
+  // Don't re-add a session gate here unless the X11 path is proven to type.
   const needsRelogin = info.uinput_grant_installed && !info.uinput_ready;
 
   if (needsRelogin) {
@@ -99,7 +106,11 @@ export default function LinuxSupportBanner() {
     }
   }
 
-  if (info.gnome) {
+  // Only nag about the tray extension when the tray genuinely isn't
+  // working. sni_host_present is true once a StatusNotifierItem host is on
+  // the bus (the AppIndicator extension, or KDE natively) — telling those
+  // users to install the extension they already have is a false alarm.
+  if (info.gnome && !info.sni_host_present) {
     issues.push({
       key: "tray",
       text: "GNOME hides tray icons by default — install the “AppIndicator and KStatusNotifierItem” Shell extension to see Bulbul in the top bar. Dictation works either way.",

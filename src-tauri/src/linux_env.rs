@@ -87,6 +87,45 @@ pub fn is_gnome() -> bool {
     desktop().contains("gnome")
 }
 
+/// Is a StatusNotifierItem host live on the session bus? True means the
+/// system tray can actually show Bulbul's icon right now — KDE/XFCE do it
+/// natively, GNOME only once the "AppIndicator and KStatusNotifierItem"
+/// Shell extension is installed. Two uses:
+///   (a) suppress the "install the tray extension" banner tip when the
+///       tray already works (otherwise we nag users who've done it), and
+///   (b) decide whether the tray can carry the Wayland "listening" cue,
+///       since the overlay pill can't render on Wayland.
+///
+/// Checks ownership of `org.kde.StatusNotifierWatcher` — the freedesktop
+/// SNI bus name every tray host registers. That's distro-agnostic, unlike
+/// matching GNOME extension UUIDs (vanilla uses
+/// `appindicatorsupport@rgcjonas.gmail.com`, Ubuntu ships
+/// `ubuntu-appindicators@ubuntu.com`). gdbus ships with glib2, a hard
+/// dependency of GTK, so it's always present on a desktop that can run us.
+/// Cached: the watcher doesn't come and go within a session, and this
+/// spawns a process, so we don't want it on the per-dictation cue path.
+pub fn sni_host_present() -> bool {
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        Command::new("gdbus")
+            .args([
+                "call",
+                "--session",
+                "--dest",
+                "org.freedesktop.DBus",
+                "--object-path",
+                "/org/freedesktop/DBus",
+                "--method",
+                "org.freedesktop.DBus.NameHasOwner",
+                "org.kde.StatusNotifierWatcher",
+            ])
+            .stderr(Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("true"))
+            .unwrap_or(false)
+    })
+}
+
 /// Cheap `which` — true if the binary is on PATH and executable.
 pub fn which(cmd: &str) -> bool {
     Command::new("which")
@@ -174,6 +213,11 @@ pub fn support_info() -> serde_json::Value {
         "x11_available": has_x11(),
         "desktop": desktop(),
         "gnome": gnome,
+        // Whether the system tray can actually show our icon. On GNOME the
+        // tray tip in the banner should only appear when this is false —
+        // otherwise we tell users who already installed the extension to
+        // install it.
+        "sni_host_present": sni_host_present(),
         // Kernel virtual keyboard — the reliable primary. Ready means
         // the process can open /dev/uinput right now.
         "uinput_ready": crate::inject::linux_uinput::is_ready(),

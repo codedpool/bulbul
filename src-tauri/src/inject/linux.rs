@@ -55,6 +55,15 @@ const YDOTOOL_KEY_C: &str = "46";
 
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(40);
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(250);
+// X11 selection ownership is IN-PROCESS: whoever called set_text must stay
+// alive to answer the target's SelectionRequest. Ctrl+V is asynchronous —
+// the app gets the key, THEN asks us for the text — so we have to keep
+// owning the selection across that round-trip. Dropping the clipboard right
+// after posting the combo (what we used to do) released ownership before the
+// request arrived, and the paste silently got nothing on every X11 session.
+// The Wayland path doesn't need this because wl-copy forks its own process
+// to serve the selection.
+const CLIPBOARD_POST_COMBO: Duration = Duration::from_millis(150);
 // Wayland paste timing. A short settle lets wl-copy's forked selection
 // owner take hold before we fire the combo; a short post-combo wait lets
 // the target app consume the paste before we restore the prior clipboard
@@ -150,7 +159,34 @@ pub fn inject_text(text: &str) -> Result<()> {
     }
 }
 
+/// uinput first, in EVERY session — not just Wayland. The kernel virtual
+/// keyboard injects below the X server/compositor, so it lands in every app,
+/// and it is already the primary path for typing (see `inject_text`, which
+/// tries it regardless of session). Sending the combo straight to XTEST on
+/// X11 is why transforms' Ctrl+C never fired even while uinput was live and
+/// happily typing dictations into the same apps: `inject_text` used uinput,
+/// these helpers didn't. Returns true when the combo was delivered.
+fn try_uinput_combo(combo: Combo) -> bool {
+    if !super::linux_uinput::is_ready() {
+        return false;
+    }
+    let kc = match combo {
+        Combo::CtrlV => super::linux_uinput::KEY_V,
+        Combo::CtrlC => super::linux_uinput::KEY_C,
+    };
+    match super::linux_uinput::send_combo(kc) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!("uinput combo failed; falling back to the session path: {e}");
+            false
+        }
+    }
+}
+
 pub fn send_ctrl_v() -> Result<()> {
+    if try_uinput_combo(Combo::CtrlV) {
+        return Ok(());
+    }
     if is_wayland() {
         send_combo_wayland(Combo::CtrlV).or_else(|e| {
             tracing::warn!("Wayland Ctrl+V failed, trying XWayland: {e:#}");
@@ -162,6 +198,9 @@ pub fn send_ctrl_v() -> Result<()> {
 }
 
 pub fn send_ctrl_c() -> Result<()> {
+    if try_uinput_combo(Combo::CtrlC) {
+        return Ok(());
+    }
     if is_wayland() {
         send_combo_wayland(Combo::CtrlC).or_else(|e| {
             tracing::warn!("Wayland Ctrl+C failed, trying XWayland: {e:#}");
@@ -405,6 +444,37 @@ pub fn wayland_primary_read() -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
+/// The X11 twin of `wayland_primary_read`. PRIMARY is an X11 invention that
+/// Wayland later copied: it holds whatever is currently highlighted, updated
+/// the instant the user selects text — no Ctrl+C, no clipboard clobbering, no
+/// synthetic keystroke.
+///
+/// The transform pipeline read PRIMARY on Wayland but was hardcoded to None on
+/// X11, so X11 fell back to the fragile clear-clipboard → send Ctrl+C → read
+/// dance. That fallback silently captured nothing on Mint/Cinnamon and every
+/// transform failed with "no selection captured" — while the very same
+/// transform worked on Wayland, purely because Wayland took this path instead.
+/// Shells out to `xclip`, deliberately mirroring `wayland_primary_read`'s use
+/// of `wl-paste` rather than reading PRIMARY in-process. arboard's PRIMARY
+/// read returns nothing on Mint/Cinnamon even when the selection is plainly
+/// there (`xclip -o -selection primary` prints it), which sent every X11
+/// transform down the Ctrl+C fallback and straight into "no selection
+/// captured". Every Linux path that actually works here is an external tool
+/// (wl-paste, wl-copy, uinput); the in-process crates are the ones that fail.
+/// `xclip` is a .deb dependency, same as `wl-clipboard`; if it is missing we
+/// return None and the Ctrl+C fallback still applies.
+pub fn x11_primary_read() -> Option<String> {
+    let output = Command::new("xclip")
+        .args(["-o", "-selection", "primary"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).into_owned();
+    (!s.is_empty()).then_some(s)
+}
+
 /// Write text to the clipboard via wl-copy. Best-effort.
 pub fn wayland_clipboard_write(text: &str) -> Result<()> {
     wl_copy_write(text)
@@ -424,6 +494,11 @@ fn inject_text_x11(text: &str) -> Result<()> {
     thread::sleep(CLIPBOARD_SETTLE);
 
     post_x11_combo(Combo::CtrlV).context("posting Ctrl+V")?;
+
+    // Hold selection ownership while the target fetches the text — see
+    // CLIPBOARD_POST_COMBO. Dropping here immediately is what made
+    // auto-typing silently fail on X11.
+    thread::sleep(CLIPBOARD_POST_COMBO);
 
     drop(clipboard);
     if let Some(prev) = previous {
@@ -449,25 +524,51 @@ fn post_x11_combo(combo: Combo) -> Result<()> {
         .ok_or_else(|| anyhow!("no screen {screen_num} on X server"))?
         .root;
 
+    // Negotiate XTEST explicitly. The server rejects fake-input from a client
+    // that hasn't queried the extension, and this surfaces "XTEST missing" as
+    // a real error rather than four silently-dropped requests.
+    conn.xtest_get_version(2, 2)
+        .context("querying XTEST")?
+        .reply()
+        .context("XTEST extension unavailable on this X server")?;
+
     // Force-release Win/Alt/Shift (the dictation hotkey may have any of
     // them held). Ctrl is left alone — we explicitly press it as part
     // of the combo.
     for &mod_kc in MODS_TO_RELEASE {
         let _ = conn
             .xtest_fake_input(KEY_RELEASE_EVENT, mod_kc, 0, root, 0, 0, 0)
-            .context("releasing modifier")?;
+            .context("releasing modifier")?
+            .check();
     }
 
+    // Every fake_input is .check()ed rather than fired and forgotten.
+    // xtest_fake_input returns a VoidCookie, and X reports errors for void
+    // requests ASYNCHRONOUSLY — so `?` on the cookie alone only catches a
+    // failure to write the bytes, never the server rejecting the request. The
+    // old code flushed and dropped the connection immediately, so a
+    // server-side rejection (or the requests never being processed before we
+    // disconnected) was completely invisible: send_ctrl_c() returned Ok and
+    // nothing ever reached the target app. .check() round-trips, which both
+    // surfaces the real error AND guarantees the server processed each event
+    // before we move on (incidentally spacing them, as xdotool does).
     let keycode = combo.x11_keycode();
     conn.xtest_fake_input(KEY_PRESS_EVENT, KC_CONTROL_L, 0, root, 0, 0, 0)
-        .context("Ctrl press")?;
+        .context("Ctrl press")?
+        .check()
+        .context("X server rejected the Ctrl press")?;
     conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, root, 0, 0, 0)
-        .context("key press")?;
+        .context("key press")?
+        .check()
+        .context("X server rejected the key press")?;
     conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, root, 0, 0, 0)
-        .context("key release")?;
+        .context("key release")?
+        .check()
+        .context("X server rejected the key release")?;
     conn.xtest_fake_input(KEY_RELEASE_EVENT, KC_CONTROL_L, 0, root, 0, 0, 0)
-        .context("Ctrl release")?;
+        .context("Ctrl release")?
+        .check()
+        .context("X server rejected the Ctrl release")?;
 
-    conn.flush().context("flushing X requests")?;
     Ok(())
 }

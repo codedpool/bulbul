@@ -1,18 +1,18 @@
 name: Windows dev build
 
-# Rolling pre-release for the v1.1 integration branch (desktop + Android
-# unified). Every push to v1.1-integration rebuilds + replaces the
+# Rolling pre-release for the v1.1.1 branch (desktop + Android
+# unified). Every push to v1.1.1 rebuilds + replaces the
 # `windows-dev` release with a fresh NSIS installer. The tester pulls via
 # the same install flow as the other desktop dev builds.
 #
 # Sibling workflows linux-dev.yml, macos-dev.yml, and android-dev.yml
-# cover the other targets of the same branch. When v1.1 ships to main,
+# cover the other targets of the same branch. When v1.1.1 ships to main,
 # drop all four.
 
 on:
   push:
     branches:
-      - v1.1-integration
+      - v1.1.1
   workflow_dispatch:
 
 concurrency:
@@ -61,9 +61,9 @@ jobs:
           tagName: windows-dev
           releaseName: 'Bulbul Windows dev build'
           releaseBody: |
-            Rolling Windows dev build from the `v1.1-integration` branch. **Not for general use** — this is a pre-release for testing the merged desktop + Android v1.1.
+            Rolling Windows dev build from the `v1.1.1` branch. **Not for general use** — this is a pre-release for testing the merged desktop + Android v1.1.
 
-            Download and run the `.exe` NSIS installer below. Each push to `v1.1-integration` replaces this release. Production builds live in tagged `vX.Y.Z` releases.
+            Download and run the `.exe` NSIS installer below. Each push to `v1.1.1` replaces this release. Production builds live in tagged `vX.Y.Z` releases.
           releaseDraft: false
           prerelease: true
           includeUpdaterJson: true

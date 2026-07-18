@@ -23,6 +23,8 @@ export default function ScratchpadView() {
   const dirtyRef = useRef(false);
   const bodyRef = useRef(null);
   const selRef = useRef({ start: 0, end: 0 });
+  const applyTransformRef = useRef(null);
+  const transformsRef = useRef([]);
 
   useEffect(() => {
     load();
@@ -70,10 +72,22 @@ export default function ScratchpadView() {
     setHasSelection(el.selectionEnd > el.selectionStart);
   }
 
+  // Runs a transform on the current textarea selection. Invoked two ways:
+  // by clicking a transform chip, and by the global transform hotkey when
+  // Bulbul's own window is focused (the backend emits "run-transform-in-app"
+  // — see the listener below, and the TransformTriggered handler in
+  // desktop.rs). The old global-shortcut-only path couldn't reach this
+  // webview textarea, which is why the hotkey did nothing here on macOS.
   async function applyTransform(transform) {
+    // Read from the LIVE textarea, not the `body` state, so a re-render lag
+    // can't leave us slicing a stale string and wiping the note. Fall back to
+    // `body` only if the ref isn't mounted.
+    const el = bodyRef.current;
+    const source = el ? el.value : body;
     const { start, end } = selRef.current;
-    if (end <= start) return;
-    const selected = body.slice(start, end);
+    if (end <= start || start < 0 || end > source.length) return;
+    const selected = source.slice(start, end);
+    if (!selected.trim()) return;
     setRunningTransformId(transform.id);
     setTransformError("");
     try {
@@ -81,7 +95,14 @@ export default function ScratchpadView() {
         transformId: transform.id,
         text: selected,
       });
-      const next = body.slice(0, start) + out + body.slice(end);
+      // Never delete the selection for an empty result — that's the "text
+      // disappears when I press a transform key" bug. Leave the note as-is
+      // and surface why instead.
+      if (out == null || out === "") {
+        setTransformError("Transform returned nothing — text left unchanged.");
+        return;
+      }
+      const next = source.slice(0, start) + out + source.slice(end);
       onBodyChange(next);
       // Put the caret just after the rewritten span on the next paint.
       requestAnimationFrame(() => {
@@ -99,6 +120,29 @@ export default function ScratchpadView() {
       setRunningTransformId(null);
     }
   }
+
+  // Keep refs to the latest runner + transform list so the global-hotkey
+  // listener (subscribed once) never calls a stale closure.
+  applyTransformRef.current = applyTransform;
+  transformsRef.current = transforms;
+
+  // The global transform hotkey (⌘/Alt+1..9) is routed here by the backend
+  // when Bulbul's own window is focused (it emits "run-transform-in-app"),
+  // so it can act on THIS webview textarea's selection — the OS-selection
+  // pipeline can't reach a webview, which is why the hotkey did nothing in
+  // the in-dashboard scratchpad on macOS. Same path as clicking the chip;
+  // no-ops when nothing is selected here.
+  useEffect(() => {
+    const un = listen("run-transform-in-app", (event) => {
+      const el = bodyRef.current;
+      if (!el || document.activeElement !== el) return;
+      selRef.current = { start: el.selectionStart, end: el.selectionEnd };
+      if (el.selectionEnd <= el.selectionStart) return;
+      const t = transformsRef.current.find((x) => x.id === Number(event.payload));
+      if (t) applyTransformRef.current?.(t);
+    });
+    return () => { un.then((f) => f()); };
+  }, []);
 
   async function loadKeepSelection() {
     try {

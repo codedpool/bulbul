@@ -4,6 +4,9 @@
     <!-- Audio capture for the dictation pipeline (requested at the
          moment the user first taps/holds the bubble, not at install). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Attach NoiseSuppressor / AutomaticGainControl audio effects to the
+         capture session (install-time permission, no runtime prompt). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Floating bubble overlay (requested via Settings.canDrawOverlays
          intent on first use of the bubble). -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />

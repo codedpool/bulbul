@@ -80,6 +80,13 @@ struct PendingDictation {
 struct IconVariants {
     active: OwnedIcon,
     no_key: OwnedIcon,
+    // Shown in the tray while a dictation is in flight — the Wayland
+    // "listening" cue, since the overlay pill can't render there. Teal-
+    // tinted so it reads as "live" and never collides with the red
+    // no-key state. Only ever read on Linux/Wayland; built everywhere to
+    // keep the struct uniform.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    recording: OwnedIcon,
 }
 
 #[derive(Clone)]
@@ -117,6 +124,25 @@ impl OwnedIcon {
             height: self.height,
         }
     }
+    /// Pull each opaque pixel toward the brand teal (#5EC8C0). Used for
+    /// the Wayland tray "listening" cue — a live/active colour that stays
+    /// distinct from the red no-key state.
+    fn tinted_accent(&self) -> Self {
+        let mut rgba = self.rgba.clone();
+        for chunk in rgba.chunks_exact_mut(4) {
+            if chunk[3] == 0 {
+                continue;
+            }
+            chunk[0] = (((chunk[0] as u32) + 0x5e * 2) / 3) as u8;
+            chunk[1] = (((chunk[1] as u32) + 0xc8 * 2) / 3) as u8;
+            chunk[2] = (((chunk[2] as u32) + 0xc0 * 2) / 3) as u8;
+        }
+        Self {
+            rgba,
+            width: self.width,
+            height: self.height,
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -139,6 +165,10 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
     // in flight. When off (default), the overlay stays visible across
     // every state.
     apply_overlay_visibility_for_state(app, state);
+    // Wayland has no overlay pill, so mirror the dictation state onto the
+    // system tray icon (or a one-shot notification when there's no tray).
+    // No-op everywhere else.
+    set_tray_activity(app, state);
     // Force the overlay above Bulbul's own main window when an active state
     // begins. `always_on_top: true` was set at window creation but Windows
     // doesn't reliably honour that between same-process windows — we have
@@ -179,6 +209,14 @@ fn apply_overlay_visibility_for_state(app: &AppHandle, state: &str) {
     let result = if should_show { overlay.show() } else { overlay.hide() };
     if let Err(e) = result {
         tracing::warn!("overlay visibility toggle failed (state={state}): {e}");
+    }
+    // X11 window managers re-place a window every time it's mapped, so the
+    // position set at creation is thrown away on the next show and the pill
+    // reappears wherever the WM likes (seen on Cinnamon: mid-screen, and
+    // somewhere new after each hide/unhide). Re-assert it on every show —
+    // cheap, and a no-op when it's already in the right spot.
+    if should_show {
+        position_overlay_bottom_center(app);
     }
 }
 
@@ -247,7 +285,23 @@ fn position_overlay_bottom_center(app: &AppHandle) {
     let Some(window) = app.get_webview_window("overlay") else {
         return;
     };
-    let Ok(Some(monitor)) = window.primary_monitor() else {
+    // primary_monitor() can legitimately return None (seen on X11 inside a
+    // VM). We used to bail out silently here, which left the pill wherever
+    // the compositor happened to drop it — mid-screen, looking broken. Fall
+    // back to the window's current monitor, then to any monitor at all,
+    // before giving up, and say so when we do.
+    let monitor = match window.primary_monitor() {
+        Ok(Some(m)) => Some(m),
+        _ => match window.current_monitor() {
+            Ok(Some(m)) => Some(m),
+            _ => window
+                .available_monitors()
+                .ok()
+                .and_then(|ms| ms.into_iter().next()),
+        },
+    };
+    let Some(monitor) = monitor else {
+        tracing::warn!("overlay: no monitor resolved — leaving the pill where the compositor put it");
         return;
     };
     let scale = monitor.scale_factor();
@@ -262,7 +316,37 @@ fn position_overlay_bottom_center(app: &AppHandle) {
 
     let x = (logical_w - OVERLAY_WIDTH) / 2.0;
     let y = anchor_bottom - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
-    let _ = window.set_position(LogicalPosition::new(x, y));
+    if let Err(e) = window.set_position(LogicalPosition::new(x, y)) {
+        tracing::warn!("overlay: set_position({x}, {y}) failed: {e}");
+        return;
+    }
+
+    // set_position returning Ok does NOT mean the pill actually moved: X11
+    // window managers (Muffin/Cinnamon especially) run their own placement
+    // policy when a window maps and can quietly ignore the position we asked
+    // for. The only way to know is to read back where it really landed — so
+    // log the monitor geometry, what we wanted, and what we got, then
+    // re-assert once if the WM relocated us. Without this the pill drifts to
+    // mid-screen with no error anywhere.
+    #[cfg(target_os = "linux")]
+    {
+        let (want_px_x, want_px_y) = (x * scale, y * scale);
+        match window.outer_position() {
+            Ok(got) => {
+                let dx = (got.x as f64 - want_px_x).abs();
+                let dy = (got.y as f64 - want_px_y).abs();
+                tracing::info!(
+                    "overlay: monitor {}x{} scale={scale} | want logical ({x:.0},{y:.0}) = px ({want_px_x:.0},{want_px_y:.0}) | got px ({},{}) | off by ({dx:.0},{dy:.0})",
+                    size.width, size.height, got.x, got.y
+                );
+                if dx > 8.0 || dy > 8.0 {
+                    tracing::warn!("overlay: the WM moved the pill — re-asserting position once");
+                    let _ = window.set_position(LogicalPosition::new(x, y));
+                }
+            }
+            Err(e) => tracing::warn!("overlay: couldn't read back position: {e}"),
+        }
+    }
 }
 
 /// Hover-aware click-through: a polling thread that watches the cursor.
@@ -400,8 +484,8 @@ fn spawn_hover_watcher(app: AppHandle) {
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn spawn_hover_watcher(_app: AppHandle) {
     // Linux: X11 could use XQueryPointer; Wayland has no global cursor
-    // query. Deferred for v1.1.1 — pill renders fine, satellite buttons
-    // just aren't cursor-reachable until then.
+    // query. Deferred — the pill renders fine, the satellite buttons just
+    // aren't cursor-reachable on Linux yet.
 }
 
 
@@ -576,6 +660,71 @@ fn update_tray_icon(app: &AppHandle, has_key: bool) {
     let _ = tray.set_tooltip(Some(tooltip));
 }
 
+/// Wayland-only "listening" cue routed through the system tray, because
+/// the overlay pill can't render on Wayland (no global window
+/// positioning; Mutter doesn't implement layer-shell). While a dictation
+/// is in flight we tint the tray icon teal and update its tooltip; on the
+/// terminal/idle transition we revert to the normal (or no-key) icon.
+///
+/// No-op on X11, Windows and macOS — those all get the overlay pill, and
+/// flickering the tray on every dictation there would be noise, not
+/// signal. When no StatusNotifierItem host is on the bus (GNOME without
+/// the AppIndicator extension) the tray icon is invisible, so we fall back
+/// to a single per-session notification — enough to teach that the state
+/// exists without a per-dictation notification storm.
+#[cfg(target_os = "linux")]
+fn set_tray_activity(app: &AppHandle, state: &str) {
+    if !linux_env::is_wayland() {
+        return;
+    }
+    let active = matches!(state, "listening" | "processing" | "injecting");
+
+    if !linux_env::sni_host_present() {
+        // No tray to tint. Fire one notification per session, on the first
+        // listening transition, then stay quiet.
+        static NOTIFIED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if state == "listening"
+            && NOTIFIED
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_ok()
+        {
+            notify(
+                app,
+                "Bulbul is listening",
+                "Recording your dictation. Install the AppIndicator GNOME extension to see a live indicator in the tray.",
+            );
+        }
+        return;
+    }
+
+    let Some(tray) = app.tray_by_id("bulbul-tray") else {
+        return;
+    };
+    if active {
+        let icon = app.state::<AppState>().icons.recording.to_image();
+        let _ = tray.set_icon(Some(icon));
+        let tooltip = if state == "listening" {
+            "Bulbul — listening…"
+        } else {
+            "Bulbul — transcribing…"
+        };
+        let _ = tray.set_tooltip(Some(tooltip));
+    } else {
+        // Back to rest: restore the correct idle icon (normal / no-key).
+        let has_key = app.state::<AppState>().config.lock().has_api_key();
+        update_tray_icon(app, has_key);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_tray_activity(_app: &AppHandle, _state: &str) {}
+
 #[tauri::command]
 fn get_config(state: tauri::State<'_, AppState>) -> Config {
     state.config.lock().clone()
@@ -739,6 +888,10 @@ fn complete_onboarding(
 ) -> Result<(), String> {
     let mut cfg = state.config.lock();
     cfg.onboarding_completed = true;
+    // Persist the launch-at-login intent so the startup reconcile keeps it
+    // registered even if this enable() fails or the entry is later lost.
+    // Fresh installs default to on, matching prior behavior.
+    cfg.autostart = Some(true);
     config::save(&cfg).map_err(|e| format!("{e:#}"))?;
     drop(cfg); // release the lock before the autostart write, in case it blocks
     if let Err(e) = app.autolaunch().enable() {
@@ -1220,8 +1373,48 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
             let _ = win_handle.hide();
         }
     });
+    disable_fullscreen_mac(&window);
     Ok(())
 }
+
+/// Mac: stop the window from ever entering native fullscreen. In
+/// TitleBarStyle::Overlay mode our content reserves a strip for the
+/// traffic-light cluster and inlines the sidebar toggle beside it; when
+/// macOS goes fullscreen it hides the traffic lights, leaving that strip
+/// and the ~78px gap blank and the toggle orphaned (the "traffic lights
+/// vanish, sidebar looks odd" bug). We keep the window resizable but drop
+/// the FullScreenPrimary/Auxiliary collection behaviors and set
+/// FullScreenNone, so the green button reverts to zoom — already disabled
+/// via `maximizable: false` — and the traffic lights are always present.
+#[cfg(target_os = "macos")]
+fn disable_fullscreen_mac(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    // NSWindowCollectionBehavior bit flags (AppKit).
+    const FULLSCREEN_PRIMARY: usize = 1 << 7;
+    const FULLSCREEN_AUXILIARY: usize = 1 << 8;
+    const FULLSCREEN_NONE: usize = 1 << 9;
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    if ns_window.is_null() {
+        return;
+    }
+    // SAFETY: ns_window() returns a live NSWindow pointer while the window
+    // exists; we only send it AppKit selectors it responds to. Runs on the
+    // main thread (Tauri setup callback), as AppKit requires.
+    unsafe {
+        let ns_window = ns_window as *mut AnyObject;
+        let current: usize = msg_send![ns_window, collectionBehavior];
+        let updated = (current & !(FULLSCREEN_PRIMARY | FULLSCREEN_AUXILIARY)) | FULLSCREEN_NONE;
+        let _: () = msg_send![ns_window, setCollectionBehavior: updated];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn disable_fullscreen_mac(_window: &tauri::WebviewWindow) {}
 
 /// Resize the overlay window to a new logical height while keeping the
 /// width constant and re-anchoring the bottom edge above the taskbar.
@@ -1244,20 +1437,64 @@ fn set_overlay_height(height: f64, app: AppHandle) {
     }
 }
 
+/// Self-healing autostart. The user's launch-at-login INTENT lives in
+/// Config (`autostart`); the OS registration (Windows Run key / macOS
+/// LaunchAgent / Linux .desktop) can drift from it — an install that skips
+/// onboarding never registers, and the entry can be removed by AV / a
+/// cleanup tool or left pointing at a stale exe. This runs on every startup
+/// and repairs the drift; get/set persist the intent so it survives.
+fn reconcile_autostart(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let intent = { state.config.lock().autostart };
+    match intent {
+        // First run since this field existed: adopt whatever the OS
+        // currently says, so we never flip an existing user's choice.
+        None => {
+            let on = app.autolaunch().is_enabled().unwrap_or(false);
+            let mut cfg = state.config.lock();
+            cfg.autostart = Some(on);
+            let _ = config::save(&cfg);
+        }
+        // Intent is ON — re-assert enable() every launch. Idempotent, and
+        // it rewrites the registration with the CURRENT exe, so it fixes
+        // both a missing entry and a stale/old exe path.
+        Some(true) => {
+            if let Err(e) = app.autolaunch().enable() {
+                tracing::warn!("autostart self-heal (enable) failed: {e:#}");
+            }
+        }
+        // Intent is OFF — the user disabled it; leave the OS alone.
+        Some(false) => {}
+    }
+}
 
+/// Returns the persisted launch-at-login intent (the source of truth once
+/// set); falls back to the live OS registration only before the first
+/// reconcile has seeded it.
 #[tauri::command]
-fn get_autostart(app: AppHandle) -> Result<bool, String> {
+fn get_autostart(state: tauri::State<'_, AppState>, app: AppHandle) -> Result<bool, String> {
+    if let Some(v) = state.config.lock().autostart {
+        return Ok(v);
+    }
     app.autolaunch().is_enabled().map_err(|e| format!("{e}"))
 }
 
 #[tauri::command]
-fn set_autostart(enabled: bool, app: AppHandle) -> Result<(), String> {
+fn set_autostart(
+    enabled: bool,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     let mgr = app.autolaunch();
     if enabled {
-        mgr.enable().map_err(|e| format!("{e}"))
+        mgr.enable().map_err(|e| format!("{e}"))?;
     } else {
-        mgr.disable().map_err(|e| format!("{e}"))
+        mgr.disable().map_err(|e| format!("{e}"))?;
     }
+    // Persist the intent so the startup reconcile keeps the OS in sync.
+    let mut cfg = state.config.lock();
+    cfg.autostart = Some(enabled);
+    config::save(&cfg).map_err(|e| format!("{e}"))
 }
 
 /// Toggle the system-tray icon at runtime. Persists `cfg.hide_tray` so
@@ -1291,6 +1528,14 @@ fn set_tray_visible(
         // Restore the always-visible behaviour when revealing the tray
         // again — even in idle, the pill should be back on screen.
         let _ = overlay.show();
+        // Re-assert the position: X11 window managers run their own
+        // placement every time a window is mapped, so a plain show() drops
+        // the pill wherever the WM likes (Cinnamon: top-left). Every show()
+        // site has to re-position — missing it here is why the pill landed
+        // wrong after a hide/unhide but snapped back to bottom-centre on the
+        // next dictation, which does go through
+        // apply_overlay_visibility_for_state.
+        position_overlay_bottom_center(&app);
     }
     Ok(())
 }
@@ -1342,6 +1587,39 @@ fn get_linux_support_info() -> serde_json::Value {
 /// Polled by the onboarding wizard's Permissions step to enable Continue
 /// once granted. On other platforms returns true unconditionally so the
 /// wizard's Mac-specific step is effectively a no-op there.
+//
+// RECURRING BUG (interim fix SHIPPED, root fix deferred) — on a fresh
+// install the Accessibility card can stay not-green: the user enables
+// Bulbul in System Settings, the toggle shows ON, yet AXIsProcessTrusted()
+// here keeps returning false. There are TWO distinct walls, and they need
+// DIFFERENT recoveries:
+//
+//   CASE 1 — first-time grant (relaunch DOES fix it). Bulbul launched
+//   with AX off; the user flips it ON afterwards; macOS caches the
+//   launch-time trust value, so this call stays false until restart.
+//   Handled today by relaunch_app below ("Quit & Relaunch"). This is
+//   also what a manual deactivate/re-enable of the grant does.
+//
+//   CASE 2 — stale grant from a prior install (relaunch does NOT fix it).
+//   Bulbul is ad-hoc signed, so every build has a different cdhash, and
+//   macOS binds the TCC Accessibility grant to the signature. A reinstall
+//   / new build inherits a STALE grant — listed + toggled ON, but bound
+//   to the OLD signature, so AXIsProcessTrusted() is false no matter how
+//   many times the user quits, relaunches, or toggles off/on. These are
+//   the "I enabled it, it's ON, relaunch does nothing" reports, and today
+//   they are STRANDED with no in-app way out.
+//
+// Fixes, in order of root-ness:
+//   1. ROOT (DEFERRED until traction — needs a paid Apple Developer ID) —
+//      sign releases with a STABLE identity so a stable cdhash means the
+//      grant never goes stale and Case 2 stops existing. The real fix; not
+//      yet done. See memory project_v111_mac_accessibility_never_green.
+//   2. INTERIM (SHIPPED) — reset_accessibility_mac below runs `tccutil
+//      reset Accessibility com.bulbul.app` and re-primes; the wizard card
+//      swaps "Quit & Relaunch" for "Reset permission" once a relaunch
+//      hasn't cleared the false reading (Case 2 — tracked via a
+//      localStorage flag in StepPermissions), so stranded users have an
+//      in-app way out until the Developer ID lands.
 #[cfg(target_os = "macos")]
 #[tauri::command]
 fn check_accessibility_status_mac() -> bool {
@@ -1397,6 +1675,38 @@ fn prime_accessibility_mac() -> Result<(), String> {
 #[tauri::command]
 fn relaunch_app(app: tauri::AppHandle) {
     app.restart();
+}
+
+/// Mac-only escape hatch for Case 2 (stale TCC grant): clear Bulbul's
+/// Accessibility grant with `tccutil reset`, then re-prime. When a prior
+/// ad-hoc-signed install left a grant bound to an old signature,
+/// AXIsProcessTrusted() stays false even though Bulbul is listed +
+/// toggled ON, and no relaunch or toggle clears it. `tccutil reset` wipes
+/// the grant so a fresh, correctly-bound one can form; re-priming
+/// immediately re-registers Bulbul with TCC and re-pops the grant dialog
+/// so the user can grant cleanly (then a relaunch refreshes trust, as in
+/// Case 1). Wired to the wizard's "Reset permission" button.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn reset_accessibility_mac() -> Result<(), String> {
+    let status = std::process::Command::new("tccutil")
+        .args(["reset", "Accessibility", "com.bulbul.app"])
+        .status()
+        .map_err(|e| format!("couldn't run tccutil: {e}"))?;
+    if !status.success() {
+        return Err(format!("tccutil reset failed (exit {:?})", status.code()));
+    }
+    // Re-add Bulbul to the Accessibility list + re-pop the grant dialog.
+    // Err is expected here (AX is not-yet-granted right after a reset);
+    // priming's side-effect of re-registering is what we're after.
+    let _ = inject::prime_enigo();
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn reset_accessibility_mac() -> Result<(), String> {
+    Ok(())
 }
 
 // Pull in AVFoundation so the AVCaptureDevice class symbol below
@@ -1668,6 +1978,7 @@ pub fn run() {
             request_microphone_access_mac,
             open_mac_settings_pane,
             relaunch_app,
+            reset_accessibility_mac,
             get_config,
             save_config,
             validate_api_key,
@@ -1777,9 +2088,11 @@ pub fn run() {
             let no_key_icon = active_icon.clone();
             #[cfg(not(target_os = "macos"))]
             let no_key_icon = active_icon.tinted_red();
+            let recording_icon = active_icon.tinted_accent();
             let icons = Arc::new(IconVariants {
                 active: active_icon,
                 no_key: no_key_icon,
+                recording: recording_icon,
             });
 
             let db_handle = match db::open() {
@@ -1827,6 +2140,7 @@ pub fn run() {
             setup_tray(&handle, has_key_on_boot)?;
             setup_overlay_window(&handle)?;
             setup_scratchpad_window(&handle)?;
+            reconcile_autostart(&handle);
 
             if let Some(window) = handle.get_webview_window("main") {
                 // Mac uses the borderless + transparent + overlay-titlebar
@@ -1836,6 +2150,7 @@ pub fn run() {
                 // hides its Win-style min/max/close on .platform-mac and
                 // adds 80px of leading padding so the sidebar toggle sits
                 // clear of the traffic lights.
+                disable_fullscreen_mac(&window);
                 let cfg = handle.state::<AppState>().config.clone();
                 let want_show = {
                     let c = cfg.lock();
@@ -2301,6 +2616,21 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                 }
                 HotkeyEvent::TransformTriggered(transform_id) => {
                     tracing::info!("TransformTriggered received: id={}", transform_id);
+                    // If Bulbul's own dashboard window is focused, the user is
+                    // working in the in-app scratchpad, not another app — route
+                    // the transform to the webview's textarea selection rather
+                    // than the OS-selection pipeline (which can't read/replace a
+                    // webview selection, so on macOS the hotkey did nothing
+                    // there). Mirrors the bulbul-focused-insert dictation route;
+                    // the ScratchpadView listener no-ops if there's no selection.
+                    let main_focused = handle
+                        .get_webview_window("main")
+                        .and_then(|w| w.is_focused().ok())
+                        .unwrap_or(false);
+                    if main_focused {
+                        let _ = handle.emit_to("main", "run-transform-in-app", transform_id);
+                        continue;
+                    }
                     let state = handle.state::<AppState>();
                     let cfg = state.config.lock().clone();
                     if !cfg.has_api_key() {
@@ -2370,11 +2700,18 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
     // Ctrl+C copy was unreliable because the transform hotkey fires while
     // its own modifier is still held, corrupting the combo. Fall back to
     // Ctrl+C for apps that don't maintain a primary selection.
+    // Read the PRIMARY selection — whatever the user has highlighted — on BOTH
+    // sessions. This was Wayland-only, with X11 hardcoded to None, which forced
+    // X11 down the clear-clipboard → Ctrl+C → read-back fallback below. That
+    // fallback captured nothing on Mint/Cinnamon, so every transform in an
+    // external app failed with "no selection captured" while the identical
+    // transform worked on Wayland — purely because Wayland took this path.
+    // PRIMARY is an X11 feature Wayland copied; X11 has always had it.
     #[cfg(target_os = "linux")]
     let selected_primary = if use_wl {
         inject::wayland_primary_read().filter(|s| !s.trim().is_empty())
     } else {
-        None
+        inject::x11_primary_read().filter(|s| !s.trim().is_empty())
     };
     #[cfg(not(target_os = "linux"))]
     let selected_primary: Option<String> = None;
@@ -2463,15 +2800,19 @@ async fn transform_pipeline(app: AppHandle, cfg: Config, transform: Option<db::T
 
     emit_status(&app, "injecting", None);
     let t_inject_start = Instant::now();
-    // Wayland: type the result straight in (uinput direct typing) — no
-    // clipboard write to lose to Wayland's unreliable background clipboard,
-    // and no flicker. Every other platform keeps the arboard + Ctrl+V path.
+    // On ALL Linux sessions, type the result straight in via inject_text
+    // (uinput first). Typing over the still-active selection replaces it, and
+    // it avoids arboard entirely. The X11 branch used to go through
+    // clipboard_set_and_paste (arboard clipboard write + Ctrl+V), but arboard
+    // is unreliable on X11/Cinnamon — the same crate whose PRIMARY read
+    // returned nothing while xclip worked — so the clipboard write silently
+    // didn't take on many attempts and Ctrl+V pasted stale/empty content. The
+    // keystroke still "succeeded", so the pill said done while nothing was
+    // replaced (the intermittent 2-of-8 transforms). uinput is what already
+    // makes dictation reliable here; use it for transforms too.
     #[cfg(target_os = "linux")]
-    let inject_result: Result<(), String> = if use_wl {
-        inject::inject_text(&final_text).map_err(|e| format!("{e:#}"))
-    } else {
-        clipboard_set_and_paste(&mut clipboard, &final_text).await
-    };
+    let inject_result: Result<(), String> =
+        inject::inject_text(&final_text).map_err(|e| format!("{e:#}"));
     #[cfg(not(target_os = "linux"))]
     let inject_result: Result<(), String> =
         clipboard_set_and_paste(&mut clipboard, &final_text).await;

@@ -59,7 +59,9 @@
           "libwebkit2gtk-4.1-0",
           "libgtk-3-0",
           "libayatana-appindicator3-1",
-          "wl-clipboard"
+          "wl-clipboard",
+          "xclip",
+          "acl"
         ],
         "recommends": [
           "gnome-shell-extension-appindicator"
@@ -72,12 +74,16 @@
         "depends": [
           "webkit2gtk4.1",
           "gtk3",
-          "wl-clipboard"
+          "wl-clipboard",
+          "xclip",
+          "acl"
         ],
         "recommends": [
           "ydotool",
           "gnome-shell-extension-appindicator"
-        ]
+        ],
+        "postInstallScript": "rpm/postinst.sh",
+        "postRemoveScript": "rpm/postrm.sh"
       },
       "appimage": {
         "bundleMediaFramework": true
