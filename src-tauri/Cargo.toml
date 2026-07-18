@@ -150,9 +150,9 @@ enumflags2 = "0.7"
 # kernel uinput virtual keyboard (inject/linux_uinput.rs). This is the
 # path that actually works on GNOME Wayland: it injects below the
 # compositor, so Mutter can't drop it the way it drops the portal's
-# Notify* and blocks wtype. Same mechanism Speech Note / nerd-dictation
-# / numen ship. Access to /dev/uinput comes from a setgid binary + udev
-# rule the .deb installs — no relogin, no broad capability.
+# Notify* and blocks wtype. It's the standard Linux keystroke-injection
+# path. Access to /dev/uinput comes from a udev uaccess rule the .deb and
+# .rpm install — no relogin, no broad capability.
 evdev = "0.13"
 # EIS (libei) keystroke injection — kept as a no-privilege fallback for
 # AppImage users who can't get the setgid uinput path. enigo's libei

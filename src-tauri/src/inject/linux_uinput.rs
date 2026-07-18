@@ -5,8 +5,8 @@
 //! drops the RemoteDesktop portal's Notify* input — but uinput creates a
 //! virtual keyboard *in the kernel*, below the compositor, so the events
 //! are indistinguishable from a real keyboard and every compositor
-//! honors them. It's the mechanism Speech Note, nerd-dictation, numen,
-//! and voxtype all end up using.
+//! honors them. It's the standard way open-source dictation tools do
+//! keystroke injection on Linux.
 //!
 //! The only cost is access to `/dev/uinput`, which is root:root 0660 by
 //! default. The .deb grants it by adding the user to the standard
