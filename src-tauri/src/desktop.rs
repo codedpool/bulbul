@@ -748,7 +748,12 @@ fn wayland_notify_cue(body: &str) {
             .summary("Bulbul")
             .body(&body)
             .id(CUE_ID)
-            .urgency(Urgency::Low)
+            // Normal (not Low): GNOME Shell accepts a Low-urgency notification
+            // but often won't pop a banner for it — the call succeeds ("shown"
+            // in the log) yet nothing is visible. Normal is the level that
+            // actually surfaces a banner. Still silent + transient, so it
+            // shows briefly, makes no sound, and isn't kept in the list.
+            .urgency(Urgency::Normal)
             .hint(Hint::SuppressSound(true))
             .hint(Hint::Transient(true))
             .show()
