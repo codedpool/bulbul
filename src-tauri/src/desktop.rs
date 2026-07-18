@@ -729,18 +729,34 @@ fn set_tray_activity(_app: &AppHandle, _state: &str) {}
 /// evolving status rather than a new app each time.
 #[cfg(target_os = "linux")]
 fn wayland_notify_cue(body: &str) {
-    use notify_rust::{Hint, Notification, Urgency};
-    // Arbitrary stable id ("bul") so every cue replaces the previous banner.
-    const CUE_ID: u32 = 0x62_75_6C;
-    let _ = Notification::new()
-        .appname("Bulbul")
-        .summary("Bulbul")
-        .body(body)
-        .id(CUE_ID)
-        .urgency(Urgency::Low)
-        .hint(Hint::SuppressSound(true))
-        .hint(Hint::Transient(true))
-        .show();
+    // notify-rust's default (zbus) backend makes a BLOCKING D-Bus call.
+    // emit_status runs on a tokio worker thread, and a blocking call made
+    // from inside the async runtime can fail silently (the "runtime within a
+    // runtime" gotcha we hit with the portal paste path) — the most likely
+    // reason the banner never appeared on Fedora. Run it on a plain OS thread
+    // with no ambient runtime so the D-Bus call actually goes through. The
+    // result is logged so a missing banner is diagnosable: "shown" + no
+    // banner ⇒ the compositor suppressed a hint; "failed" ⇒ the call errored;
+    // neither line ⇒ we never reached here (a tray was detected instead).
+    let body = body.to_string();
+    std::thread::spawn(move || {
+        use notify_rust::{Hint, Notification, Urgency};
+        // Arbitrary stable id ("bul") so every cue replaces the prior banner.
+        const CUE_ID: u32 = 0x62_75_6C;
+        match Notification::new()
+            .appname("Bulbul")
+            .summary("Bulbul")
+            .body(&body)
+            .id(CUE_ID)
+            .urgency(Urgency::Low)
+            .hint(Hint::SuppressSound(true))
+            .hint(Hint::Transient(true))
+            .show()
+        {
+            Ok(_) => tracing::info!("wayland notify cue shown: {body}"),
+            Err(e) => tracing::warn!("wayland notify cue failed: {e}"),
+        }
+    });
 }
 
 #[tauri::command]
