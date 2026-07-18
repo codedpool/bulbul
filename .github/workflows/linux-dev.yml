@@ -10,9 +10,8 @@ name: Linux dev build
 # drop all four.
 
 on:
-  push:
-    branches:
-      - v1.1.1
+  # Manual only — run from the Actions tab (or `gh workflow run`) when
+  # a dev build is explicitly wanted. No longer builds on every push.
   workflow_dispatch:
 
 concurrency:
