@@ -105,6 +105,7 @@ function App() {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [autostart, setAutostart] = useState(false);
   const [autostartError, setAutostartError] = useState("");
   const [stagedUpdate, setStagedUpdate] = useState(null);
@@ -201,6 +202,39 @@ function App() {
       un.then((f) => f());
       unStaged.then((f) => f());
       window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  // Detect macOS native fullscreen so CSS can reposition the sidebar toggle.
+  // Uses Tauri's native isFullscreen() signal (same source of truth as the
+  // Rust side's win.is_fullscreen() checks) rather than guessing from DOM
+  // window/screen size, which can misfire by a rounding pixel or on a
+  // maximize when the menu bar/Dock auto-hides. Entering fullscreen is
+  // detected instantly; exiting is debounced so the toggle stays put during
+  // the ~500ms macOS exit animation (traffic lights are hidden during it),
+  // then snaps to position once the animation lands.
+  useEffect(() => {
+    if (!IS_MAC) return;
+    const win = getCurrentWindow();
+    let exitTimer = null;
+    let mounted = true;
+    const check = () => {
+      win.isFullscreen().then((fs) => {
+        if (!mounted) return;
+        if (fs) {
+          if (exitTimer) { clearTimeout(exitTimer); exitTimer = null; }
+          setIsFullscreen(true);
+        } else if (!exitTimer) {
+          exitTimer = setTimeout(() => { setIsFullscreen(false); exitTimer = null; }, 500);
+        }
+      }).catch(() => {});
+    };
+    check();
+    const un = win.onResized(check);
+    return () => {
+      mounted = false;
+      un.then((f) => f()).catch(() => {});
+      if (exitTimer) clearTimeout(exitTimer);
     };
   }, []);
 
@@ -405,7 +439,7 @@ function App() {
 
   return (
     <>
-    <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
+    <div className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"} ${isFullscreen ? "is-fullscreen" : ""}`}>
       {!IS_ANDROID && (
         <>
         <TitleBar
@@ -415,6 +449,7 @@ function App() {
           onToggleTheme={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
         />
         {IS_MAC && (
+          <>
           <button
             className="mac-floating-sidebar-toggle"
             onClick={() => setSidebarOpen((v) => !v)}
@@ -426,6 +461,27 @@ function App() {
               <line x1="9" y1="4" x2="9" y2="20" />
             </svg>
           </button>
+          {/* Theme toggle lives at the far top-right on mac, mirroring the
+              Win/Linux titlebar placement — independent of sidebar state
+              so it's always reachable, collapsed or not. */}
+          <button
+            className="mac-floating-theme-toggle"
+            onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+            aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            title={resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
+          >
+            {resolvedTheme === "dark" ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
+          </button>
+          </>
         )}
         </>
       )}
@@ -486,28 +542,6 @@ function App() {
                   <span className="toggle-thumb" />
                 </span>
               </label>
-              {IS_MAC && (
-                <button
-                  className="sidebar-mac-btn sidebar-mac-btn-solo"
-                  onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
-                  aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-                  title={resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
-                >
-                  {resolvedTheme === "dark" ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <circle cx="12" cy="12" r="4" />
-                      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-                    </svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                    </svg>
-                  )}
-                  <span className="sidebar-mac-label">
-                    {resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
-                  </span>
-                </button>
-              )}
             </>
           )}
           <div className={`status status-${status.state}`}>

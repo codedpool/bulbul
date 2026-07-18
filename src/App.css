@@ -28,6 +28,14 @@ body, html, #root {
   background: var(--bg);
   min-height: 100vh;
   height: 100%;
+  /* Kill the page-level elastic/rubber-band bounce. Without this, hitting
+     the top/bottom of any scrollable panel (snippets, transforms, etc.)
+     lets WebKit's overscroll bounce drag the whole webview — including
+     fixed-position chrome like the sidebar and the floating sidebar-toggle
+     button — while only the real OS traffic lights (rendered outside the
+     webview) stay put. Scoping the bounce to individual scroll containers
+     (below) instead of the whole page fixes that. */
+  overscroll-behavior: none;
 }
 
 /* macOS: native NSWindow chrome with TitleBarStyle::Overlay so the
@@ -63,9 +71,15 @@ body, html, #root {
   left: 0;
   right: 0;
   height: 38px;
-  background: var(--bg-sunken);
-  border-bottom: 1px solid var(--field);
-  z-index: 998;
+  background: var(--bg);
+  /* .sidebar/.content are static-positioned flex children — a positioned
+     box (even at z-index: 0) still paints above static in-flow boxes per
+     CSS stacking rules, so this needs a negative z-index to actually sit
+     behind them. It only needs to fill the bg color behind the traffic
+     lights; it must never paint over the content card's rounded top
+     corners (which a z-index at or above 0 used to clip, squaring off
+     the 16px radius). */
+  z-index: -1;
   pointer-events: none;
 }
 
@@ -103,6 +117,42 @@ body, html, #root {
   opacity: 1;
 }
 
+/* Theme toggle: pinned to the far top-right corner, independent of the
+   sidebar's open/collapsed state, mirroring where Win/Linux keep it in
+   their custom titlebar (see .titlebar-controls). */
+.mac-floating-theme-toggle {
+  display: none;
+}
+.platform-mac .mac-floating-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 4px;
+  right: 12px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text);
+  opacity: 0.7;
+  cursor: pointer;
+  z-index: 1002;
+  transition: background 120ms ease, opacity 120ms ease;
+}
+.platform-mac .mac-floating-theme-toggle:hover {
+  background: var(--fill);
+  opacity: 1;
+}
+
+/* Fullscreen: traffic lights are hidden, so shift the sidebar toggle
+   to the far left where the traffic lights normally sit. */
+.platform-mac .is-fullscreen .mac-floating-sidebar-toggle {
+  left: 12px;
+}
+
 /* Mac sidebar: single-color bg matches main content (border-right
    still delineates the column). Padding-top clears the 44px chrome
    header + 8px breathing so the brand mark sits comfortably below
@@ -123,6 +173,7 @@ body, html, #root {
    page headers (h1) don't hide behind the chrome header. */
 .platform-mac .content {
   padding-top: 54px;
+  margin-top: 42px;
 }
 
 /* ────────── Linux: opaque square window ──────────
@@ -346,15 +397,14 @@ body, html, #root {
 .sidebar {
   width: 200px;
   flex-shrink: 0;
-  background: var(--bg-sunken);
-  border-right: 1px solid var(--fill);
+  background: var(--bg);
+  border-right: none;
   display: flex;
   flex-direction: column;
   padding: 16px 12px;
   overflow: hidden;
   transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1),
-              padding 220ms cubic-bezier(0.4, 0, 0.2, 1),
-              border-right-width 220ms cubic-bezier(0.4, 0, 0.2, 1);
+              padding 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .app-shell.sidebar-collapsed .sidebar {
@@ -373,8 +423,14 @@ body, html, #root {
 .app-shell.sidebar-collapsed .nav-label,
 .app-shell.sidebar-collapsed .nav-tag,
 .app-shell.sidebar-collapsed .sidebar-footer .version,
-.app-shell.sidebar-collapsed .sidebar-footer .status > span:not(.dot),
-.app-shell.sidebar-collapsed .sidebar-toggle-label {
+.app-shell.sidebar-collapsed .sidebar-footer .status > span:not(.dot) {
+  display: none;
+}
+
+/* Open at startup / Hide tray icon: a bare switch with no label reads as
+   broken, so hide the whole row (not just the label) when collapsed
+   rather than leaving an orphaned toggle floating in the narrow rail. */
+.app-shell.sidebar-collapsed .sidebar-toggle-row {
   display: none;
 }
 
@@ -394,7 +450,7 @@ body, html, #root {
   align-items: center;
   gap: 10px;
   padding: 38px 8px 18px;
-  border-bottom: 1px solid var(--field);
+  border-bottom: none;
   margin-bottom: 12px;
 }
 
@@ -418,64 +474,10 @@ body, html, #root {
   line-height: 1;
 }
 
-/* Mac-only footer chrome — since we hide the React .titlebar on Mac
-   in favor of the native NSWindow chrome, the two toggles that used
-   to live there (sidebar collapse, theme switch) move down into the
-   sidebar footer. Styled as full-width row buttons matching the
-   nav-item shape (16px icon + label at 13px), so they sit visually
-   consistent with the sections above and don't read as afterthoughts.
-   Collapsed sidebar: icon-only, centered. */
-.sidebar-mac-controls {
-  display: none;
-}
-.platform-mac .sidebar-mac-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 8px;
-  border-top: 1px solid var(--field);
-  padding-top: 8px;
-}
-.sidebar-mac-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--text-5);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  transition: background 120ms ease, color 120ms ease;
-}
-.sidebar-mac-btn svg {
-  width: 16px;
-  height: 16px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-  transition: color 120ms ease;
-}
-.sidebar-mac-btn:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-.sidebar-mac-btn:hover svg {
-  color: var(--text);
-}
-.platform-mac .app-shell.sidebar-collapsed .sidebar-mac-btn {
-  justify-content: center;
-  padding-left: 0;
-  padding-right: 0;
-  gap: 0;
-}
-.platform-mac .app-shell.sidebar-collapsed .sidebar-mac-label {
-  display: none;
-}
-
+/* Mac theme + sidebar toggles now live as floating buttons pinned to the
+   top corners (see .mac-floating-sidebar-toggle / .mac-floating-theme-toggle
+   above) rather than in the sidebar footer — they stay reachable and
+   visible regardless of collapsed state. */
 .nav {
   display: flex;
   flex-direction: column;
@@ -603,7 +605,15 @@ body, html, #root {
 .content {
   flex: 1;
   overflow-y: auto;
+  /* Contain the scroll bounce to this box (see body/html/#root rule) so
+     reaching the top/bottom of the content doesn't ripple into a whole-
+     page bounce that drags the fixed sidebar/toggle along with it. */
+  overscroll-behavior-y: contain;
   padding: 32px 36px 28px;
+  background: var(--surface-1);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  margin: 8px 8px 8px 0;
 }
 
 /* ─────────── Page wrappers ─────────── */
@@ -1132,6 +1142,7 @@ kbd {
   flex-direction: column;
   gap: 1px;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   background: var(--bg-sunken);
 }
 
@@ -1182,6 +1193,7 @@ kbd {
 .settings-modal-pane {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 16px 22px 22px;
   display: flex;
   flex-direction: column;
@@ -2972,6 +2984,7 @@ button.small {
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
@@ -3665,6 +3678,7 @@ html.platform-android .m-content {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 14px 16px 28px;
 }
 
