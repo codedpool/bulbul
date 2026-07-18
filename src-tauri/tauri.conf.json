@@ -81,7 +81,9 @@
         "recommends": [
           "ydotool",
           "gnome-shell-extension-appindicator"
-        ]
+        ],
+        "postInstallScript": "rpm/postinst.sh",
+        "postRemoveScript": "rpm/postrm.sh"
       },
       "appimage": {
         "bundleMediaFramework": true
