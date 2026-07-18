@@ -125,7 +125,7 @@ Please don't open public issues for anything that looks like a credential leak, 
 
 ## License
 
-By contributing, you agree your changes are released under the [MIT license](LICENSE) that covers the rest of the project. There's no separate CLA.
+By contributing, you agree your changes are released under the [GPL-3.0 license](LICENSE) that covers the rest of the project. There's no separate CLA.
 
 ## Thanks
 

@@ -12,8 +12,7 @@
 <p align="center">
   <a href="https://github.com/codedpool/bulbul/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/codedpool/bulbul?color=5ec8c0&label=release" /></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-4c8bf5" />
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/codedpool/bulbul?color=44b268" /></a>
-  <a href="https://github.com/codedpool/bulbul/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/codedpool/bulbul/total?color=e8873a" /></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/github/license/codedpool/bulbul?color=44b268" /></a>
   <img alt="Powered by Groq" src="https://img.shields.io/badge/powered%20by-Groq-f55036" />
 </p>
 
@@ -53,7 +52,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 | | Bulbul | Commercial alternatives |
 |---|---|---|
 | **Cost** | Free + your Groq key | Subscription |
-| **Open source** | Yes (MIT) | No |
+| **Open source** | Yes (GPL-3.0) | No |
 | **Where your audio goes** | Groq's API, with your key | Vendor's servers |
 | **Source of truth for your data** | Your machine | Vendor |
 | **Latency** | ~600ms typical | similar |
@@ -206,7 +205,9 @@ Bulbul is a solo project, but contributions are welcome. Open an issue first to 
 
 ## License
 
-[MIT](LICENSE) — do whatever you want, just don't blame me.
+**[GPL-3.0](LICENSE)** — free and open-source. Use it, study it, modify it, share it. The one catch: if you distribute a modified version, you have to release your source under GPL-3.0 too. Keeps Bulbul open for everyone and stops it being quietly closed-up and resold.
+
+Copyright © 2026 Bulbul contributors.
 
 ---
 

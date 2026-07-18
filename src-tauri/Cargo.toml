@@ -4,6 +4,7 @@ version = "1.1.0"
 description = "Free, open-source voice dictation for Windows, macOS, Linux, and Android, powered by Groq"
 authors = ["Bulbul contributors"]
 edition = "2021"
+license = "GPL-3.0-only"
 
 [lib]
 name = "bulbul_lib"

@@ -28,7 +28,7 @@ You'll only see this warning the first time. Once Bulbul is installed, neither t
 
 That's your call, and you should never accept "trust me, it's fine" from anyone shipping unsigned software. Three things you can do to verify before installing:
 
-1. **Read the source.** Bulbul is open source under [MIT](../LICENSE). The entire codebase is at [github.com/codedpool/bulbul](https://github.com/codedpool/bulbul). If something looks off, don't install.
+1. **Read the source.** Bulbul is open source under [GPL-3.0](../LICENSE). The entire codebase is at [github.com/codedpool/bulbul](https://github.com/codedpool/bulbul). If something looks off, don't install.
 2. **Verify the installer signature.** Every release has a `.sig` file alongside the `.exe`. You can verify with [minisign](https://jedisct1.github.io/minisign/) using the public key embedded in `src-tauri/tauri.conf.json`:
 
    ```bash
