@@ -17,22 +17,18 @@ One codebase, four platforms: this release brings Bulbul to **macOS**, **Linux**
 - **Visible rejection feedback** — when the dictation pipeline drops a take (too short, silence-induced hallucination), the overlay pill now briefly turns amber with a short label ("Too short — try again" / "No audio — check mic") instead of silently shrinking. Same diagnostic visibility applies to the dashboard: every transcript Whisper returns is persisted to history, including hallucination-filter drops, so users can see exactly what was heard regardless of injection outcome.
 - **In-app usage guides** — dismissible "How to dictate" and "How transforms work" cards on the Home and Transforms pages (they return on relaunch), plus platform-aware copy across the app (hotkey wording on desktop, bubble wording on Android).
 
-### Changed
+### Improved
 
-- **Audio capture quality on every platform** — the same microphone transcribed better on Windows than on Linux/macOS/Android, because Windows silently pre-cleans mic input while the others hand over the raw signal. Bulbul now cleans it itself: on desktop an 80 Hz high-pass strips rumble and a loudness-target auto-gain lifts quiet or uneven speech (bounded so it never clips and never boosts less than before); on Android, capture uses the speech-recognition source plus the phone's noise-suppression and auto-gain effects, with a software-normalization backstop.
-- **Transform slot hotkey labels are platform-aware** — slot chips show ⌘ on macOS and Super on Linux instead of the Windows-key glyph.
-- **Self-healing autostart (desktop)** — "start on login" now persists the user's intent and reconciles it on every launch, so it survives an OS update or anything that drops the registry/login entry.
-- **Fedora / openSUSE first-run parity** — the `.rpm` now ships the same input-access post-install scriptlet as the `.deb`, and `install.sh` routes rpm-based distros to it, so hold-to-talk and typing work there with no logout/login.
-- **Android self-update** — Android checks GitHub Releases and updates itself, matching the desktop flow.
-
-### Fixed
-
-- **Linux X11 typing and transforms** — text now injects into other apps reliably (routed through the kernel `uinput` device instead of the in-process clipboard path, which delivered nothing on some desktops), and highlighted-text transforms read the X11 PRIMARY selection directly. XTEST errors are no longer silently swallowed.
-- **Linux tray-extension banner** — only nudges GNOME users to install the AppIndicator extension when a system tray isn't already present, instead of always.
-- **Linux overlay pill** — survives X11 window managers that re-place it on every show, and paints transparent from the first frame (no black flash). The native WebKitGTK tooltip no longer appears alongside Bulbul's themed one.
-- **Onboarding wizard test box on Linux** accepted no dictation, and the scratchpad transform could blank text on an empty selection — both fixed.
-- **macOS window chrome** — maximizing or entering fullscreen no longer relocates the traffic-light buttons off Bulbul's title strip; added a Reset-permission escape hatch for a stale Accessibility grant.
-- **Android permission recovery** — recovers from missing or revoked permissions instead of failing silently (re-checks on resume); the accessibility service is matched by component identity; accessibility-tool status is declared with an automatic pause in password fields.
+- **Consistent transcription on every platform** — the same microphone used to sound better on Windows (which silently pre-cleans mic input) than on Linux/macOS/Android. Bulbul now cleans it itself: on desktop, an 80 Hz high-pass strips rumble and a loudness-target auto-gain lifts quiet or uneven speech (bounded so it never clips); on Android, capture uses the speech-recognition source plus the phone's noise-suppression and auto-gain, with a software backstop.
+- **Reliable typing on Linux X11** — text injects into other apps through the kernel `uinput` virtual keyboard, and highlighted-text transforms read the X11 PRIMARY selection directly.
+- **Robust overlay on Linux** — the pill survives X11 window managers that re-place it and paints transparent from the first frame; the native WebKitGTK tooltip no longer doubles up with Bulbul's themed one. The onboarding test box and scratchpad transforms are solid on Linux too.
+- **Session-aware Linux banner** — reports the live session's hotkey/paste status and only prompts for the GNOME tray extension when a tray isn't already present.
+- **Platform-native hotkey labels** — transform-slot chips show ⌘ on macOS and Super on Linux instead of the Windows-key glyph.
+- **Self-healing autostart (desktop)** — "start on login" persists your intent and reconciles it on every launch, so it survives an OS update or anything that drops the registry/login entry.
+- **Fedora / openSUSE first-run parity** — the `.rpm` ships the same input-access post-install scriptlet as the `.deb`, and `install.sh` routes rpm-based distros to it, so hold-to-talk and typing work there with no logout/login.
+- **Steady macOS window chrome** — the sidebar toggle and traffic-light buttons stay put when maximized or in fullscreen, plus a Reset-permission escape hatch for a stale Accessibility grant.
+- **Resilient Android permissions** — recovers from missing or revoked permissions (re-checks on resume), matches the accessibility service by component identity, and pauses in password fields.
+- **Android self-update** — checks GitHub Releases and updates itself, matching the desktop flow.
 
 ### Contributors
 
