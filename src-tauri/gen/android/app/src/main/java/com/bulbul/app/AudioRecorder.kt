@@ -27,6 +27,8 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import androidx.core.content.ContextCompat
 import java.io.ByteArrayOutputStream
@@ -39,6 +41,8 @@ class AudioRecorder(private val context: Context) {
     @Volatile private var recording = false
     private var thread: Thread? = null
     private var record: AudioRecord? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var agc: AutomaticGainControl? = null
     private var pcm = ByteArrayOutputStream()
 
     fun isRecording(): Boolean = recording
@@ -70,7 +74,11 @@ class AudioRecorder(private val context: Context) {
         val r = try {
             @Suppress("MissingPermission") // checked above
             AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                // VOICE_RECOGNITION requests the ASR-tuned capture path,
+                // which the OS keeps free of the aggressive "communication"
+                // voice processing that can smear speech for a transcription
+                // model. Better default than MIC for dictation.
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SAMPLE_RATE_HZ,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -87,6 +95,7 @@ class AudioRecorder(private val context: Context) {
         }
 
         record = r
+        attachEffects(r.audioSessionId)
         pcm = ByteArrayOutputStream()
         recording = true
         r.startRecording()
@@ -130,6 +139,7 @@ class AudioRecorder(private val context: Context) {
         }
         record?.release()
         record = null
+        releaseEffects()
 
         val pcmBytes = synchronized(pcm) { pcm.toByteArray() }
         if (pcmBytes.isEmpty()) {
@@ -137,7 +147,71 @@ class AudioRecorder(private val context: Context) {
             return null
         }
         Log.i(TAG, "recording stopped, captured ${pcmBytes.size} PCM bytes")
-        return wrapAsWav(pcmBytes)
+        return wrapAsWav(normalize(pcmBytes))
+    }
+
+    /// Ask the platform to clean the capture the way Windows' mic
+    /// enhancement does for the desktop build: framework noise suppression
+    /// and auto-gain, when the chipset offers them (availability varies;
+    /// absent effects simply no-op). This is the biggest single lever for
+    /// matching desktop transcription quality on-device.
+    private fun attachEffects(sessionId: Int) {
+        try {
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor = NoiseSuppressor.create(sessionId)?.also { it.setEnabled(true) }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "NoiseSuppressor attach failed", t)
+        }
+        try {
+            if (AutomaticGainControl.isAvailable()) {
+                agc = AutomaticGainControl.create(sessionId)?.also { it.setEnabled(true) }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "AutomaticGainControl attach failed", t)
+        }
+    }
+
+    private fun releaseEffects() {
+        try { noiseSuppressor?.release() } catch (_: Throwable) {}
+        try { agc?.release() } catch (_: Throwable) {}
+        noiseSuppressor = null
+        agc = null
+    }
+
+    /// Peak-normalize the 16-bit little-endian PCM toward -3 dBFS so soft
+    /// speech reaches a level Whisper transcribes reliably — a software
+    /// backstop for phones whose AutomaticGainControl effect is
+    /// unavailable. Mirrors the desktop AGC's floor: only ever boosts
+    /// (gain >= 1), capped at 20x so near-silence can't turn to hiss.
+    /// Mutates and returns the same array.
+    private fun normalize(pcm: ByteArray): ByteArray {
+        val n = pcm.size / 2
+        if (n == 0) return pcm
+        val buf = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN)
+        var peak = 0
+        for (i in 0 until n) {
+            val s = buf.getShort(i * 2).toInt()
+            val a = if (s < 0) -s else s
+            if (a > peak) peak = a
+        }
+        if (peak == 0) return pcm
+        val targetAmp = 0.708f * Short.MAX_VALUE.toInt() // -3 dBFS
+        var gain = targetAmp / peak
+        if (gain < 1f) gain = 1f
+        if (gain > 20f) gain = 20f
+        if (gain <= 1.01f) return pcm
+        for (i in 0 until n) {
+            val v = buf.getShort(i * 2) * gain
+            val clamped = when {
+                v > Short.MAX_VALUE.toFloat() -> Short.MAX_VALUE
+                v < Short.MIN_VALUE.toFloat() -> Short.MIN_VALUE
+                else -> v.toInt().toShort()
+            }
+            buf.putShort(i * 2, clamped)
+        }
+        Log.i(TAG, "normalized: peak=$peak gain=$gain")
+        return pcm
     }
 
     /// Builds a canonical PCM WAV file in memory: 44-byte RIFF header
