@@ -163,6 +163,13 @@ enigo = { version = "0.6.1", default-features = false, features = ["libei_tokio"
 # (or run `bulbul --toggle-dictation`) to drive dictation on compositors
 # without a working GlobalShortcuts portal.
 signal-hook = "0.3"
+# notify-rust: desktop notifications with hint control (transient +
+# suppress-sound) that tauri-plugin-notification doesn't expose. Powers the
+# Wayland "listening" cue on GNOME desktops that have neither a system tray
+# (no AppIndicator extension) nor the overlay pill — notifications are the
+# only feedback channel left there. Already resolved transitively via the
+# notification plugin; same default zbus backend.
+notify-rust = "4"
 
 [dependencies.anyhow]
 version = "1"

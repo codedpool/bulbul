@@ -669,9 +669,10 @@ fn update_tray_icon(app: &AppHandle, has_key: bool) {
 /// No-op on X11, Windows and macOS — those all get the overlay pill, and
 /// flickering the tray on every dictation there would be noise, not
 /// signal. When no StatusNotifierItem host is on the bus (GNOME without
-/// the AppIndicator extension) the tray icon is invisible, so we fall back
-/// to a single per-session notification — enough to teach that the state
-/// exists without a per-dictation notification storm.
+/// the AppIndicator extension) the tray icon is invisible AND Wayland has
+/// no pill, so we fall back to a silent, transient notification cue per
+/// dictation (see wayland_notify_cue) — the only feedback channel left on
+/// that desktop, and the reason dictation felt "invisible" on stock Fedora.
 #[cfg(target_os = "linux")]
 fn set_tray_activity(app: &AppHandle, state: &str) {
     if !linux_env::is_wayland() {
@@ -680,25 +681,16 @@ fn set_tray_activity(app: &AppHandle, state: &str) {
     let active = matches!(state, "listening" | "processing" | "injecting");
 
     if !linux_env::sni_host_present() {
-        // No tray to tint. Fire one notification per session, on the first
-        // listening transition, then stay quiet.
-        static NOTIFIED: std::sync::atomic::AtomicBool =
-            std::sync::atomic::AtomicBool::new(false);
-        if state == "listening"
-            && NOTIFIED
-                .compare_exchange(
-                    false,
-                    true,
-                    std::sync::atomic::Ordering::SeqCst,
-                    std::sync::atomic::Ordering::SeqCst,
-                )
-                .is_ok()
-        {
-            notify(
-                app,
-                "Bulbul is listening",
-                "Recording your dictation. Install the AppIndicator GNOME extension to see a live indicator in the tray.",
-            );
+        // No tray to tint (and no pill on Wayland) — a notification is the
+        // only way to tell the user their voice is being captured. Fire a
+        // silent, transient banner (no sound, not kept in the notification
+        // list) with a fixed id so repeated dictations replace it rather
+        // than stack. Surface only the states that matter: capture starting,
+        // and a take that produced nothing.
+        match state {
+            "listening" => wayland_notify_cue("🎙 Listening…"),
+            "error" => wayland_notify_cue("Didn't catch that — nothing transcribed."),
+            _ => {}
         }
         return;
     }
@@ -724,6 +716,32 @@ fn set_tray_activity(app: &AppHandle, state: &str) {
 
 #[cfg(not(target_os = "linux"))]
 fn set_tray_activity(_app: &AppHandle, _state: &str) {}
+
+/// Silent, transient desktop notification — the Wayland "listening" cue for
+/// desktops with no system tray to tint (GNOME without the AppIndicator
+/// extension). We go through notify-rust rather than the tauri notification
+/// plugin because only it exposes the hints that make this unobtrusive:
+/// SuppressSound (no ding on every dictation) and Transient (shows as a
+/// banner but isn't kept in the notification list). A fixed replaces-id
+/// means a rapid re-trigger updates the same banner instead of stacking a
+/// new one. Best-effort: no notification daemon just means no cue, never an
+/// error. `summary` stays constant ("Bulbul") so the banner reads as one
+/// evolving status rather than a new app each time.
+#[cfg(target_os = "linux")]
+fn wayland_notify_cue(body: &str) {
+    use notify_rust::{Hint, Notification, Urgency};
+    // Arbitrary stable id ("bul") so every cue replaces the previous banner.
+    const CUE_ID: u32 = 0x62_75_6C;
+    let _ = Notification::new()
+        .appname("Bulbul")
+        .summary("Bulbul")
+        .body(body)
+        .id(CUE_ID)
+        .urgency(Urgency::Low)
+        .hint(Hint::SuppressSound(true))
+        .hint(Hint::Transient(true))
+        .show();
+}
 
 #[tauri::command]
 fn get_config(state: tauri::State<'_, AppState>) -> Config {
