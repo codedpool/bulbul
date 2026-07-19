@@ -211,3 +211,57 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" "$OUT" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Version-less copies of each installer, so the website (and anyone else) can
+  # link a direct download that always resolves to the current build:
+  #   https://github.com/codedpool/bulbul/releases/latest/download/<stable-name>
+  # GitHub serves these with an attachment disposition, so the file downloads
+  # directly — no versioned filename to update, no GitHub page in between.
+  # Runs after the desktop + Android assets exist on the (draft) release.
+  stable-aliases:
+    needs: [publish-tauri, publish-android]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Publish stable-named copies of the installers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Assets currently on $TAG:"
+          gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name'
+
+          # glob matching the versioned asset  ->  stable alias to publish.
+          # Patterns are anchored on the version-independent suffix and avoid
+          # the .sig / .msi companions.
+          MAP="
+          *_x64-setup.exe|Bulbul-windows-x64-setup.exe
+          *_universal.dmg|Bulbul-macos-universal.dmg
+          *_amd64.AppImage|Bulbul-linux-x86_64.AppImage
+          *-arm64.apk|Bulbul-android-arm64.apk
+          "
+
+          mkdir -p aliases
+          echo "$MAP" | while IFS='|' read -r pattern stable; do
+            pattern="$(echo "$pattern" | xargs)"   # trim whitespace
+            stable="$(echo "$stable" | xargs)"
+            if [ -z "$pattern" ]; then continue; fi
+            rm -f aliases/*
+            if ! gh release download "$TAG" --repo "$REPO" \
+                   --pattern "$pattern" --dir aliases --clobber; then
+              echo "WARN: no asset matching '$pattern' — skipping $stable"
+              continue
+            fi
+            src="$(find aliases -maxdepth 1 -type f | head -n1)"
+            if [ -z "$src" ]; then
+              echo "WARN: nothing downloaded for '$pattern' — skipping $stable"
+              continue
+            fi
+            cp "$src" "aliases/$stable"
+            gh release upload "$TAG" --repo "$REPO" "aliases/$stable" --clobber
+            echo "Aliased $(basename "$src") -> $stable"
+          done
