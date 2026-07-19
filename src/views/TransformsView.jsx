@@ -392,10 +392,12 @@ function TransformEditor({ initial, onSave, onCancel }) {
           rows={8}
         />
       </div>
-      <div className="snippet-form-row">
-        <label>Hotkey <span className="muted small">(optional)</span></label>
-        <HotkeyRecorder value={hotkey} onChange={setHotkey} />
-      </div>
+      {!IS_ANDROID && (
+        <div className="snippet-form-row">
+          <label>Hotkey <span className="muted small">(optional)</span></label>
+          <HotkeyRecorder value={hotkey} onChange={setHotkey} />
+        </div>
+      )}
       <div className="dict-form-actions">
         <span className="muted small">Tip: <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to save</span>
         <div className="spacer" />
