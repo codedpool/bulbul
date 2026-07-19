@@ -346,16 +346,11 @@ pub fn style_modifier(style: &str) -> Option<&'static str> {
     }
 }
 
-/// Map an executable name (e.g. "Code.exe") to a human-readable app name
-/// the LLM is likely to recognize from its training data. This becomes the
-/// venue hint we append to the cleanup system prompt so the model can adapt
-/// formatting conventions (markdown in Slack vs. literal punctuation in a
-/// shell vs. paragraphs in Outlook).
-///
-/// Returns the bare stem (e.g. "Foo" for "Foo.exe") when the exe isn't in
-/// the curated table — better to surface *something* and let the model use
-/// its world knowledge than to silently drop the signal.
-pub fn friendly_app_name(exe: &str) -> String {
+/// Curated exe-stem / macOS-bundle-id → human-readable app name. Returns
+/// `None` when the app isn't in the table, so callers can fall back to an
+/// OS-provided name (e.g. macOS `localizedName`) before dropping to the raw
+/// identifier. Matching is case-insensitive and ignores a trailing `.exe`.
+pub fn mapped_app_name(exe: &str) -> Option<String> {
     let lower = exe.to_lowercase();
     let stem = lower.trim_end_matches(".exe");
     let mapped = match stem {
@@ -414,6 +409,7 @@ pub fn friendly_app_name(exe: &str) -> String {
         "linear" => "Linear",
         "figma" => "Figma",
         "spotify" => "Spotify",
+        "bulbul" => "Bulbul",
 
         // --- macOS bundle IDs ---
         // Apple
@@ -462,14 +458,21 @@ pub fn friendly_app_name(exe: &str) -> String {
         "com.figma.desktop" => "Figma",
         "com.linear-app.linear" => "Linear",
         "com.spotify.client" => "Spotify",
+        "com.bulbul.app" => "Bulbul",
 
-        _ => "",
+        _ => return None,
     };
-    if !mapped.is_empty() {
-        return mapped.to_string();
+    Some(mapped.to_string())
+}
+
+/// Human-readable app name for the LLM venue hint (and the last-resort
+/// display fallback). Prefers the curated `mapped_app_name`, else returns the
+/// raw identifier with any trailing `.exe` stripped — keeping the user's
+/// original case (e.g. "MyApp" not "myapp"). Never empty.
+pub fn friendly_app_name(exe: &str) -> String {
+    if let Some(name) = mapped_app_name(exe) {
+        return name;
     }
-    // Fallback: strip the trailing .exe (case-insensitively) from the
-    // original input so we keep the user's case (e.g. "MyApp" not "myapp").
     if let Some(idx) = exe.to_lowercase().rfind(".exe") {
         if idx == exe.len() - 4 {
             return exe[..idx].to_string();
@@ -647,4 +650,41 @@ pub fn save(cfg: &Config) -> Result<()> {
     let text = serde_json::to_string_pretty(cfg)?;
     fs::write(&path, text).with_context(|| format!("writing {path:?}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{friendly_app_name, mapped_app_name};
+
+    #[test]
+    fn mapped_name_covers_all_platform_id_shapes() {
+        // Windows exe stems
+        assert_eq!(mapped_app_name("Code.exe").as_deref(), Some("VS Code"));
+        assert_eq!(mapped_app_name("msedge.exe").as_deref(), Some("Microsoft Edge"));
+        // macOS bundle ids — matched case-insensitively
+        assert_eq!(mapped_app_name("com.microsoft.VSCode").as_deref(), Some("VS Code"));
+        assert_eq!(mapped_app_name("com.apple.Safari").as_deref(), Some("Safari"));
+        // Linux WM_CLASS
+        assert_eq!(mapped_app_name("firefox").as_deref(), Some("Firefox"));
+        // Bulbul itself, on both desktop shapes
+        assert_eq!(mapped_app_name("bulbul").as_deref(), Some("Bulbul"));
+        assert_eq!(mapped_app_name("com.bulbul.app").as_deref(), Some("Bulbul"));
+    }
+
+    #[test]
+    fn mapped_name_is_none_for_unknown_apps() {
+        // Unmapped: caller must fall back to the OS display name, not the raw id.
+        assert_eq!(mapped_app_name("com.google.antigravity-ide"), None);
+        assert_eq!(mapped_app_name("dev.warp.Warp-Stable"), None);
+        assert_eq!(mapped_app_name("SomeRandomApp.exe"), None);
+    }
+
+    #[test]
+    fn friendly_name_falls_back_without_leaking_a_bundle_id_as_exe() {
+        // Windows: strip .exe, keep original case.
+        assert_eq!(friendly_app_name("MyApp.exe"), "MyApp");
+        // macOS unmapped bundle id has no .exe → returned as-is (this is the
+        // `com.appname.xyz` the localizedName display path is meant to replace).
+        assert_eq!(friendly_app_name("com.google.antigravity-ide"), "com.google.antigravity-ide");
+    }
 }

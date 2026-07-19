@@ -73,6 +73,7 @@ pub struct StagedUpdate {
 struct PendingDictation {
     started_at: Instant,
     foreground_app: Option<String>,
+    foreground_app_display: Option<String>,
     language: String,
     mode: CleanupMode,
 }
@@ -939,11 +940,20 @@ fn get_recent_dictations(
 ) -> Result<Vec<db::DictationRow>, String> {
     let mut rows = db::recent_dictations(&state.db, limit, offset).map_err(|e| format!("{e:#}"))?;
     // Resolve the stored raw app identifier (Windows exe stem, macOS bundle ID,
-    // Linux WM_CLASS) to a human-readable name for display. The DB keeps the raw
-    // value — corrections and per-app Style key on it — so we map only on the
-    // way out to the UI.
+    // Linux WM_CLASS) to a human-readable name for display. Preference:
+    //   1. curated table  (consistent cross-platform: "VS Code", "Slack")
+    //   2. OS display name captured at dictation time (macOS localizedName —
+    //      fixes unmapped `com.appname.xyz`); None on older rows / other OSes
+    //   3. raw id with a trailing .exe stripped (last resort)
+    // The DB keeps the raw `foreground_app` — corrections and per-app Style key
+    // on it — so we only resolve on the way out to the UI.
     for row in &mut rows {
-        row.foreground_app = row.foreground_app.as_deref().map(config::friendly_app_name);
+        if let Some(id) = row.foreground_app.clone() {
+            let resolved = config::mapped_app_name(&id)
+                .or_else(|| row.foreground_app_display.clone())
+                .unwrap_or_else(|| config::friendly_app_name(&id));
+            row.foreground_app = Some(resolved);
+        }
     }
     Ok(rows)
 }
@@ -2537,9 +2547,11 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                                 after_emit.duration_since(recorder_ready).as_micros(),
                                 after_emit.duration_since(press_received_at).as_millis(),
                             );
+                            let app = window_info::foreground_app();
                             let meta = PendingDictation {
                                 started_at: Instant::now(),
-                                foreground_app: window_info::foreground_app(),
+                                foreground_app: app.as_ref().map(|a| a.id.clone()),
+                                foreground_app_display: app.and_then(|a| a.display),
                                 language: cfg.language.clone(),
                                 mode: cleanup_mode,
                             };
@@ -3058,6 +3070,7 @@ async fn process_pipeline(
                 mode: meta.mode.clone(),
                 language: meta.language.clone(),
                 foreground_app: meta.foreground_app.clone(),
+                foreground_app_display: meta.foreground_app_display.clone(),
                 duration_ms,
             },
             &[],
@@ -3186,6 +3199,7 @@ async fn process_pipeline(
             mode: meta.mode.clone(),
             language: meta.language.clone(),
             foreground_app: meta.foreground_app.clone(),
+            foreground_app_display: meta.foreground_app_display.clone(),
             duration_ms,
         },
         &dict_hits,

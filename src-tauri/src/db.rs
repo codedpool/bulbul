@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS dictations (
     mode            TEXT NOT NULL,
     language        TEXT NOT NULL,
     foreground_app  TEXT,
+    foreground_app_display TEXT,
     duration_ms     INTEGER NOT NULL,
     word_count      INTEGER NOT NULL,
     fix_count       INTEGER NOT NULL DEFAULT 0
@@ -228,9 +229,22 @@ pub fn open() -> Result<Db> {
     tracing::info!("opening sqlite db at {path:?}");
     let conn = Connection::open(&path).with_context(|| format!("opening {path:?}"))?;
     conn.execute_batch(SCHEMA).context("applying schema")?;
+    migrate(&conn).context("running migrations")?;
     seed_default_dictionary(&conn).context("seeding dictionary defaults")?;
     seed_default_transforms(&conn).context("seeding transform defaults")?;
     Ok(Arc::new(Mutex::new(conn)))
+}
+
+/// Idempotent, additive migrations for databases created before a column
+/// existed. `CREATE TABLE IF NOT EXISTS` in SCHEMA is a no-op on existing DBs,
+/// and SQLite has no `ADD COLUMN IF NOT EXISTS`, so we run the ALTER and
+/// tolerate the "duplicate column name" error when the column is already there.
+fn migrate(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE dictations ADD COLUMN foreground_app_display TEXT",
+        [],
+    );
+    Ok(())
 }
 
 fn seed_default_transforms(conn: &Connection) -> Result<()> {
@@ -291,6 +305,10 @@ pub struct LogEntry {
     pub mode: CleanupMode,
     pub language: String,
     pub foreground_app: Option<String>,
+    /// Human-readable app name captured at dictation time (macOS localizedName).
+    /// None when the OS didn't provide one; the read path falls back to the
+    /// curated table / raw id. Display only — `foreground_app` remains the key.
+    pub foreground_app_display: Option<String>,
     pub duration_ms: u64,
 }
 
@@ -322,8 +340,8 @@ pub fn log_dictation_with_hits(
         .context("starting batched dictation transaction")?;
     tx.execute(
         "INSERT INTO dictations
-            (ts, raw_text, cleaned_text, mode, language, foreground_app, duration_ms, word_count, fix_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts, raw_text, cleaned_text, mode, language, foreground_app, foreground_app_display, duration_ms, word_count, fix_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             ts,
             entry.raw_text,
@@ -331,6 +349,7 @@ pub fn log_dictation_with_hits(
             mode_str,
             entry.language,
             entry.foreground_app,
+            entry.foreground_app_display,
             entry.duration_ms as i64,
             word_count,
             fix_count,
@@ -384,6 +403,7 @@ pub struct DictationRow {
     pub mode: String,
     pub language: String,
     pub foreground_app: Option<String>,
+    pub foreground_app_display: Option<String>,
     pub duration_ms: i64,
     pub word_count: i64,
     pub fix_count: i64,
@@ -707,7 +727,7 @@ pub fn recent_dictations(db: &Db, limit: u32, offset: u32) -> Result<Vec<Dictati
     let conn = db.lock();
     let mut stmt = conn.prepare(
         "SELECT id, ts, raw_text, cleaned_text, mode, language, foreground_app,
-                duration_ms, word_count, fix_count
+                foreground_app_display, duration_ms, word_count, fix_count
          FROM dictations
          ORDER BY ts DESC
          LIMIT ? OFFSET ?",
@@ -722,9 +742,10 @@ pub fn recent_dictations(db: &Db, limit: u32, offset: u32) -> Result<Vec<Dictati
                 mode: r.get(4)?,
                 language: r.get(5)?,
                 foreground_app: r.get(6)?,
-                duration_ms: r.get(7)?,
-                word_count: r.get(8)?,
-                fix_count: r.get(9)?,
+                foreground_app_display: r.get(7)?,
+                duration_ms: r.get(8)?,
+                word_count: r.get(9)?,
+                fix_count: r.get(10)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

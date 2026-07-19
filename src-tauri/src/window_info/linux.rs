@@ -15,12 +15,13 @@
 //! which is well under the perceived-latency budget. If profiling later
 //! shows it as a hotspot, cache the connection in a Mutex<Option<...>>.
 
+use super::AppInfo;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, Window};
 
 const WM_CLASS_VALUE_BYTES: u32 = 1024;
 
-pub fn foreground_app() -> Option<String> {
+pub fn foreground_app() -> Option<AppInfo> {
     let (conn, screen_num) = x11rb::connect(None).ok()?;
     let root = conn.setup().roots.get(screen_num)?.root;
 
@@ -31,7 +32,13 @@ pub fn foreground_app() -> Option<String> {
     }
 
     let top_level = walk_to_top_level(&conn, focused, root)?;
-    read_wm_class(&conn, top_level)
+    // WM_CLASS is the id; no separate OS display name on X11 (a friendly name
+    // comes from the curated table). Wayland introspection would add `display`.
+    let class = read_wm_class(&conn, top_level)?;
+    Some(AppInfo {
+        id: class,
+        display: None,
+    })
 }
 
 pub fn foreground_hwnd() -> isize {

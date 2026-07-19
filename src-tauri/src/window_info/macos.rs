@@ -15,13 +15,22 @@
 //! so we don't bother caching ourselves. objc2-app-kit exposes
 //! these NSWorkspace methods as safe — no unsafe block needed.
 
+use super::AppInfo;
 use objc2_app_kit::NSWorkspace;
 
-pub fn foreground_app() -> Option<String> {
+pub fn foreground_app() -> Option<AppInfo> {
     let workspace = NSWorkspace::sharedWorkspace();
     let app = workspace.frontmostApplication()?;
+    // Bundle id is the stable matching key; localizedName ("Safari",
+    // "Antigravity") is the display name — so unmapped apps no longer surface
+    // the raw `com.appname.xyz`. localizedName can be None for some processes;
+    // callers fall back to the curated table / raw id in that case.
     let bundle_id = app.bundleIdentifier()?;
-    Some(bundle_id.to_string())
+    let display = app.localizedName().map(|n| n.to_string());
+    Some(AppInfo {
+        id: bundle_id.to_string(),
+        display,
+    })
 }
 
 pub fn foreground_hwnd() -> isize {
