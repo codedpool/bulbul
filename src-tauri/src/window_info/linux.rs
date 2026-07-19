@@ -37,20 +37,57 @@ fn x11_foreground_app() -> Option<AppInfo> {
     let (conn, screen_num) = x11rb::connect(None).ok()?;
     let root = conn.setup().roots.get(screen_num)?.root;
 
-    let focused = conn.get_input_focus().ok()?.reply().ok()?.focus;
-    // PointerRoot (1) and None (0) aren't real windows. Reject.
-    if focused == 0 || focused == 1 {
-        return None;
-    }
-
-    let top_level = walk_to_top_level(&conn, focused, root)?;
+    // Prefer _NET_ACTIVE_WINDOW: it points at the active *client* window, which
+    // owns WM_CLASS. `get_input_focus` + walk-to-top-level instead lands on the
+    // WM's reparenting *frame* for decorated windows, and the frame has no
+    // WM_CLASS — so external apps returned None while Bulbul's own borderless
+    // window (never reparented) was the only one that worked. Fall back to the
+    // focus walk for the rare WM that doesn't set _NET_ACTIVE_WINDOW.
+    let window = active_window(&conn, root).or_else(|| focused_top_level(&conn, root))?;
     // WM_CLASS is the id; no separate OS display name on X11 (a friendly name
     // comes from the curated table).
-    let class = read_wm_class(&conn, top_level)?;
+    let class = read_wm_class(&conn, window)?;
     Some(AppInfo {
         id: class,
         display: None,
     })
+}
+
+/// The active client window from the EWMH `_NET_ACTIVE_WINDOW` root property —
+/// the window that carries WM_CLASS (unlike the WM decoration frame). EWMH
+/// defines the property as type WINDOW.
+fn active_window<C: Connection>(conn: &C, root: Window) -> Option<Window> {
+    let atom = conn
+        .intern_atom(false, b"_NET_ACTIVE_WINDOW")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    if atom == 0 {
+        return None;
+    }
+    let reply = conn
+        .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
+        .ok()?
+        .reply()
+        .ok()?;
+    match reply.value32().and_then(|mut it| it.next()) {
+        // Some WMs report 0 (no active window) rather than omitting the prop.
+        Some(win) if win != 0 => Some(win),
+        _ => None,
+    }
+}
+
+/// Fallback: the WM-managed top-level derived from the input focus. Subject to
+/// the reparenting-frame limitation above, so it's only used when
+/// `_NET_ACTIVE_WINDOW` is unavailable.
+fn focused_top_level<C: Connection>(conn: &C, root: Window) -> Option<Window> {
+    let focused = conn.get_input_focus().ok()?.reply().ok()?.focus;
+    // PointerRoot (1) and None (0) aren't real windows.
+    if focused == 0 || focused == 1 {
+        return None;
+    }
+    walk_to_top_level(conn, focused, root)
 }
 
 pub fn foreground_hwnd() -> isize {
