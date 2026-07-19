@@ -176,6 +176,15 @@ body, html, #root {
   margin-top: 42px;
 }
 
+/* Windows/Linux: the custom titlebar (min/max/close controls) is a fixed
+   32px strip across the top. Push the content card below it so its top-right
+   corner doesn't ride up under the window controls. Mac (above) has its own
+   offset and its traffic lights sit on the left, so it never overlapped. */
+.platform-windows .content,
+.platform-linux .content {
+  margin-top: 40px;
+}
+
 /* ────────── Linux: opaque square window ──────────
    Unlike Mac (native chrome) and Windows (DWM rounds borderless
    windows), Linux has no reliable way to round a borderless window:
