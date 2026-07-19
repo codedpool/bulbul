@@ -117,6 +117,39 @@ try {
     }
     Write-Host ''
 }
+catch {
+    $msg = "$($_.Exception.Message)"
+    if ($msg -match 'virus or potentially unwanted software' -or
+        $msg -match 'Operation did not complete successfully') {
+        # Windows Defender heuristics (e.g. Trojan:Win32/Bearfoos.A!ml — an
+        # `!ml` machine-learning verdict, not a signature match) sometimes flag
+        # Bulbul as a false positive: it uses a global hotkey + keystroke
+        # injection to type dictated text into other apps, which on an unsigned
+        # binary can look like a keylogger. Replace the raw PowerShell stack
+        # trace with a clear, actionable explanation so a blocked user knows
+        # it's a false positive and how to recover — not that Bulbul is malware.
+        Write-Host ''
+        Write-Host '  Windows Defender blocked Bulbul - this is a FALSE POSITIVE.' -ForegroundColor Yellow
+        Write-Host '  ----------------------------------------------------------' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '  Bulbul is not malware. It types your dictated text into other apps' -ForegroundColor Gray
+        Write-Host '  (a global hotkey + keystroke injection), and because it is not yet' -ForegroundColor Gray
+        Write-Host "  code-signed, Defender's machine-learning heuristic can mistake that" -ForegroundColor Gray
+        Write-Host '  for a keylogger. The full source is public and auditable at:' -ForegroundColor Gray
+        Write-Host '    https://github.com/codedpool/bulbul' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  To install it:' -ForegroundColor Gray
+        Write-Host '    1. Open Windows Security > Virus & threat protection >' -ForegroundColor Gray
+        Write-Host '       Protection history, find the Bulbul entry, and choose' -ForegroundColor Gray
+        Write-Host '       Actions > Restore (or "Allow on device").' -ForegroundColor Gray
+        Write-Host "    2. Add a folder exclusion for:  $env:LOCALAPPDATA\Bulbul" -ForegroundColor White
+        Write-Host '       (Virus & threat protection > Manage settings > Exclusions).' -ForegroundColor Gray
+        Write-Host '    3. Re-run this installer.' -ForegroundColor Gray
+        Write-Host ''
+    } else {
+        throw
+    }
+}
 finally {
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
