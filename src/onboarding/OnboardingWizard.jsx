@@ -85,8 +85,8 @@ const HOTKEY_PRESETS = IS_MAC
     ? HOTKEY_PRESETS_LINUX
     : HOTKEY_PRESETS_DESKTOP;
 
-const VIDEO_URL = "https://www.youtube.com/watch?v=9VDbhptCzlU";
-const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/9VDbhptCzlU";
+const VIDEO_URL = "https://www.youtube.com/watch?v=lRo4r_b4twI";
+const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/lRo4r_b4twI";
 
 // Sample line deliberately seeded with "um", "uh", "like" so the cleanup
 // pass visibly removes them — the user sees Bulbul not just transcribe but
