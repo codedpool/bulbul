@@ -134,9 +134,10 @@ jobs:
 
   # Android APK, attached to the same draft release the desktop matrix
   # created. Runs after publish-tauri so the release exists to upload
-  # into. Debug-signed via the gradle fallback (the release keystore is
-  # not in the repo) — installs fine for sideload; Play uploads get
-  # re-signed by Play App Signing anyway.
+  # into. Release-signed with the Bulbul keystore when the ANDROID_KEYSTORE_*
+  # secrets are set (so public users get a stable signing identity and can
+  # auto-update across releases); falls back to debug signing if they're
+  # absent (e.g. on a fork) — still sideload-installable.
   publish-android:
     needs: publish-tauri
     runs-on: ubuntu-22.04
@@ -165,6 +166,35 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm install
+
+      - name: Restore Android release keystore (if configured)
+        # Recreates gen/android/keystore.properties (+ the .jks) from repo
+        # secrets so gradle picks the release signer over the debug fallback.
+        # No-ops when the secret is unset (forks/PRs) — the build then debug-
+        # signs, exactly as before. Requires repo secrets:
+        #   ANDROID_KEYSTORE_BASE64   base64 of bulbul-release.jks (base64 -w0)
+        #   ANDROID_KEYSTORE_PASSWORD  keystore (store) password
+        #   ANDROID_KEY_ALIAS          key alias
+        #   ANDROID_KEY_PASSWORD       key password
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 not set — APK will be debug-signed (fallback)."
+            exit 0
+          fi
+          KS="$RUNNER_TEMP/bulbul-release.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KS"
+          {
+            echo "storeFile=$KS"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > src-tauri/gen/android/keystore.properties
+          echo "Release keystore restored — APK will be release-signed."
 
       - name: Build APK (arm64)
         # tauri runs beforeBuildCommand (npm run build) itself, then the
