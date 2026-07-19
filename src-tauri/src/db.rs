@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS transforms (
     is_default      INTEGER NOT NULL DEFAULT 0,
     sort_order      INTEGER NOT NULL DEFAULT 0,
     hit_count       INTEGER NOT NULL DEFAULT 0,
-    created_at      INTEGER NOT NULL
+    created_at      INTEGER NOT NULL,
+    hotkey          TEXT
 );
 
 CREATE TABLE IF NOT EXISTS notes (
@@ -244,6 +245,8 @@ fn migrate(conn: &Connection) -> Result<()> {
         "ALTER TABLE dictations ADD COLUMN foreground_app_display TEXT",
         [],
     );
+    // Per-transform custom hotkey (null = use the position default Alt/⌘+N).
+    let _ = conn.execute("ALTER TABLE transforms ADD COLUMN hotkey TEXT", []);
     Ok(())
 }
 
@@ -1177,12 +1180,16 @@ pub struct Transform {
     pub sort_order: i64,
     pub hit_count: i64,
     pub created_at: i64,
+    /// User-set custom hotkey combo (e.g. "Ctrl+Shift+P"). None = use the
+    /// position default (Alt/⌘+N). Display only stores the raw combo; the
+    /// binding layer validates + falls back on the way to registration.
+    pub hotkey: Option<String>,
 }
 
 pub fn list_transforms(db: &Db) -> Result<Vec<Transform>> {
     let conn = db.lock();
     let mut stmt = conn.prepare(
-        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at
+        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at, hotkey
          FROM transforms
          ORDER BY sort_order ASC, id ASC",
     )?;
@@ -1197,6 +1204,7 @@ pub fn list_transforms(db: &Db) -> Result<Vec<Transform>> {
                 sort_order: r.get(5)?,
                 hit_count: r.get(6)?,
                 created_at: r.get(7)?,
+                hotkey: r.get(8)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1207,7 +1215,7 @@ pub fn list_transforms(db: &Db) -> Result<Vec<Transform>> {
 pub fn get_transform(db: &Db, id: i64) -> Result<Transform> {
     let conn = db.lock();
     let row = conn.query_row(
-        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at
+        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at, hotkey
          FROM transforms WHERE id = ?",
         [id],
         |r| {
@@ -1220,6 +1228,7 @@ pub fn get_transform(db: &Db, id: i64) -> Result<Transform> {
                 sort_order: r.get(5)?,
                 hit_count: r.get(6)?,
                 created_at: r.get(7)?,
+                hotkey: r.get(8)?,
             })
         },
     )?;
@@ -1234,7 +1243,7 @@ pub fn get_transform(db: &Db, id: i64) -> Result<Transform> {
 pub fn get_default_transform(db: &Db) -> Result<Transform> {
     let conn = db.lock();
     let row = conn.query_row(
-        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at
+        "SELECT id, name, description, system_prompt, is_default, sort_order, hit_count, created_at, hotkey
          FROM transforms
          ORDER BY is_default DESC, sort_order ASC
          LIMIT 1",
@@ -1249,6 +1258,7 @@ pub fn get_default_transform(db: &Db) -> Result<Transform> {
                 sort_order: r.get(5)?,
                 hit_count: r.get(6)?,
                 created_at: r.get(7)?,
+                hotkey: r.get(8)?,
             })
         },
     )?;
@@ -1260,6 +1270,7 @@ pub fn add_transform(
     name: &str,
     description: &str,
     system_prompt: &str,
+    hotkey: Option<&str>,
 ) -> Result<Transform> {
     let n = name.trim();
     let p = system_prompt.trim();
@@ -1269,6 +1280,7 @@ pub fn add_transform(
     if p.is_empty() {
         return Err(anyhow::anyhow!("system prompt is required"));
     }
+    let hk = normalize_hotkey(hotkey);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -1279,9 +1291,9 @@ pub fn add_transform(
         .unwrap_or(0);
     conn.execute(
         "INSERT INTO transforms
-            (name, description, system_prompt, is_default, sort_order, hit_count, created_at)
-         VALUES (?, ?, ?, 0, ?, 0, ?)",
-        params![n, description.trim(), p, next_order, now],
+            (name, description, system_prompt, is_default, sort_order, hit_count, created_at, hotkey)
+         VALUES (?, ?, ?, 0, ?, 0, ?, ?)",
+        params![n, description.trim(), p, next_order, now, hk],
     )?;
     let id = conn.last_insert_rowid();
     Ok(Transform {
@@ -1293,6 +1305,7 @@ pub fn add_transform(
         sort_order: next_order,
         hit_count: 0,
         created_at: now,
+        hotkey: hk,
     })
 }
 
@@ -1302,21 +1315,33 @@ pub fn update_transform(
     name: &str,
     description: &str,
     system_prompt: &str,
+    hotkey: Option<&str>,
 ) -> Result<()> {
     let n = name.trim();
     let p = system_prompt.trim();
     if n.is_empty() || p.is_empty() {
         return Err(anyhow::anyhow!("name and prompt are required"));
     }
+    let hk = normalize_hotkey(hotkey);
     let conn = db.lock();
     let affected = conn.execute(
-        "UPDATE transforms SET name = ?, description = ?, system_prompt = ? WHERE id = ?",
-        params![n, description.trim(), p, id],
+        "UPDATE transforms SET name = ?, description = ?, system_prompt = ?, hotkey = ? WHERE id = ?",
+        params![n, description.trim(), p, hk, id],
     )?;
     if affected == 0 {
         return Err(anyhow::anyhow!("no transform with id {id}"));
     }
     Ok(())
+}
+
+/// Normalize a user-supplied hotkey combo to what we persist: trimmed, or
+/// None when empty/blank (which means "use the position default"). Storage is
+/// lenient — the binding layer is what validates and falls back on register.
+fn normalize_hotkey(hotkey: Option<&str>) -> Option<String> {
+    hotkey
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
 }
 
 pub fn delete_transform(db: &Db, id: i64) -> Result<()> {
