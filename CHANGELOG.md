@@ -4,6 +4,28 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-07-19
+
+The public launch. Everything from the cross-platform 1.1.0, plus editable transform hotkeys, accurate per-app names on every desktop, reliable Android auto-updates, and a round of window-chrome and install polish.
+
+### Added
+
+- **Customizable transform hotkeys** — rebind any transform's slot shortcut from its editor: click **Hotkey**, press your combo, done. A custom binding takes over only when it's a valid, registrable combo; anything empty or unusable falls back to the default (`Alt`/`⌘`+`1`…`9`), so every slot always has a working key. (Desktop only — the recorder is hidden on Android, which runs transforms from the text-selection popup.)
+
+### Improved
+
+- **Accurate per-app names everywhere** — the dashboard history and per-app Style now show the real application name (VS Code, WhatsApp, Firefox, Slack…) instead of a raw executable name or bundle identifier. Windows reads the executable's product name, macOS uses the app's localized name, and Linux (X11) reads the active window's class. *(On a GNOME Wayland session, Linux app detection is unavailable — GNOME restricts window introspection for unprivileged apps — so per-app hints degrade gracefully there; an X11/Xorg session restores them.)*
+- **Reliable Android auto-updates** — release APKs are signed in CI with Bulbul's own keystore, giving a stable signing identity so the app updates itself across releases without a reinstall.
+- **Steadier macOS window chrome** — native **maximize** is back, the sidebar and theme toggles float to the corners and stay put across collapse and maximize, and the content clears the traffic-light buttons instead of overlapping them.
+- **Tidier desktop dashboard** — content sits in a rounded surface that clears the window controls on Windows and Linux, and reaching the top or bottom of a list no longer rubber-bands the whole window.
+- **Smoother Linux install on Fedora / openSUSE** — the one-line installer installs reliably on `dnf`-based distros.
+- **Clearer Windows first run** — if Windows Defender false-flags the unsigned installer, it now explains that it's a known false positive and how to allow it, instead of a bare error.
+- **Onboarding** — the "how to get a Groq API key" step plays a short video walkthrough.
+
+### Contributors
+
+- [@Pskuntal1248](https://github.com/Pskuntal1248) (Parth singh) — macOS window-chrome polish: re-enabling native maximize (main window only, keeping the scratchpad guarded), relocating the sidebar and theme toggles to floating corner buttons that survive collapse and maximize, native fullscreen detection, and scroll-bounce containment. Verified on real Mac hardware. ([#3](https://github.com/codedpool/bulbul/pull/3))
+
 ## [1.1.0] — 2026-07-18
 
 One codebase, four platforms: this release brings Bulbul to **macOS**, **Linux**, and **Android**, alongside the existing Windows app — with a round of cross-platform audio-quality and Linux polish on top.
