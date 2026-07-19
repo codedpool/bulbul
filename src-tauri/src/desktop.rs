@@ -937,7 +937,15 @@ fn get_recent_dictations(
     offset: u32,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<db::DictationRow>, String> {
-    db::recent_dictations(&state.db, limit, offset).map_err(|e| format!("{e:#}"))
+    let mut rows = db::recent_dictations(&state.db, limit, offset).map_err(|e| format!("{e:#}"))?;
+    // Resolve the stored raw app identifier (Windows exe stem, macOS bundle ID,
+    // Linux WM_CLASS) to a human-readable name for display. The DB keeps the raw
+    // value — corrections and per-app Style key on it — so we map only on the
+    // way out to the UI.
+    for row in &mut rows {
+        row.foreground_app = row.foreground_app.as_deref().map(config::friendly_app_name);
+    }
+    Ok(rows)
 }
 
 #[tauri::command]
@@ -948,7 +956,11 @@ fn get_insights_usage(state: tauri::State<'_, AppState>) -> Result<db::UsageStat
 #[tauri::command]
 fn get_voice_stats(state: tauri::State<'_, AppState>) -> Result<db::VoiceStats, String> {
     let has_key = state.config.lock().has_api_key();
-    db::voice_stats(&state.db, has_key).map_err(|e| format!("{e:#}"))
+    let mut stats = db::voice_stats(&state.db, has_key).map_err(|e| format!("{e:#}"))?;
+    // Same raw→friendly resolution as get_recent_dictations: show the readable
+    // app name in the "peak app" stat rather than the raw exe/bundle-id/WM_CLASS.
+    stats.peak_app = stats.peak_app.as_deref().map(config::friendly_app_name);
+    Ok(stats)
 }
 
 /// Gather stats + samples, ask Groq for the two narrative blurbs, and persist
