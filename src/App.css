@@ -2884,6 +2884,36 @@ button.small {
   text-decoration: none;
 }
 
+/* Custom-hotkey recorder in the transform editor. */
+.hotkey-recorder {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.hotkey-record-btn {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--fill);
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.hotkey-record-btn:hover {
+  border-color: var(--accent);
+}
+
+.hotkey-record-btn.recording {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: rgba(94, 200, 192, 0.08);
+}
+
 .default-pill {
   font-size: 10px;
   font-weight: 600;

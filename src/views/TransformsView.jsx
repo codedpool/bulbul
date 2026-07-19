@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import FeatureHero from "../components/FeatureHero.jsx";
 import HowToCard from "../components/HowToCard.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
-import { IS_MAC, IS_ANDROID } from "../platform.js";
+import { IS_MAC, IS_ANDROID, META_KEY_NAME } from "../platform.js";
 
 const TRANSFORMS_HERO_SAMPLES = [
   { trigger: "Polish", expansion: "Fix grammar, tighten flow, keep meaning." },
@@ -45,12 +45,14 @@ export default function TransformsView() {
         name: payload.name,
         description: payload.description,
         systemPrompt: payload.system_prompt,
+        hotkey: payload.hotkey ?? null,
       });
     } else {
       await invoke("add_transform", {
         name: payload.name,
         description: payload.description,
         systemPrompt: payload.system_prompt,
+        hotkey: payload.hotkey ?? null,
       });
     }
     setEditing(null);
@@ -335,6 +337,7 @@ function TransformEditor({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial.name || "");
   const [description, setDescription] = useState(initial.description || "");
   const [prompt, setPrompt] = useState(initial.system_prompt || "");
+  const [hotkey, setHotkey] = useState(initial.hotkey || null);
   const [error, setError] = useState("");
 
   async function submit() {
@@ -343,7 +346,7 @@ function TransformEditor({ initial, onSave, onCancel }) {
     if (!n) { setError("Name is required."); return; }
     if (!p) { setError("System prompt is required."); return; }
     try {
-      await onSave({ id: initial.id, name: n, description: description.trim(), system_prompt: p });
+      await onSave({ id: initial.id, name: n, description: description.trim(), system_prompt: p, hotkey });
     } catch (e) {
       setError(String(e));
     }
@@ -389,6 +392,10 @@ function TransformEditor({ initial, onSave, onCancel }) {
           rows={8}
         />
       </div>
+      <div className="snippet-form-row">
+        <label>Hotkey <span className="muted small">(optional)</span></label>
+        <HotkeyRecorder value={hotkey} onChange={setHotkey} />
+      </div>
       <div className="dict-form-actions">
         <span className="muted small">Tip: <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to save</span>
         <div className="spacer" />
@@ -400,6 +407,134 @@ function TransformEditor({ initial, onSave, onCancel }) {
       {error && <p className="err">{error}</p>}
     </div>
   );
+}
+
+// Compact key-combo recorder for a transform's custom hotkey. Records a
+// regular combo (>=1 modifier + a key); a bare key is rejected so it can't
+// hijack normal typing. Emits the same "Ctrl+Shift+P" string the backend
+// parses; onChange(null) clears back to the default slot key. Fail-safe: even
+// if a recorded combo is odd, the backend falls back to the default binding.
+function HotkeyRecorder({ value, onChange }) {
+  const [recording, setRecording] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!recording) return;
+    let peak = { ctrl: false, shift: false, alt: false, meta: false };
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault(); e.stopImmediatePropagation();
+        setRecording(false); setErr("");
+        return;
+      }
+      e.preventDefault(); e.stopImmediatePropagation();
+      peak = {
+        ctrl: e.ctrlKey || peak.ctrl,
+        shift: e.shiftKey || peak.shift,
+        alt: e.altKey || peak.alt,
+        meta: e.metaKey || peak.meta,
+      };
+      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return; // wait for the key
+      const k = domKeyToName(e.code);
+      if (!k) {
+        setErr(`"${e.key || e.code}" can't be used — try a letter, digit, or function key.`);
+        return;
+      }
+      if (!(peak.ctrl || peak.shift || peak.alt || peak.meta)) {
+        setErr("Add a modifier (Ctrl / Alt / Shift / ⌘) so it doesn't clash with normal typing.");
+        return;
+      }
+      const parts = [];
+      if (peak.ctrl) parts.push("Ctrl");
+      if (peak.shift) parts.push("Shift");
+      if (peak.alt) parts.push("Alt");
+      if (peak.meta) parts.push("Win");
+      parts.push(k);
+      onChange(parts.join("+"));
+      setRecording(false);
+      setErr("");
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [recording, onChange]);
+
+  return (
+    <div className="hotkey-recorder">
+      {recording ? (
+        <button
+          type="button"
+          className="hotkey-record-btn recording"
+          onClick={() => { setRecording(false); setErr(""); }}
+        >
+          Press a combo… <span className="muted small">Esc to cancel</span>
+        </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="hotkey-record-btn"
+            onClick={() => { setErr(""); setRecording(true); }}
+          >
+            {value ? formatComboDisplay(value) : "Set custom hotkey"}
+          </button>
+          {value ? (
+            <button type="button" className="text-btn small" onClick={() => onChange(null)}>
+              Reset to default
+            </button>
+          ) : (
+            <span className="muted small">Using the default slot hotkey.</span>
+          )}
+        </>
+      )}
+      {err && <p className="err small">{err}</p>}
+    </div>
+  );
+}
+
+// Render a stored combo string ("Ctrl+Shift+P") for display, mapping the
+// meta modifier to the platform glyph/name (⌘ on macOS, Super on Linux).
+function formatComboDisplay(combo) {
+  return combo
+    .split("+")
+    .map((p) => (p === "Win" ? META_KEY_NAME : p))
+    .join(" + ");
+}
+
+// DOM KeyboardEvent.code → the key name the backend's ParsedHotkey::parse
+// expects. Mirrors SettingsView.jsx's domKeyToName.
+function domKeyToName(code) {
+  if (!code) return null;
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (/^F\d+$/.test(code)) return code;
+  switch (code) {
+    case "Space": return "Space";
+    case "Enter": return "Enter";
+    case "Backspace": return "Backspace";
+    case "Tab": return "Tab";
+    case "ArrowUp": return "Up";
+    case "ArrowDown": return "Down";
+    case "ArrowLeft": return "Left";
+    case "ArrowRight": return "Right";
+    case "Insert": return "Insert";
+    case "Delete": return "Delete";
+    case "Home": return "Home";
+    case "End": return "End";
+    case "PageUp": return "PageUp";
+    case "PageDown": return "PageDown";
+    case "Semicolon": return ";";
+    case "Quote": return "'";
+    case "Comma": return ",";
+    case "Period": return ".";
+    case "Slash": return "/";
+    case "Backslash": return "\\";
+    case "BracketLeft": return "[";
+    case "BracketRight": return "]";
+    case "Minus": return "-";
+    case "Equal": return "=";
+    case "Backquote": return "`";
+    default: return null;
+  }
 }
 
 function PlusIcon() {

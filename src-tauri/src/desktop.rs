@@ -832,7 +832,12 @@ fn resolve_slot_hotkey(custom: Option<&str>, slot: u8) -> ParsedHotkey {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(ParsedHotkey::parse)
-        .filter(|p| hotkey::parsed_to_shortcut(p).is_some())
+        // Registrable AND has at least one modifier — a bare-key global hotkey
+        // ("P") would hijack that key in every app, so we reject it and keep
+        // the default rather than break normal typing.
+        .filter(|p| {
+            hotkey::parsed_to_shortcut(p).is_some() && (p.ctrl || p.shift || p.alt || p.meta)
+        })
         .unwrap_or_else(|| default_slot_hotkey(slot))
 }
 
@@ -3431,5 +3436,6 @@ mod tests {
         assert!(same(&resolve_slot_hotkey(Some("   "), 2), &def), "blank -> default");
         assert!(same(&resolve_slot_hotkey(Some("zzzz-not-a-key"), 2), &def), "unknown key -> default");
         assert!(same(&resolve_slot_hotkey(Some("Ctrl+Alt"), 2), &def), "modifier-only -> default");
+        assert!(same(&resolve_slot_hotkey(Some("P"), 2), &def), "bare key (no modifier) -> default");
     }
 }
