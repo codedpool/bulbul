@@ -547,7 +547,6 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
   );
   const [keyError, setKeyError] = useState("");
   const [showKey, setShowKey] = useState(false);
-  const [videoOpen, setVideoOpen] = useState(false);
 
   async function validateAndSave(value) {
     const v = (value ?? keyValue).trim();
@@ -634,32 +633,6 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         )}
       </div>
 
-      <div className="onb-video-block">
-        {!videoOpen ? (
-          <button className="onb-video-toggle" onClick={() => setVideoOpen(true)} type="button">
-            Don't have a key? Watch the 60-second walkthrough →
-          </button>
-        ) : (
-          <>
-            <div className="onb-video-frame">
-              <iframe
-                src={VIDEO_EMBED}
-                title="How to get a Groq API key"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
-            </div>
-            <button
-              className="onb-video-link"
-              onClick={() => openUrl(VIDEO_URL)}
-              type="button"
-            >
-              Open on YouTube →
-            </button>
-          </>
-        )}
-      </div>
-
       <div className="onb-theme-block">
         <div className="onb-theme-label">Appearance</div>
         <div className="segmented onb-theme-seg">
@@ -676,6 +649,30 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
               {t.label}
             </button>
           ))}
+        </div>
+      </div>
+
+      <div className="onb-video-block">
+        <div className="onb-video-frame">
+          <iframe
+            src={VIDEO_EMBED}
+            title="How to get a Groq API key"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        </div>
+        <div className="onb-video-side">
+          <div className="onb-video-caption">Don't have a key yet?</div>
+          <p className="onb-video-desc">
+            A 60-second walkthrough for grabbing a free Groq API key.
+          </p>
+          <button
+            className="onb-video-link"
+            onClick={() => openUrl(VIDEO_URL)}
+            type="button"
+          >
+            Open on YouTube →
+          </button>
         </div>
       </div>
 

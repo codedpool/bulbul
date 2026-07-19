@@ -379,36 +379,27 @@
 .onb-muted { color: var(--text-faint); }
 
 /* ─────────── Video block ─────────── */
+/* Always-embedded, compact: a small player on the left with its caption
+   beside it, so the whole API-key step still fits the window without scroll. */
 .onb-video-block {
-  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--fill);
 }
 
-.onb-video-toggle {
-  background: transparent;
-  border: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  padding: 0;
-  text-align: left;
-  width: 100%;
-}
-
-.onb-video-toggle:hover { color: #5ec8c0; }
-
 .onb-video-frame {
   position: relative;
-  width: 100%;
-  max-width: 720px;
+  flex-shrink: 0;
+  width: 264px;
+  max-width: 46%;
   aspect-ratio: 16 / 9;
   border-radius: 10px;
   overflow: hidden;
   background: #000;
-  margin-bottom: 10px;
 }
 
 .onb-video-frame iframe {
@@ -419,17 +410,39 @@
   border: 0;
 }
 
+.onb-video-side {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.onb-video-caption {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onb-video-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 .onb-video-link {
+  align-self: flex-start;
+  margin-top: 2px;
   background: transparent;
   border: none;
-  color: var(--text-muted);
+  color: #5ec8c0;
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   cursor: pointer;
   padding: 0;
 }
 
-.onb-video-link:hover { color: #5ec8c0; }
+.onb-video-link:hover { text-decoration: underline; }
 
 /* ─────────── Appearance block (API key step) ─────────── */
 .onb-theme-block {
@@ -465,6 +478,17 @@ html.platform-android .onb-theme-block {
 html.platform-android .onb-theme-seg {
   width: 100%;
   min-width: 0;
+}
+
+/* Phone: the side-by-side player + caption is too tight — stack them and let
+   the player span the card width. */
+html.platform-android .onb-video-block {
+  flex-direction: column;
+  align-items: stretch;
+}
+html.platform-android .onb-video-frame {
+  width: 100%;
+  max-width: 100%;
 }
 
 /* ─────────── Android wizard layout ─────────── */
