@@ -1,12 +1,15 @@
+use super::AppInfo;
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
-/// Return the executable name (without path) of the foreground window's
-/// process, e.g. "Code.exe", "slack.exe". Returns None on any failure.
-pub fn foreground_app() -> Option<String> {
+/// Return the foreground window's process as an `AppInfo` whose `id` is the
+/// executable name (without path), e.g. "Code.exe", "slack.exe". `display` is
+/// None here — the exe stem is already reasonably readable, and resolving the
+/// FileVersionInfo product name is a later refinement. Returns None on failure.
+pub fn foreground_app() -> Option<AppInfo> {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.is_invalid() {
@@ -31,7 +34,11 @@ pub fn foreground_app() -> Option<String> {
         res.ok()?;
 
         let full = String::from_utf16_lossy(&buf[..size as usize]);
-        full.rsplit(['\\', '/']).next().map(|s| s.to_string())
+        let name = full.rsplit(['\\', '/']).next()?.to_string();
+        Some(AppInfo {
+            id: name,
+            display: None,
+        })
     }
 }
 
