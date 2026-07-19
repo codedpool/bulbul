@@ -16,20 +16,21 @@
 //! shows it as a hotspot, cache the connection in a Mutex<Option<...>>.
 
 use super::AppInfo;
-use std::process::{Command, Stdio};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, Window};
 
 const WM_CLASS_VALUE_BYTES: u32 = 1024;
 
+// X11 / XWayland only. A GNOME Wayland fallback via
+// `org.gnome.Shell.Introspect.GetWindows` was tried and removed: GNOME refuses
+// it for unprivileged clients — `AccessDenied: GetWindows is not allowed`
+// (confirmed on Fedora 44 + Ubuntu GNOME) — and Wayland exposes no other
+// unprivileged API for the focused app. So per-app detection is unavailable for
+// native-Wayland windows on GNOME; the venue/Style hint degrades gracefully.
+// An X11/Xorg session (or an XWayland app) restores it. A wlroots path
+// (wlr-foreign-toplevel) could cover sway/Hyprland later, but not GNOME.
 pub fn foreground_app() -> Option<AppInfo> {
-    // X11 path first — covers native X11 desktops and XWayland-backed apps.
-    if let Some(info) = x11_foreground_app() {
-        return Some(info);
-    }
-    // Pure Wayland (e.g. GNOME on Fedora): X11 focus is empty for native
-    // Wayland windows, so ask GNOME Shell for the focused window's app-id.
-    gnome_wayland_foreground_app()
+    x11_foreground_app()
 }
 
 fn x11_foreground_app() -> Option<AppInfo> {
@@ -48,43 +49,6 @@ fn x11_foreground_app() -> Option<AppInfo> {
     let class = read_wm_class(&conn, top_level)?;
     Some(AppInfo {
         id: class,
-        display: None,
-    })
-}
-
-/// GNOME/Wayland fallback via the shell's Introspect DBus API (through gdbus,
-/// same tool `linux_env` uses). Returns the focused window's app-id (e.g.
-/// `org.mozilla.firefox`), which maps through the curated table like a
-/// WM_CLASS. Returns None when we're not on Wayland, gdbus is missing, or GNOME
-/// denies/rejects the call — the pipeline then degrades to no venue hint,
-/// exactly as it did before this fallback existed (never worse than today).
-fn gnome_wayland_foreground_app() -> Option<AppInfo> {
-    // No point spawning gdbus on a plain X11 session where the path above
-    // already had its say.
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        return None;
-    }
-    let out = Command::new("gdbus")
-        .args([
-            "call",
-            "--session",
-            "--dest",
-            "org.gnome.Shell",
-            "--object-path",
-            "/org/gnome/Shell/Introspect",
-            "--method",
-            "org.gnome.Shell.Introspect.GetWindows",
-        ])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let app_id = super::focused_app_id_from_gnome_introspect(&text)?;
-    Some(AppInfo {
-        id: app_id,
         display: None,
     })
 }
