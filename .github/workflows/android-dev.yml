@@ -64,10 +64,36 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Build APK (arm64, release, debug-signed)
+      - name: Restore Android release keystore (if configured)
+        # Same as release.yml: sign dev builds with the release key too (when
+        # the secrets are set), so a dev APK and a release APK share one signing
+        # identity and install over each other without an uninstall. No-ops if
+        # the secret is absent (debug-signed fallback).
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 not set — APK will be debug-signed (fallback)."
+            exit 0
+          fi
+          KS="$RUNNER_TEMP/bulbul-release.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KS"
+          {
+            echo "storeFile=$KS"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > src-tauri/gen/android/keystore.properties
+          echo "Release keystore restored — APK will be release-signed."
+
+      - name: Build APK (arm64, release)
         # tauri runs beforeBuildCommand (npm run build) itself, then the
         # Rust .so build + gradle assemble for the existing gen/android
-        # project.
+        # project. Release-signed when the keystore secret is set (above),
+        # debug-signed otherwise.
         run: npx tauri android build --apk --target aarch64
 
       - name: Locate + rename APK
