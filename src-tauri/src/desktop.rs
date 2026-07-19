@@ -821,6 +821,47 @@ fn save_config(
 /// Failures (e.g. another app owns the combo) are reported per-slot
 /// via AppState.transform_slot_statuses, which the frontend reads to
 /// show "unavailable" chips.
+/// Resolve the effective hotkey for transform slot `n`: the user's custom
+/// combo when it parses to a registrable shortcut, else the position default.
+///
+/// This is the fail-safe: anything empty/invalid/unrecognised (or a
+/// modifier-only chord, which slots don't support) falls back to the default,
+/// so a bad custom binding can never leave a transform without a working key.
+fn resolve_slot_hotkey(custom: Option<&str>, slot: u8) -> ParsedHotkey {
+    custom
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ParsedHotkey::parse)
+        .filter(|p| hotkey::parsed_to_shortcut(p).is_some())
+        .unwrap_or_else(|| default_slot_hotkey(slot))
+}
+
+/// The default hotkey for transform slot `n` (1..=9): ⌘+n on macOS, Alt+n
+/// elsewhere. Used when a transform has no valid custom hotkey.
+fn default_slot_hotkey(slot: u8) -> ParsedHotkey {
+    let key = ((b'0' + slot) as char).to_string();
+    #[cfg(target_os = "macos")]
+    {
+        ParsedHotkey {
+            ctrl: false,
+            shift: false,
+            alt: false,
+            meta: true,
+            key: Some(key),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ParsedHotkey {
+            ctrl: false,
+            shift: false,
+            alt: true,
+            meta: false,
+            key: Some(key),
+        }
+    }
+}
+
 fn refresh_transform_bindings(app: &AppHandle, state: &AppState) {
     let transforms = match db::list_transforms(&state.db) {
         Ok(t) => t,
@@ -835,24 +876,7 @@ fn refresh_transform_bindings(app: &AppHandle, state: &AppState) {
         .enumerate()
         .map(|(idx, t)| {
             let slot = (idx + 1) as u8;
-            let key = ((b'0' + slot) as char).to_string();
-            #[cfg(target_os = "macos")]
-            let hk = ParsedHotkey {
-                ctrl: false,
-                shift: false,
-                alt: false,
-                meta: true,
-                key: Some(key),
-            };
-            #[cfg(not(target_os = "macos"))]
-            let hk = ParsedHotkey {
-                ctrl: false,
-                shift: false,
-                alt: true,
-                meta: false,
-                key: Some(key),
-            };
-            (t.id, hk)
+            (t.id, resolve_slot_hotkey(t.hotkey.as_deref(), slot))
         })
         .collect();
     state.hotkeys.lock().transform_bindings = bindings;
@@ -1168,10 +1192,11 @@ fn add_transform(
     name: String,
     description: String,
     system_prompt: String,
+    hotkey: Option<String>,
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<db::Transform, String> {
-    let out = db::add_transform(&state.db, &name, &description, &system_prompt)
+    let out = db::add_transform(&state.db, &name, &description, &system_prompt, hotkey.as_deref())
         .map_err(|e| format!("{e:#}"))?;
     refresh_transform_bindings(&app, &state);
     Ok(out)
@@ -1183,10 +1208,11 @@ fn update_transform(
     name: String,
     description: String,
     system_prompt: String,
+    hotkey: Option<String>,
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    db::update_transform(&state.db, id, &name, &description, &system_prompt)
+    db::update_transform(&state.db, id, &name, &description, &system_prompt, hotkey.as_deref())
         .map_err(|e| format!("{e:#}"))?;
     refresh_transform_bindings(&app, &state);
     Ok(())
@@ -3379,4 +3405,31 @@ fn track_dictation_failed(app: &AppHandle, category: &str, mode: &CleanupMode) {
             "mode": mode.as_str(),
         }),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_slot_hotkey, resolve_slot_hotkey};
+    use crate::hotkey::{parsed_to_shortcut, ParsedHotkey};
+
+    fn same(a: &ParsedHotkey, b: &ParsedHotkey) -> bool {
+        a.ctrl == b.ctrl && a.shift == b.shift && a.alt == b.alt && a.meta == b.meta && a.key == b.key
+    }
+
+    #[test]
+    fn valid_custom_hotkey_is_used_over_the_default() {
+        let hk = resolve_slot_hotkey(Some("Ctrl+Shift+P"), 3);
+        assert!(parsed_to_shortcut(&hk).is_some(), "custom combo should be registrable");
+        assert!(hk.ctrl && hk.shift);
+        assert!(!same(&hk, &default_slot_hotkey(3)), "should not fall back to the default");
+    }
+
+    #[test]
+    fn invalid_or_missing_custom_falls_back_to_the_slot_default() {
+        let def = default_slot_hotkey(2);
+        assert!(same(&resolve_slot_hotkey(None, 2), &def), "unset -> default");
+        assert!(same(&resolve_slot_hotkey(Some("   "), 2), &def), "blank -> default");
+        assert!(same(&resolve_slot_hotkey(Some("zzzz-not-a-key"), 2), &def), "unknown key -> default");
+        assert!(same(&resolve_slot_hotkey(Some("Ctrl+Alt"), 2), &def), "modifier-only -> default");
+    }
 }
