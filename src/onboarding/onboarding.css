@@ -447,6 +447,21 @@
 
 .onb-video-link:hover { text-decoration: underline; }
 
+/* Groq data disclaimer on the API-key step. Informational, not dismissable —
+   points users at Groq's own policy rather than making promises. */
+.onb-groq-privacy {
+  margin: -4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+.onb-groq-privacy a {
+  color: #5ec8c0;
+  text-decoration: none;
+  border-bottom: 1px dotted #5ec8c0;
+}
+
 /* ─────────── Appearance block (API key step) ─────────── */
 .onb-theme-block {
   display: flex;
@@ -738,6 +753,46 @@ html.platform-android .onb-actions .onb-btn {
   border: 1px solid var(--border);
   min-width: 92px;
   text-align: center;
+}
+
+/* Windows-only disclaimer on the hotkey step: security software can block the
+   modifier-only chords, so point users at Ctrl+Shift+Space. */
+.onb-hotkey-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 13px;
+  border-radius: 10px;
+  background: var(--fill);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.onb-hotkey-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #5ec8c0;
+}
+
+.onb-hotkey-note p {
+  margin: 0;
+}
+
+.onb-hotkey-note strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.onb-hotkey-note code {
+  background: var(--field);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 .onb-conflict-hint {
