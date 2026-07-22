@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
 import { applyTheme } from "../theme.js";
-import { IS_ANDROID, IS_LINUX, IS_MAC, META_KEY_NAME } from "../platform.js";
+import { IS_ANDROID, IS_LINUX, IS_MAC, IS_WINDOWS, META_KEY_NAME } from "../platform.js";
 import "./onboarding.css";
 
 // The stored hotkey VALUES are platform-independent — Bulbul's parser maps
@@ -633,6 +633,22 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         )}
       </div>
 
+      <p className="onb-groq-privacy">
+        Bulbul sends your audio &amp; text to Groq (with your own key) to
+        transcribe and clean it. Groq's docs say API data isn't stored or used
+        for training by default —{" "}
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            openUrl("https://groq.com/privacy-policy");
+          }}
+        >
+          always check Groq's latest privacy policy
+        </a>
+        .
+      </p>
+
       <div className="onb-theme-block">
         <div className="onb-theme-label">Appearance</div>
         <div className="segmented onb-theme-seg">
@@ -1189,6 +1205,21 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
         <p className="onb-sub">Hold the keys to record. Release to transcribe and paste.</p>
       </header>
 
+      {IS_WINDOWS && (
+        <div className="onb-hotkey-note" role="note">
+          <InfoIcon />
+          <p>
+            <strong>Some shortcuts can be blocked on your PC.</strong> Security
+            software — antivirus, corporate security, or game anti-cheat —
+            sometimes blocks modifier-only shortcuts like{" "}
+            <code>{formatComboForDisplay("Ctrl+Win")}</code>. It's specific to your
+            machine, not a Bulbul bug. If your shortcut doesn't respond, pick{" "}
+            <code>{formatComboForDisplay("Ctrl+Shift+Space")}</code> — it uses a
+            different method that works everywhere.
+          </p>
+        </div>
+      )}
+
       <div className="onb-hotkey-grid">
         <div className="onb-hotkey-list">
           {HOTKEY_PRESETS.map((p) => (
@@ -1507,6 +1538,15 @@ function MoonIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 16v-4M12 8h.01" />
     </svg>
   );
 }

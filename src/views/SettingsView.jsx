@@ -777,12 +777,28 @@ function PaneStartup({ config, updateConfig, autostart, onAutostartChange, autos
 
 function PanePrivacy({ config, updateConfig }) {
   return (
-    <ToggleRow
-      title="Share anonymous usage stats"
-      hint="Counts, durations, error categories, mode/language. Never your transcripts, audio, dictionary, or which app you're typing into. On by default — flip off if you'd rather not share."
-      checked={!!config.telemetry_enabled}
-      onChange={(v) => updateConfig({ ...config, telemetry_enabled: v })}
-    />
+    <>
+      <ToggleRow
+        title="Share anonymous usage stats"
+        hint="Counts, durations, error categories, mode/language. Never your transcripts, audio, dictionary, or which app you're typing into. On by default — flip off if you'd rather not share."
+        checked={!!config.telemetry_enabled}
+        onChange={(v) => updateConfig({ ...config, telemetry_enabled: v })}
+      />
+
+      {/* Informational — NOT a toggle. Bulbul can't work without sending audio
+          to Groq, so this is here to read, not to switch off. */}
+      <Row
+        title="Data sent to Groq"
+        hint="To transcribe and clean up your dictation, Bulbul sends your audio and text to Groq using your own API key. Groq's docs say API data isn't retained or used for training by default — only brief troubleshooting/abuse logs (up to 30 days), which you can disable with Zero Data Retention in your Groq account. Policies can change, so always check Groq's latest privacy policy."
+        stack
+      >
+        <div className="row">
+          <button onClick={() => openUrl("https://groq.com/privacy-policy")}>
+            Groq privacy policy →
+          </button>
+        </div>
+      </Row>
+    </>
   );
 }
 
