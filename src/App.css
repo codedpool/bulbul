@@ -1591,20 +1591,21 @@ kbd {
   row-gap: 3px;
 }
 
-/* Heatmap fills its tile dynamically: the heatmap absorbs whatever
-   vertical space the stretched panel gives it, columns split that
-   space equally, and individual cells split each column's height
-   equally. The result is square-ish cells that scale up to fill the
-   panel rather than a fixed 12-18px grid sitting in a sea of white.
-   max-width on the column keeps the cells from ballooning to 50px
-   each if the panel happens to be very wide. */
+/* Heatmap sizing: cells are squared off their WIDTH via aspect-ratio, not by
+   splitting the panel's height with flex. The old approach (flex:1 cells in a
+   flex column, inheriting a height down a grid → flex → nested-flex chain) only
+   works on Chromium (Windows WebView2). WebKit (macOS WKWebView) and WebKitGTK
+   (Linux) treat that nested flex-basis:0 height as indefinite, so the cells
+   collapse or missize — the "broken heatmap" on Mac/Linux. Width IS definite
+   (columns flex to fill the panel, capped by max-width), so squaring off width
+   renders identically on every engine. The column then takes its natural height
+   from its 7 cells; the legend's margin-top:auto pins it to the panel bottom. */
 .insights-page .heatmap {
-  flex: 1 1 0;
-  align-self: stretch;
   display: flex;
   gap: 3px;
-  align-items: stretch;
+  align-items: flex-start;
   justify-content: center;
+  width: 100%;
   min-height: 0;
 }
 
@@ -1614,16 +1615,16 @@ kbd {
   gap: 3px;
   flex: 1 1 0;
   min-width: 0;
-  min-height: 0;
   max-width: 26px;
 }
 
 .insights-page .heatmap-cell {
-  flex: 1 1 0;
-  width: auto;
-  height: auto;
-  min-width: 0;
-  min-height: 0;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  /* Floor so the grid stays visible even on a WebKit old enough to lack
+     aspect-ratio (pre-Safari 15) — cells render as a small square instead of
+     collapsing to a 0px line. Columns are >= this wide, so it never distorts. */
+  min-height: 9px;
   border-radius: 3px;
 }
 
