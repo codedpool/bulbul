@@ -7,6 +7,17 @@ use std::time::Duration;
 
 const BASE_URL: &str = "https://api.groq.com/openai/v1";
 
+/// Cerebras Cloud — OpenAI-compatible. Used only for the cleanup /
+/// text-conversion stage when the user has added a Cerebras key (see
+/// [chat_endpoint]); Whisper STT always stays on Groq, which is why the Groq
+/// key is still required even with Cerebras configured.
+const CEREBRAS_BASE_URL: &str = "https://api.cerebras.ai/v1";
+
+/// Fallback Cerebras model when a Cerebras key is set but no model has been
+/// picked yet. gpt-oss is fast on Cerebras and keeps its reasoning out of the
+/// message content, so it won't trip the cleanup expansion guard.
+pub const DEFAULT_CEREBRAS_MODEL: &str = "gpt-oss-120b";
+
 /// One reqwest Client for the whole app lifetime — reusing TCP+TLS sessions
 /// across STT, cleanup, transform and validate calls. Doesn't change what we
 /// send to Groq (request count, prompt size, token billing are all identical
@@ -45,7 +56,7 @@ async fn send_with_retry(
         let status = resp.status();
         if (status.as_u16() == 429 || status.is_server_error()) && attempt < MAX_ATTEMPTS {
             let wait = retry_wait_secs(&resp, attempt);
-            tracing::warn!("Groq {label}: {status}; retry {attempt}/{MAX_ATTEMPTS} after {wait}s");
+            tracing::warn!("{label}: {status}; retry {attempt}/{MAX_ATTEMPTS} after {wait}s");
             if let Some(n) = notify {
                 n(wait);
             }
@@ -58,11 +69,11 @@ async fn send_with_retry(
             .with_context(|| format!("reading {label} response body"))?;
         if status.as_u16() == 429 {
             return Err(anyhow!(
-                "Groq is rate-limited right now. Wait a few seconds and try again."
+                "The API is rate-limited right now. Wait a few seconds and try again."
             ));
         }
         if !status.is_success() {
-            return Err(anyhow!("Groq {label} {status}: {body}"));
+            return Err(anyhow!("{label} request failed ({status}): {body}"));
         }
         return Ok(body);
     }
@@ -86,6 +97,44 @@ fn retry_wait_secs(resp: &reqwest::Response, attempt: u32) -> u64 {
 /// Exponential backoff: attempt 1 → 2s, 2 → 4s, 3 → 8s, …, capped at 30s.
 fn backoff_secs(attempt: u32) -> u64 {
     (1u64 << attempt.min(20)).clamp(2, 30)
+}
+
+/// Resolve which provider + model handles a chat/cleanup completion. Whisper
+/// STT always stays on Groq (Cerebras has no transcription endpoint), so only
+/// the text stages — cleanup, transform, voice profile — consult this. When
+/// the user has added a Cerebras key the raw transcript is cleaned on Cerebras
+/// with their chosen model; otherwise it stays on Groq with `chat_model`.
+/// Returns (base_url, bearer_key, model_id).
+pub fn chat_endpoint(cfg: &Config) -> (&'static str, &str, &str) {
+    if cfg.has_cerebras_key() {
+        let model = cfg.cerebras_model.trim();
+        let model = if model.is_empty() {
+            DEFAULT_CEREBRAS_MODEL
+        } else {
+            model
+        };
+        (CEREBRAS_BASE_URL, cfg.cerebras_api_key.trim(), model)
+    } else {
+        (BASE_URL, cfg.groq_api_key.trim(), cfg.chat_model.as_str())
+    }
+}
+
+/// Strip a leading `<think>…</think>` reasoning block that some models (GLM,
+/// Qwen3, DeepSeek-R1, …) emit inline before the answer. Left in place, the
+/// think trace inflates the word count and trips the cleanup expansion guard,
+/// so the user gets the raw transcript instead of the cleanup (witnessed with
+/// Qwen3). Groq hides gpt-oss reasoning already; Cerebras' GLM/Qwen surface it
+/// in `content`, so we defend here. Returns the trimmed post-think answer.
+fn strip_reasoning(text: &str) -> String {
+    let t = text.trim_start();
+    if let Some(rest) = t.strip_prefix("<think>") {
+        return match rest.split_once("</think>") {
+            Some((_, after)) => after.trim().to_string(),
+            // Unterminated (truncated mid-thought) — nothing usable follows.
+            None => String::new(),
+        };
+    }
+    text.trim().to_string()
 }
 
 #[cfg(test)]
@@ -269,6 +318,74 @@ struct ChatRequest<'a> {
     model: &'a str,
     messages: Vec<ChatMessage<'a>>,
     temperature: f32,
+    // gpt-oss (and other reasoning models) emit internal "thinking" tokens
+    // before answering, which adds latency with no upside for dictation
+    // cleanup — there's nothing to reason about. "low" minimizes it. Omitted
+    // for models that don't accept the param (e.g. llama-3.1-8b-instant would
+    // 400 on an unsupported field).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
+}
+
+/// The `reasoning_effort` value to send for a given cleanup model, or None if
+/// the model doesn't accept the parameter. Reasoning wastes latency (and
+/// tokens) on pure text-cleanup, so we minimize it per model.
+fn reasoning_effort_for(model: &str) -> Option<&'static str> {
+    if model.contains("qwen") {
+        // qwen supports fully DISABLING reasoning. Critical: without this it
+        // dumps a ~900ms <think> block; with it off, qwen behaves like a fast
+        // dense model (~30ms) — our primary cleanup model for exactly this.
+        Some("none")
+    } else if model.contains("gpt-oss") {
+        // gpt-oss can't disable reasoning (only low/medium/high); "low" is the
+        // floor.
+        Some("low")
+    } else {
+        None
+    }
+}
+
+/// Cleanup model fallback order, primary-first. qwen (reasoning disabled) is
+/// the fast non-reasoning lead; gpt-oss-20b then 120b are the backups. All
+/// three are current, non-deprecated Groq models — llama-3.x is intentionally
+/// absent (Groq decommissions it 2026-08-16).
+const CLEANUP_FALLBACK: &[&str] = &[
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+];
+
+/// The ordered cleanup chain for this config: the user-selected model first
+/// (Settings dropdown), then the standard fallback order, deduped. So the
+/// selector still picks the primary and the chain covers rate-limits /
+/// deprecations underneath it.
+fn cleanup_chain(cfg: &Config) -> Vec<String> {
+    let mut chain: Vec<String> = Vec::new();
+    let primary = cfg.chat_model.trim();
+    if !primary.is_empty() {
+        chain.push(primary.to_string());
+    }
+    for &m in CLEANUP_FALLBACK {
+        if !chain.iter().any(|c| c == m) {
+            chain.push(m.to_string());
+        }
+    }
+    chain
+}
+
+/// Single attempt, no retry/backoff. The cleanup chain uses this so a failure
+/// (rate limit, decommissioned model, 5xx, network) falls straight through to
+/// the next model — each has its own Groq rate bucket, so trying the next
+/// beats a 30s backoff. STT and transform keep send_with_retry, where there's
+/// no alternate model to fall back to.
+async fn send_once(make: impl Fn() -> reqwest::RequestBuilder) -> Result<String> {
+    let resp = make().send().await.context("send")?;
+    let status = resp.status();
+    let body = resp.text().await.context("reading response body")?;
+    if !status.is_success() {
+        return Err(anyhow!("{status}: {body}"));
+    }
+    Ok(body)
 }
 
 #[derive(Deserialize)]
@@ -367,75 +484,106 @@ pub async fn cleanup(
         app = app_block,
     );
 
-    let request = ChatRequest {
-        model: cfg.chat_model.as_str(),
-        messages: vec![
-            ChatMessage {
-                role: "system",
-                content: system,
-            },
-            ChatMessage {
-                role: "user",
-                content: format!("Raw transcript:\n{transcript}"),
-            },
-        ],
-        temperature: 0.2,
-    };
-
+    let user_content = format!("Raw transcript:\n{transcript}");
     let client = shared_client();
     let url = format!("{BASE_URL}/chat/completions");
-    let make = || {
-        client
-            .post(url.as_str())
-            .bearer_auth(&cfg.groq_api_key)
-            .json(&request)
-    };
-    let body = send_with_retry(make, "cleanup", notify).await?;
-    let parsed: ChatResponse =
-        serde_json::from_str(&body).with_context(|| format!("parsing chat body: {body}"))?;
-    let text = parsed
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message.content)
-        .unwrap_or_default();
-    let cleaned = text.trim().to_string();
+    let chain = cleanup_chain(cfg);
+    let _ = notify; // the chain fails fast to the next model; no backoff to report
 
-    // Expansion guard: cleanup should preserve length almost exactly —
-    // adding punctuation, casing, and removing fillers nudges word count
-    // by a few at most. A 2× blow-up means the model interpreted the
-    // transcript as a task to perform (witnessed: "solution to group
-    // anagram problem" → 291-word code answer) and the strengthened
-    // prompt failed to hold. Fall back to the raw transcript so the user
-    // pastes what they spoke, not an LLM essay. Floor at 8 raw words so
-    // short transcripts can't trip the guard (e.g. 1 → 3 stays fine).
-    let raw_words = transcript.split_whitespace().count();
-    let cleaned_words = cleaned.split_whitespace().count();
-    let threshold = raw_words.max(8) * 2;
-    if cleaned_words > threshold {
-        tracing::warn!(
-            "cleanup expansion guard tripped: raw_words={raw_words} cleaned_words={cleaned_words} (threshold={threshold}). Falling back to raw transcript."
+    // Try each model in the fallback chain (user-selected primary first). A
+    // failure — rate limit, a decommissioned model, a 5xx, a network blip —
+    // falls straight through to the next model, each of which has its own Groq
+    // rate bucket. No 30s backoff. If every model fails, inject the raw
+    // transcript so the user always gets their words. This is what turns a
+    // model deprecation from an outage into a non-event.
+    for model in &chain {
+        let model = model.as_str();
+        let request = ChatRequest {
+            model,
+            messages: vec![
+                ChatMessage { role: "system", content: system.clone() },
+                ChatMessage { role: "user", content: user_content.clone() },
+            ],
+            temperature: 0.2,
+            reasoning_effort: reasoning_effort_for(model),
+        };
+        let make = || {
+            client
+                .post(url.as_str())
+                .bearer_auth(&cfg.groq_api_key)
+                .json(&request)
+        };
+
+        // TEMP(v1.2.0-eval): time the cleanup call to compare candidate models
+        // on real dictation. Strip before shipping.
+        let started = std::time::Instant::now();
+        let body = match send_once(make).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("cleanup: model {model} failed ({e:#}); trying next in chain");
+                continue;
+            }
+        };
+        let parsed: ChatResponse = match serde_json::from_str(&body) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("cleanup: model {model} gave unparseable body ({e:#}): {body}; trying next");
+                continue;
+            }
+        };
+        let text = parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .unwrap_or_default();
+        // Drop any inline <think> block before the guards run — a reasoning
+        // model's trace would otherwise blow past the expansion guard.
+        let cleaned = strip_reasoning(&text);
+
+        // TEMP(v1.2.0-eval): per-dictation record for model comparison. Strip before shipping.
+        tracing::debug!(
+            "[EVAL] model={} mode={:?} {}ms\n  RAW:     {:?}\n  CLEANED: {:?}",
+            model,
+            cfg.mode,
+            started.elapsed().as_millis(),
+            transcript.trim(),
+            cleaned
         );
-        return Ok(transcript.trim().to_string());
+
+        // Expansion guard: cleanup should preserve length almost exactly. A 2×
+        // blow-up means the model performed the task instead of cleaning it —
+        // fall back to the raw transcript. Floor at 8 raw words so short
+        // transcripts can't trip it.
+        let raw_words = transcript.split_whitespace().count();
+        let cleaned_words = cleaned.split_whitespace().count();
+        let threshold = raw_words.max(8) * 2;
+        if cleaned_words > threshold {
+            tracing::warn!(
+                "cleanup expansion guard tripped ({model}): raw_words={raw_words} cleaned_words={cleaned_words} (threshold={threshold}). Falling back to raw transcript."
+            );
+            return Ok(transcript.trim().to_string());
+        }
+
+        // Answer-back guard: the model answered a question instead of echoing
+        // it. Requires both a tell-tale opening AND low overlap with the raw.
+        if looks_like_answer_back(&cleaned, transcript) {
+            tracing::warn!(
+                "cleanup answer-back guard tripped ({model}): raw={transcript:?} cleaned={cleaned:?}. Falling back to raw transcript."
+            );
+            return Ok(transcript.trim().to_string());
+        }
+
+        return Ok(cleaned);
     }
 
-    // Answer-back guard: short answers don't trip the expansion guard
-    // (e.g. transcript "what's the capital of France" → cleaned "Paris."
-    // is 1 word vs 6 raw, well inside the 2× ceiling). But it's still
-    // the model answering instead of cleaning. We catch this by looking
-    // for tell-tale answer-phrase openings AND confirming the cleaned
-    // text shares little vocabulary with the raw — both conditions are
-    // required so legitimate dictations like "Sure, that sounds good"
-    // (which starts with "Sure," but overlaps heavily with raw) pass
-    // through unharmed.
-    if looks_like_answer_back(&cleaned, transcript) {
-        tracing::warn!(
-            "cleanup answer-back guard tripped: raw={transcript:?} cleaned={cleaned:?}. Falling back to raw transcript."
-        );
-        return Ok(transcript.trim().to_string());
-    }
-
-    Ok(cleaned)
+    // Every model in the chain failed (all rate-limited / down / deprecated) —
+    // degrade gracefully to the raw transcript rather than failing the dictation.
+    tracing::warn!(
+        "cleanup: all {} models in the fallback chain failed; injecting raw transcript",
+        chain.len()
+    );
+    Ok(transcript.trim().to_string())
 }
 
 /// True when the cleaned output looks like the model answered a question
@@ -527,8 +675,9 @@ pub async fn execute_transform(
     text: &str,
     notify: Option<&RetryNotify<'_>>,
 ) -> Result<String> {
-    if !cfg.has_api_key() {
-        return Err(anyhow!("Groq API key not set"));
+    let (base, key, model) = chat_endpoint(cfg);
+    if key.is_empty() {
+        return Err(anyhow!("No API key set"));
     }
     if text.trim().is_empty() {
         return Ok(String::new());
@@ -555,7 +704,7 @@ pub async fn execute_transform(
     let augmented_system = format!("{}{}", system_prompt, user_context);
 
     let request = ChatRequest {
-        model: cfg.chat_model.as_str(),
+        model,
         messages: vec![
             ChatMessage {
                 role: "system",
@@ -567,14 +716,17 @@ pub async fn execute_transform(
             },
         ],
         temperature: 0.3,
+        // Same per-model reasoning policy as cleanup — critically, qwen must
+        // get "none" here too, or it dumps a <think> block into the rewrite.
+        reasoning_effort: reasoning_effort_for(model),
     };
 
     let client = shared_client();
-    let url = format!("{BASE_URL}/chat/completions");
+    let url = format!("{base}/chat/completions");
     let make = || {
         client
             .post(url.as_str())
-            .bearer_auth(&cfg.groq_api_key)
+            .bearer_auth(key)
             .json(&request)
     };
     let body = send_with_retry(make, "transform", notify).await?;
@@ -586,7 +738,8 @@ pub async fn execute_transform(
         .next()
         .map(|c| c.message.content)
         .unwrap_or_default();
-    Ok(out.trim().to_string())
+    // Cerebras reasoning models (GLM/Qwen) prepend a <think> block; drop it.
+    Ok(strip_reasoning(&out))
 }
 
 const VOICE_PROFILE_SYSTEM_PROMPT: &str = "You are writing a personalized 'voice profile' for a user of a voice dictation app called Bulbul.\n\
@@ -611,8 +764,9 @@ pub async fn generate_voice_profile(
     stats_summary: &str,
     samples: &str,
 ) -> Result<(String, String)> {
-    if !cfg.has_api_key() {
-        return Err(anyhow!("Groq API key not set"));
+    let (base, key, model) = chat_endpoint(cfg);
+    if key.is_empty() {
+        return Err(anyhow!("No API key set"));
     }
 
     let user_content = format!(
@@ -622,7 +776,7 @@ pub async fn generate_voice_profile(
     );
 
     let request = ChatRequest {
-        model: cfg.chat_model.as_str(),
+        model,
         messages: vec![
             ChatMessage {
                 role: "system",
@@ -634,14 +788,15 @@ pub async fn generate_voice_profile(
             },
         ],
         temperature: 0.4,
+        reasoning_effort: reasoning_effort_for(model),
     };
 
     let client = shared_client();
-    let url = format!("{BASE_URL}/chat/completions");
+    let url = format!("{base}/chat/completions");
     let make = || {
         client
             .post(url.as_str())
-            .bearer_auth(&cfg.groq_api_key)
+            .bearer_auth(key)
             .json(&request)
     };
     // Background task — no UI notifier, but it still benefits from retry.
@@ -655,6 +810,8 @@ pub async fn generate_voice_profile(
         .next()
         .map(|c| c.message.content)
         .unwrap_or_default();
+    // Drop any <think> block first (Cerebras reasoning models), then fences.
+    let raw = strip_reasoning(&raw);
 
     // Strip code fences if the model added them despite instructions.
     let trimmed = raw.trim();
@@ -684,4 +841,46 @@ pub async fn validate_key(api_key: &str) -> Result<()> {
         let body = resp.text().await.unwrap_or_default();
         Err(anyhow!("Groq rejected key ({status}): {body}"))
     }
+}
+
+/// Validate a Cerebras key and return its available chat model ids. Settings
+/// uses this to both confirm the key works and populate the model dropdown, so
+/// we never hard-code ids Cerebras may rename or add. Cerebras exposes the
+/// OpenAI-compatible `GET /v1/models` shape.
+pub async fn list_cerebras_models(api_key: &str) -> Result<Vec<String>> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err(anyhow!("Cerebras API key is empty"));
+    }
+    let client = shared_client();
+    let resp = client
+        .get(format!("{CEREBRAS_BASE_URL}/models"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .context("GET Cerebras /models")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("Cerebras rejected key ({status}): {body}"));
+    }
+    let body = resp
+        .text()
+        .await
+        .context("reading Cerebras /models body")?;
+    let parsed: ModelsResponse = serde_json::from_str(&body)
+        .with_context(|| format!("parsing Cerebras models: {body}"))?;
+    let mut ids: Vec<String> = parsed.data.into_iter().map(|m| m.id).collect();
+    ids.sort();
+    Ok(ids)
+}
+
+#[derive(Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct ModelEntry {
+    id: String,
 }

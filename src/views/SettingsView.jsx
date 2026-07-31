@@ -18,6 +18,18 @@ const THEMES = [
   { value: "system", label: "System" },
 ];
 
+// Cleanup model — the Groq chat model that turns the raw transcript into clean
+// text. qwen (reasoning disabled) is the default: fast, non-reasoning, good
+// quality, not deprecated. The picked model is the *primary*; groq.rs runs a
+// fallback chain (primary → gpt-oss-20b → gpt-oss-120b → raw) underneath it, so
+// a rate-limit or a deprecation never breaks a dictation. Llama models are gone
+// from the list (Groq decommissions them 2026-08-16).
+const CLEANUP_MODELS = [
+  { code: "qwen/qwen3.6-27b", label: "Qwen3 27B — fast, no reasoning (default)" },
+  { code: "openai/gpt-oss-20b", label: "GPT-OSS 20B — fallback" },
+  { code: "openai/gpt-oss-120b", label: "GPT-OSS 120B — highest quality, slower" },
+];
+
 const LANGUAGES = [
   { code: "auto", label: "Auto-detect (English-leaning)" },
   { code: "en", label: "English" },
@@ -283,6 +295,8 @@ export default function SettingsView({
         case "account":
           return (
             <PaneAccount
+              config={config}
+              updateConfig={updateConfig}
               hasKey={hasKey}
               draftKey={draftKey}
               setDraftKey={setDraftKey}
@@ -398,6 +412,8 @@ export default function SettingsView({
             )}
             {active === "account" && (
               <PaneAccount
+                config={config}
+                updateConfig={updateConfig}
                 hasKey={hasKey}
                 draftKey={draftKey}
                 setDraftKey={setDraftKey}
@@ -501,7 +517,67 @@ function PaneGeneral({ config, updateConfig }) {
   );
 }
 
-function PaneAccount({ hasKey, draftKey, setDraftKey, saveKey, keyState, keyError, setKeyState }) {
+function PaneAccount({ config, updateConfig, hasKey, draftKey, setDraftKey, saveKey, keyState, keyError, setKeyState }) {
+  const model = config.chat_model || CLEANUP_MODELS[0].code;
+
+  // Cerebras cleanup routing is DISABLED for v1.2.0 — cleanup uses the Groq
+  // qwen → gpt-oss-20b → gpt-oss-120b fallback chain instead. State, handlers,
+  // and UI are preserved (commented) so re-enabling a second provider later is
+  // a small change. The list_cerebras_models backend command is left intact
+  // but dormant (nothing calls it without this UI).
+  /*
+  const cbxConnected = !!(config.cerebras_api_key && config.cerebras_api_key.trim());
+  const [cbxDraft, setCbxDraft] = useState(config.cerebras_api_key || "");
+  const [cbxState, setCbxState] = useState("idle"); // idle | checking | valid | invalid
+  const [cbxError, setCbxError] = useState("");
+  const [cbxModels, setCbxModels] = useState([]);
+
+  // Re-fetch the model list whenever a saved Cerebras key is present, so the
+  // dropdown shows the real options (and reflects the saved pick) on open.
+  useEffect(() => {
+    if (IS_ANDROID) return;
+    const key = (config.cerebras_api_key || "").trim();
+    if (!key) { setCbxModels([]); return; }
+    let cancelled = false;
+    invoke("list_cerebras_models", { apiKey: key })
+      .then((ids) => { if (!cancelled) setCbxModels(ids || []); })
+      .catch(() => { if (!cancelled) setCbxModels([]); });
+    return () => { cancelled = true; };
+  }, [config.cerebras_api_key]);
+
+  async function connectCerebras() {
+    setCbxState("checking");
+    setCbxError("");
+    try {
+      const ids = (await invoke("list_cerebras_models", { apiKey: cbxDraft })) || [];
+      setCbxModels(ids);
+      // Prefer the currently-saved model if it's still offered, else a gpt-oss
+      // model (fast, reasoning hidden), else whatever comes first.
+      const existing = config.cerebras_model;
+      const pick =
+        (existing && ids.includes(existing) && existing) ||
+        ids.find((m) => m.includes("gpt-oss")) ||
+        ids[0] ||
+        "";
+      await updateConfig({ ...config, cerebras_api_key: cbxDraft.trim(), cerebras_model: pick });
+      setCbxState("valid");
+    } catch (e) {
+      setCbxState("invalid");
+      setCbxError(String(e));
+    }
+  }
+
+  async function disconnectCerebras() {
+    setCbxDraft("");
+    setCbxState("idle");
+    setCbxError("");
+    setCbxModels([]);
+    await updateConfig({ ...config, cerebras_api_key: "", cerebras_model: "" });
+  }
+
+  const cbxModelOptions = cbxModels.map((m) => ({ code: m, label: m }));
+  */
+
   return (
     <>
       <Row
@@ -541,6 +617,84 @@ function PaneAccount({ hasKey, draftKey, setDraftKey, saveKey, keyState, keyErro
           </p>
         )}
       </Row>
+      <Row
+        title="Cleanup model"
+        hint="The Groq model that cleans your dictation. Qwen3 (default) is fast and doesn't 'think', so it stays snappy; GPT-OSS models are the automatic fallback if it's rate-limited or unavailable. Changes apply on your next dictation — no restart needed."
+      >
+        <Combobox
+          value={model}
+          options={CLEANUP_MODELS}
+          onChange={(v) => updateConfig({ ...config, chat_model: v })}
+          width={280}
+          ariaLabel="Cleanup model"
+        />
+      </Row>
+
+      {/* Cerebras cleanup UI — disabled for v1.2.0, preserved for later:
+      {!IS_ANDROID && (
+        <>
+          <Row
+            title="Cerebras (optional)"
+            hint={cbxConnected
+              ? "Connected — cleanup runs on Cerebras. Whisper transcription still uses your Groq key. Paste a new key to update."
+              : "Add a Cerebras key to run cleanup on Cerebras instead of Groq. Transcription (Whisper) always stays on Groq, so your Groq key is still required. Free key at cloud.cerebras.ai."}
+            stack
+          >
+            <div className="settings-key-row">
+              <input
+                type="password"
+                value={cbxDraft}
+                placeholder="csk-…"
+                onChange={(e) => { setCbxDraft(e.target.value); setCbxState("idle"); }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <button
+                className="primary"
+                disabled={!cbxDraft.trim() || cbxState === "checking"}
+                onClick={connectCerebras}
+              >
+                {cbxState === "checking" ? "Checking…" : cbxConnected ? "Update" : "Connect"}
+              </button>
+            </div>
+            {cbxState === "valid" && (
+              <p className="ok small">Key validated. Cleanup now runs on Cerebras.</p>
+            )}
+            {cbxState === "invalid" && <p className="err small">{cbxError}</p>}
+            {cbxConnected ? (
+              <p className="muted small">
+                <a href="#" onClick={(e) => { e.preventDefault(); disconnectCerebras(); }}>
+                  Disconnect Cerebras (send cleanup back to Groq)
+                </a>
+              </p>
+            ) : (
+              <p className="muted small">
+                <a
+                  href="https://cloud.cerebras.ai"
+                  onClick={(e) => { e.preventDefault(); openUrl("https://cloud.cerebras.ai"); }}
+                >
+                  Get a Cerebras key from cloud.cerebras.ai →
+                </a>
+              </p>
+            )}
+          </Row>
+          {cbxConnected && cbxModelOptions.length > 0 && (
+            <Row
+              title="Cerebras model"
+              hint="Which Cerebras model cleans your dictation. gpt-oss keeps its reasoning hidden so it stays fast; GLM/Qwen reasoning models work too — their thinking is stripped automatically. Applies on your next dictation."
+            >
+              <Combobox
+                value={config.cerebras_model || cbxModelOptions[0].code}
+                options={cbxModelOptions}
+                onChange={(v) => updateConfig({ ...config, cerebras_model: v })}
+                width={280}
+                ariaLabel="Cerebras model"
+              />
+            </Row>
+          )}
+        </>
+      )}
+      */}
     </>
   );
 }

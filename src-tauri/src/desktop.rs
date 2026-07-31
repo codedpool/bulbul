@@ -901,6 +901,16 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Validate a Cerebras key and return its available chat models. Settings
+/// calls this to confirm the key and populate the model dropdown in one step;
+/// an Err means the key was rejected (or the network failed).
+#[tauri::command]
+async fn list_cerebras_models(api_key: String) -> Result<Vec<String>, String> {
+    groq::list_cerebras_models(api_key.trim())
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 /// Mark the first-run wizard as finished and persist. Called whether the
 /// user completed all the steps or chose "Skip for now" — both should
 /// stop the wizard from re-appearing on the next launch.
@@ -2043,6 +2053,7 @@ pub fn run() {
             get_config,
             save_config,
             validate_api_key,
+            list_cerebras_models,
             complete_onboarding,
             inpage_hotkey,
             track_event,
