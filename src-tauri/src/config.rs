@@ -159,6 +159,22 @@ pub struct Config {
     #[serde(default = "default_chat_model")]
     pub chat_model: String,
 
+    /// Optional Cerebras API key. When set (non-empty), the cleanup /
+    /// text-conversion stage is routed to Cerebras instead of Groq — the
+    /// raw transcript from Whisper is cleaned on Cerebras. Whisper STT
+    /// always stays on Groq (Cerebras has no transcription endpoint), so
+    /// the Groq key is still required. BYOK, same posture as the Groq key:
+    /// stays local, only ever sent to Cerebras. Empty = cleanup on Groq.
+    #[serde(default)]
+    pub cerebras_api_key: String,
+
+    /// Preferred Cerebras chat model id (e.g. "gpt-oss-120b"). Only used
+    /// when `cerebras_api_key` is set. Populated in Settings from Cerebras'
+    /// live /models list so we never hard-code ids Cerebras may rename;
+    /// empty falls back to groq::DEFAULT_CEREBRAS_MODEL.
+    #[serde(default)]
+    pub cerebras_model: String,
+
     #[serde(default = "default_min_seconds")]
     pub min_recording_seconds: f32,
 
@@ -296,7 +312,12 @@ fn default_stt_model() -> String {
     "whisper-large-v3-turbo".to_string()
 }
 fn default_chat_model() -> String {
-    "llama-3.1-8b-instant".to_string()
+    // qwen with reasoning disabled (see groq::reasoning_effort_for): fast,
+    // non-reasoning, good quality, and NOT deprecated — Groq's own recommended
+    // replacement for the retiring llamas (gone 2026-08-16). The groq.rs
+    // cleanup chain falls back to gpt-oss-20b → gpt-oss-120b if it fails.
+    // Users can change the primary in Settings → Account.
+    "qwen/qwen3.6-27b".to_string()
 }
 fn default_min_seconds() -> f32 {
     0.4
@@ -519,6 +540,8 @@ impl Default for Config {
             polish_hotkey: default_polish_hotkey(),
             stt_model: default_stt_model(),
             chat_model: default_chat_model(),
+            cerebras_api_key: String::new(),
+            cerebras_model: String::new(),
             min_recording_seconds: default_min_seconds(),
             privacy_acknowledged: default_privacy_ack(),
             linux_hotkey_migrated: false,
@@ -583,6 +606,13 @@ impl Config {
 impl Config {
     pub fn has_api_key(&self) -> bool {
         !self.groq_api_key.trim().is_empty()
+    }
+
+    /// True when a Cerebras key is configured. When set, the cleanup /
+    /// text-conversion stage routes to Cerebras instead of Groq — see
+    /// [crate::groq::chat_endpoint]. Whisper STT still runs on Groq.
+    pub fn has_cerebras_key(&self) -> bool {
+        !self.cerebras_api_key.trim().is_empty()
     }
 }
 
