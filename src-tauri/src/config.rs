@@ -3,68 +3,34 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-// Self-correction handling is shared between Clean and Polished modes.
-// When the speaker revises themselves mid-utterance the user almost
-// always wants the FINAL value kept and the cancelled value dropped —
-// that's the whole point of dictating "no no 5pm" instead of editing
-// the text after the fact. Without an explicit rule the model
-// faithfully transcribes "schedule a meeting for 4pm, no no, 5pm",
-// which is exactly the wrong output for a chat / calendar / notes
-// venue. We give the model both a trigger list (the verbal cues that
-// signal a self-correction) and two concrete examples; 8B models
-// follow few-shot patterns far more reliably than abstract rules.
+// Self-correction handling, shared by Clean and Polished. When the speaker
+// revises themselves mid-utterance the user wants the FINAL value kept and the
+// cancelled one dropped ("no no 5pm" -> "5pm"). Raw mode deliberately skips it.
 //
-// Raw mode deliberately does NOT do this — Raw promises every word and
-// every disfluency, which is what a transcription-archive user wants.
+// TRIM(v1.2.0): cut from 3 few-shot examples + a long caveat to 1 example + a
+// one-line caveat. The retired llama-3.1-8b needed heavy few-shot; qwen and
+// gpt-oss follow the rule with far less. Reverts cleanly from git if the
+// dictation-battery quality checks regress.
 macro_rules! self_correction_rule {
     () => {
-        "Resolve self-corrections to the speaker's final choice. When the speaker revises themselves mid-utterance (signalled by \"no no\", \"no wait\", \"wait\", \"actually\", \"I mean\", \"scratch that\", \"or rather\", \"make it\", \"sorry\"), keep ONLY the value the speaker landed on. Drop the cancelled value AND the correction marker — neither should appear in the output.\n\n\
-         Examples (resolve self-correction → final intent):\n\
-         Spoken:  \"schedule a meeting for 4 PM no no 5 PM\"\n\
-         Output:  \"Schedule a meeting for 5 PM.\"\n\n\
-         Spoken:  \"send him 50 dollars wait make it 100\"\n\
-         Output:  \"Send him 100 dollars.\"\n\n\
-         Spoken:  \"the deadline is Friday actually Monday\"\n\
-         Output:  \"The deadline is Monday.\"\n\n\
-         Caveat — these signal words are real English too. Drop them ONLY when they introduce a revision of the immediately preceding noun phrase, time, number, name, or short value. A sentence like \"we actually shipped it last week\" is not a self-correction; \"actually\" is just an intensifier and must stay."
+        "Self-corrections: when the speaker revises themselves mid-utterance (signalled by \"no no\", \"no wait\", \"wait\", \"actually\", \"I mean\", \"scratch that\", \"make it\"), keep ONLY the value they landed on and drop the cancelled value and the correction word. Example: \"schedule the call for 4 PM no no 5 PM\" -> \"Schedule the call for 5 PM.\" Leave these words alone when they are not a revision — \"we actually shipped it last week\" is not a self-correction."
     };
 }
 
-// The bullet-list rule is shared between Clean and Polished modes. It's
-// a macro (not a const) because `system_instruction` returns
-// `&'static str` built via `concat!`, which only accepts literals.
+// Bullet-list rule, shared by Clean and Polished. A string-literal macro
+// because system_instruction builds a &'static str via concat!.
 //
-// Why so explicit: the old wording ("format the items as a bullet list,
-// drop the enumerator words, do not bulletize ordinary prose") produced
-// hybrid output — small models would keep the surrounding sentence AND
-// add the bullets, which is exactly the bug we're trying to fix. The
-// new wording locks down three things:
-//
-//   1. Strict entry criteria — only convert when ALL three conditions
-//      hold. Drops loose triggers like "also" and "another thing" that
-//      caused false bulletisation of normal conversational sentences.
-//
-//   2. Full-replacement output — the entire response IS the bullet
-//      list. The model used to add a lead-in ("Here are the items:")
-//      or a trailing summary; both are explicitly forbidden now.
-//
-//   3. A concrete before/after example — `llama-3.1-8b-instant`
-//      anchors on few-shot examples much more reliably than on
-//      abstract rules.
+// TRIM(v1.2.0): compressed the (a)(b)(c) criteria and the do-not list into a
+// couple of sentences and kept one before/after example. Reverts from git.
 macro_rules! bullet_rule {
     () => {
-        "Bullet-list rule (strict). Convert to a bullet list ONLY when ALL of the following are true:\n\
-         (a) the speaker is enumerating at least 2 distinct items;\n\
-         (b) the enumeration is signalled by an EXPLICIT cue — ordinal markers (\"first... second... third...\", \"one... two... three...\"), an explicit lead-in (\"here are the things...\", \"the items are...\", \"I need...:\"), or a bare list of nouns joined by commas/and (\"milk, eggs, bread, and coffee\");\n\
-         (c) each item stands on its own as a short list entry.\n\n\
-         When converting, the ENTIRE OUTPUT is the bullet list, one item per line, each prefixed with \"- \". NO introductory sentence, NO trailing sentence, NO lead-in like \"Here are the items:\". Drop the enumerator words (\"first\", \"second\", \"one\", \"two\", etc.) from each bullet's text.\n\n\
-         Example:\n\
-         Spoken: \"first I need to buy milk, second eggs, and third some bread\"\n\
+        "Bullet-list rule: convert to a bullet list ONLY when the speaker enumerates 2+ distinct items signalled by an explicit cue — ordinals (\"first... second...\"), a lead-in (\"I need:\", \"the items are\"), or a bare comma/and list. Then the ENTIRE output is the list, one item per line prefixed with \"- \", with no lead-in and no trailing sentence, and enumerator words dropped. Example:\n\
+         Spoken: \"first I need milk, second eggs, and third some bread\"\n\
          Output:\n\
          - milk\n\
          - eggs\n\
          - bread\n\n\
-         Do NOT bulletise: normal sentences containing \"also\" / \"another thing\" / \"by the way\"; examples woven into prose; single-sentence answers; explanations with a few enumerated points (those stay as prose with the ordinal words intact). When in doubt, keep prose."
+         Otherwise keep it as prose — do not bulletise on \"also\" / \"another thing\" or ordinary sentences."
     };
 }
 
