@@ -22,7 +22,10 @@ object BulbulConfig {
     private const val DICTIONARY_FILE = "dictionary.json"
     private const val SNIPPETS_FILE = "snippets.json"
     private const val OVERLAY_FILE = "overlay.json"
-    private const val DEFAULT_CHAT_MODEL = "llama-3.1-8b-instant"
+    // Matches desktop's config.rs default_chat_model. qwen (reasoning disabled
+    // in the cleanup call) is fast, non-reasoning, and not deprecated — unlike
+    // llama-3.1-8b-instant, which Groq retires 2026-08-16.
+    private const val DEFAULT_CHAT_MODEL = "qwen/qwen3.6-27b"
 
     private var cachedDir: File? = null
 
@@ -115,6 +118,17 @@ object BulbulConfig {
 
     fun chatModel(context: Context): String =
         read(context)?.optString("chat_model", "").orEmpty().ifBlank { DEFAULT_CHAT_MODEL }
+
+    /// Cleanup mode the dictation pipeline runs in: "raw" | "clean" | "polished".
+    /// Written by the Settings "Cleanup mode" dropdown; drives Cleanup.clean.
+    /// Defaults to "clean" to match the desktop CleanupMode default.
+    fun mode(context: Context): String =
+        read(context)?.optString("mode", "clean").orEmpty().ifBlank { "clean" }
+
+    /// Whether to inject recent raw→cleaned examples from the same app into the
+    /// cleanup prompt (few-shot personalization). Default OFF on all platforms.
+    fun personalizeCleanup(context: Context): Boolean =
+        read(context)?.optBoolean("personalize_cleanup", false) ?: false
 
     /// Overlay bubble diameter in dp (Settings → Overlay). Clamped to a sane
     /// range so a stale/garbage value can't produce an invisible or

@@ -179,31 +179,35 @@ class BulbulForegroundService : Service() {
             } else null
 
             if (transcript != null) {
+                val friendly = friendlyAppName(appPkg)
+                val mode = BulbulConfig.mode(this)
+
+                // AI cleanup — the Android port of desktop's groq::cleanup.
+                // Mode-aware (raw skips the LLM); on any failure or a tripped
+                // guard it falls back to the raw transcript so words are never
+                // lost. Runs BEFORE the deterministic dictionary/snippet passes,
+                // same order as desktop. The cleanup prompt carries the per-app
+                // style + venue hints, so the old deterministic AppStyle pass is
+                // gone — the LLM handles tone now, exactly like desktop.
+                val cleaned = Cleanup.clean(this, apiKey, transcript, mode, appPkg, friendly)
+
                 // Apply the user's dictionary (whole-word substitutions) then
                 // expand snippets — same order as desktop — before injecting.
                 // Count dictionary fixes so Insights can report them.
-                val (corrected, fixes) = BulbulConfig.applyDictionary(this, transcript)
-                var finalText = BulbulConfig.applySnippets(this, corrected)
-
-                // Per-app Style: reformat the tone to match the app being
-                // dictated into (WhatsApp → casual, Outlook → formal, …).
-                // Deterministic string transform — no LLM, so it's instant
-                // and can never "reply" to the dictation.
-                val friendly = friendlyAppName(appPkg)
-                val styleId = BulbulConfig.styleForApp(this, appPkg, friendly)
-                if (styleId != null) {
-                    finalText = AppStyle.applyStyle(styleId, finalText)
-                }
+                val (corrected, fixes) = BulbulConfig.applyDictionary(this, cleaned)
+                val finalText = BulbulConfig.applySnippets(this, corrected)
 
                 val injected = TextInjector.inject(finalText)
-                Log.i(TAG, "transcript len=${finalText.length} fixes=$fixes app=$friendly injected=$injected")
+                Log.i(TAG, "transcript len=${finalText.length} mode=$mode fixes=$fixes app=$friendly injected=$injected")
                 val durationMs = wavDurationMs(wav)
-                recordHistory(finalText, durationMs, fixes, friendly)
+                // Store the pre-cleanup transcript + actual mode so Insights and
+                // style-memory personalization have real raw→cleaned pairs.
+                recordHistory(transcript, finalText, mode, durationMs, fixes, friendly)
 
                 // Opt-in telemetry: coarse buckets only — no text, no app name.
                 val words = finalText.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
                 Telemetry.track(this, "dictation_completed", org.json.JSONObject().apply {
-                    put("mode", "clean")
+                    put("mode", mode)
                     put("language", BulbulConfig.language(this@BulbulForegroundService))
                     put("duration_bucket", Telemetry.durationBucket(durationMs))
                     put("word_count_bucket", Telemetry.wordCountBucket(words))
@@ -236,14 +240,24 @@ class BulbulForegroundService : Service() {
     /// Appends one dictation to filesDir/history.jsonl. The Rust side
     /// (mobile.rs get_recent_dictations / get_home_stats) reads the same
     /// file — file-as-IPC, same trick as config.json.
-    private fun recordHistory(text: String, durationMs: Long, fixCount: Int, app: String?) {
+    private fun recordHistory(
+        rawText: String,
+        cleanedText: String,
+        mode: String,
+        durationMs: Long,
+        fixCount: Int,
+        app: String?,
+    ) {
         try {
-            val words = text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+            val words = cleanedText.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
             val line = org.json.JSONObject().apply {
                 put("ts", System.currentTimeMillis() / 1000)
-                put("cleaned_text", text)
+                // Pre-cleanup transcript, kept so style-memory personalization
+                // has real raw→cleaned pairs (mirrors desktop's dictations table).
+                put("raw_text", rawText)
+                put("cleaned_text", cleanedText)
                 put("word_count", words)
-                put("mode", "clean")
+                put("mode", mode)
                 put("duration_ms", durationMs)
                 put("fix_count", fixCount)
                 // Which app the dictation landed in — powers the dashboard's
