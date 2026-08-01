@@ -866,7 +866,7 @@ function PanePersonalization({ config, updateConfig }) {
       <ToggleRow
         title="Personalize cleanup from past dictations"
         hint="Show the model recent examples from the same app. Adds ~150 tokens per dictation."
-        checked={config.personalize_cleanup !== false}
+        checked={config.personalize_cleanup === true}
         onChange={(v) => updateConfig({ ...config, personalize_cleanup: v })}
       />
       <ToggleRow
