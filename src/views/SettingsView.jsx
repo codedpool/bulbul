@@ -18,17 +18,10 @@ const THEMES = [
   { value: "system", label: "System" },
 ];
 
-// Cleanup model — the Groq chat model that turns the raw transcript into clean
-// text. qwen (reasoning disabled) is the default: fast, non-reasoning, good
-// quality, not deprecated. The picked model is the *primary*; groq.rs runs a
-// fallback chain (primary → gpt-oss-20b → gpt-oss-120b → raw) underneath it, so
-// a rate-limit or a deprecation never breaks a dictation. Llama models are gone
-// from the list (Groq decommissions them 2026-08-16).
-const CLEANUP_MODELS = [
-  { code: "qwen/qwen3.6-27b", label: "Qwen3 27B — fast, no reasoning (default)" },
-  { code: "openai/gpt-oss-20b", label: "GPT-OSS 20B — fallback" },
-  { code: "openai/gpt-oss-120b", label: "GPT-OSS 120B — highest quality, slower" },
-];
+// Cleanup model is intentionally NOT a user picker (like the STT model, it's
+// config-only). The groq.rs fallback chain — qwen → gpt-oss-20b → gpt-oss-120b
+// → raw — manages it; `chat_model` stays a config.json field with a qwen
+// default for power-user override.
 
 const LANGUAGES = [
   { code: "auto", label: "Auto-detect (English-leaning)" },
@@ -518,8 +511,6 @@ function PaneGeneral({ config, updateConfig }) {
 }
 
 function PaneAccount({ config, updateConfig, hasKey, draftKey, setDraftKey, saveKey, keyState, keyError, setKeyState }) {
-  const model = config.chat_model || CLEANUP_MODELS[0].code;
-
   // Cerebras cleanup routing is DISABLED for v1.2.0 — cleanup uses the Groq
   // qwen → gpt-oss-20b → gpt-oss-120b fallback chain instead. State, handlers,
   // and UI are preserved (commented) so re-enabling a second provider later is
@@ -617,19 +608,6 @@ function PaneAccount({ config, updateConfig, hasKey, draftKey, setDraftKey, save
           </p>
         )}
       </Row>
-      <Row
-        title="Cleanup model"
-        hint="The Groq model that cleans your dictation. Qwen3 (default) is fast and doesn't 'think', so it stays snappy; GPT-OSS models are the automatic fallback if it's rate-limited or unavailable. Changes apply on your next dictation — no restart needed."
-      >
-        <Combobox
-          value={model}
-          options={CLEANUP_MODELS}
-          onChange={(v) => updateConfig({ ...config, chat_model: v })}
-          width={280}
-          ariaLabel="Cleanup model"
-        />
-      </Row>
-
       {/* Cerebras cleanup UI — disabled for v1.2.0, preserved for later:
       {!IS_ANDROID && (
         <>
