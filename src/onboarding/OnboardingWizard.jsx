@@ -1243,33 +1243,33 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
               <div className="onb-hotkey-meta">
                 <div className="onb-hotkey-label">{p.label}</div>
                 <div className="onb-hotkey-detail">{p.detail}</div>
+                {p.value === "custom" && selected.value === "custom" && (
+                  <div className="onb-hotkey-custom">
+                    <code>{customCombo || config.hotkey || "—"}</code>
+                    <button
+                      className="onb-btn ghost small"
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCaptureError("");
+                        setCapturing(true);
+                      }}
+                    >
+                      {capturing ? "Press keys…" : "Record"}
+                    </button>
+                    {capturing && captureError && (
+                      <div className="onb-hotkey-error">{captureError}</div>
+                    )}
+                    {capturing && !captureError && (
+                      <div className="onb-hotkey-hint">
+                        {IS_LINUX
+                          ? "Include a regular key (letter, Space, F-key) — modifier-only chords can't be bound on Wayland."
+                          : "Modifier-only chords (Ctrl+Win, Alt+Win) work too — release to confirm."}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              {p.value === "custom" && selected.value === "custom" && (
-                <div className="onb-hotkey-custom">
-                  <code>{customCombo || config.hotkey || "—"}</code>
-                  <button
-                    className="onb-btn ghost small"
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setCaptureError("");
-                      setCapturing(true);
-                    }}
-                  >
-                    {capturing ? "Press keys…" : "Record"}
-                  </button>
-                  {capturing && captureError && (
-                    <div className="onb-hotkey-error">{captureError}</div>
-                  )}
-                  {capturing && !captureError && (
-                    <div className="onb-hotkey-hint">
-                      {IS_LINUX
-                        ? "Include a regular key (letter, Space, F-key) — modifier-only chords can't be bound on Wayland."
-                        : "Modifier-only chords (Ctrl+Win, Alt+Win) work too — release to confirm."}
-                    </div>
-                  )}
-                </div>
-              )}
             </label>
           ))}
 
