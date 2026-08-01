@@ -266,45 +266,78 @@ pub async fn transcribe(
     if !cfg.has_api_key() {
         return Err(anyhow!("Groq API key not set"));
     }
+    let _ = notify; // the STT chain fails fast to the next model; no backoff to report
     let client = shared_client();
     let url = format!("{BASE_URL}/audio/transcriptions");
-    // Rebuilt per attempt: a multipart Form is consumed on send, so retries
-    // need a fresh body (the wav bytes are cloned each time).
-    let make = || {
-        let part = multipart::Part::bytes(wav_bytes.clone())
-            .file_name("recording.wav")
-            .mime_str("audio/wav")
-            .expect("audio/wav is a valid MIME type");
-        let mut form = multipart::Form::new()
-            .part("file", part)
-            .text("model", cfg.stt_model.clone())
-            .text("response_format", "json");
-        // Whisper auto-detects when the field is omitted. Pass it only when
-        // the user has chosen a specific ISO-639-1 code.
-        let lang = cfg.language.trim();
-        if !lang.is_empty() && lang != "auto" {
-            form = form.text("language", lang.to_string());
+    let chain = stt_chain(cfg);
+
+    // Whisper auto-detects language when the field is omitted; pass it only when
+    // the user picked a specific ISO-639-1 code. Same for every model attempt.
+    let lang = cfg.language.trim();
+    let lang = if !lang.is_empty() && lang != "auto" {
+        Some(lang.to_string())
+    } else {
+        None
+    };
+    // Dictionary entries become a `prompt` hint so Whisper biases toward the
+    // user's preferred spellings ("Groq", "GitHub", "iOS"). Capped under
+    // Whisper's 224-token limit.
+    let vocab_prompt = if vocabulary.is_empty() {
+        None
+    } else {
+        let mut joined = vocabulary.join(", ");
+        if joined.chars().count() > 600 {
+            joined = joined.chars().take(600).collect();
         }
-        // Dictionary entries become a `prompt` hint so Whisper biases toward
-        // the user's preferred spellings (e.g. "Groq", "GitHub", "iOS") at
-        // transcription time. Capped well under Whisper's 224-token limit.
-        if !vocabulary.is_empty() {
-            let mut joined = vocabulary.join(", ");
-            if joined.chars().count() > 600 {
-                joined = joined.chars().take(600).collect();
-            }
-            form = form.text("prompt", joined);
-        }
-        client
-            .post(url.as_str())
-            .bearer_auth(&cfg.groq_api_key)
-            .multipart(form)
+        Some(joined)
     };
 
-    let body = send_with_retry(make, "STT", notify).await?;
-    let parsed: TranscriptionResponse =
-        serde_json::from_str(&body).with_context(|| format!("parsing STT body: {body}"))?;
-    Ok(parsed.text.trim().to_string())
+    // Try each Whisper model in turn. A failure — a decommissioned model, a
+    // rate limit, a 5xx, a network blip — falls straight through to the next
+    // (each has its own rate bucket). STT has no "raw" floor: with no transcript
+    // there's nothing to inject, so if every model fails the last error
+    // propagates and the dictation surfaces an error.
+    let mut last_err = None;
+    for model in &chain {
+        // Rebuilt per attempt: a multipart Form is consumed on send, so the
+        // wav bytes are cloned for each model tried.
+        let make = || {
+            let part = multipart::Part::bytes(wav_bytes.clone())
+                .file_name("recording.wav")
+                .mime_str("audio/wav")
+                .expect("audio/wav is a valid MIME type");
+            let mut form = multipart::Form::new()
+                .part("file", part)
+                .text("model", model.clone())
+                .text("response_format", "json");
+            if let Some(l) = &lang {
+                form = form.text("language", l.clone());
+            }
+            if let Some(v) = &vocab_prompt {
+                form = form.text("prompt", v.clone());
+            }
+            client
+                .post(url.as_str())
+                .bearer_auth(&cfg.groq_api_key)
+                .multipart(form)
+        };
+        match send_once(make).await {
+            Ok(body) => match serde_json::from_str::<TranscriptionResponse>(&body) {
+                Ok(parsed) => return Ok(parsed.text.trim().to_string()),
+                Err(e) => {
+                    tracing::warn!("STT: model {model} gave unparseable body ({e:#}): {body}; trying next");
+                    last_err = Some(anyhow!("STT parse error: {e}"));
+                    continue;
+                }
+            },
+            Err(e) => {
+                tracing::warn!("STT: model {model} failed ({e:#}); trying next in chain");
+                last_err = Some(e);
+                continue;
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("STT failed: no models available")))
 }
 
 #[derive(Serialize)]
@@ -373,11 +406,32 @@ fn cleanup_chain(cfg: &Config) -> Vec<String> {
     chain
 }
 
-/// Single attempt, no retry/backoff. The cleanup chain uses this so a failure
-/// (rate limit, decommissioned model, 5xx, network) falls straight through to
-/// the next model — each has its own Groq rate bucket, so trying the next
-/// beats a 30s backoff. STT and transform keep send_with_retry, where there's
-/// no alternate model to fall back to.
+/// STT model fallback order (Whisper), primary-first. turbo is fast; large-v3
+/// is the resilience fallback (slightly more accurate, slower) so a
+/// decommissioned turbo — as happened to distil-whisper — doesn't kill
+/// dictation. Unlike the cleanup chain there is no "raw" floor: no transcript
+/// means no dictation, so if every model fails the error surfaces.
+const STT_FALLBACK: &[&str] = &["whisper-large-v3-turbo", "whisper-large-v3"];
+
+fn stt_chain(cfg: &Config) -> Vec<String> {
+    let mut chain: Vec<String> = Vec::new();
+    let primary = cfg.stt_model.trim();
+    if !primary.is_empty() {
+        chain.push(primary.to_string());
+    }
+    for &m in STT_FALLBACK {
+        if !chain.iter().any(|c| c == m) {
+            chain.push(m.to_string());
+        }
+    }
+    chain
+}
+
+/// Single attempt, no retry/backoff. The cleanup and STT chains use this so a
+/// failure (rate limit, decommissioned model, 5xx, network) falls straight
+/// through to the next model — each has its own Groq rate bucket, so trying the
+/// next beats a 30s backoff. transform and voice profile keep send_with_retry,
+/// where there's no alternate model to fall back to.
 async fn send_once(make: impl Fn() -> reqwest::RequestBuilder) -> Result<String> {
     let resp = make().send().await.context("send")?;
     let status = resp.status();
