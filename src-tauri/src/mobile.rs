@@ -364,6 +364,20 @@ fn resume_overlay(app: tauri::AppHandle) -> Result<(), String> {
     write_json_object(&app, OVERLAY_FILE, &json!({ "snoozed_until": 0 }))
 }
 
+/// Groq reasoning models add latency + burn tokens unless disabled. Mirrors
+/// desktop's `groq::reasoning_effort_for`, kept inline so the mobile build
+/// stays independent of the desktop groq module: qwen fully disables reasoning
+/// ("none"); gpt-oss accepts only low/medium/high (use "low"); others omit it.
+fn reasoning_effort_for(model: &str) -> Option<&'static str> {
+    if model.starts_with("qwen/") {
+        Some("none")
+    } else if model.starts_with("openai/gpt-oss") {
+        Some("low")
+    } else {
+        None
+    }
+}
+
 /// One-shot Groq chat completion. Mirrors `groq::chat` on desktop but kept
 /// inline so the mobile build doesn't pull the whole desktop groq module.
 async fn groq_chat(
@@ -377,7 +391,7 @@ async fn groq_chat(
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("HTTP client init failed: {e}"))?;
-    let body = json!({
+    let mut body = json!({
         "model": model,
         "temperature": temperature,
         "messages": [
@@ -385,6 +399,9 @@ async fn groq_chat(
             { "role": "user", "content": user },
         ],
     });
+    if let Some(effort) = reasoning_effort_for(model) {
+        body["reasoning_effort"] = json!(effort);
+    }
     let resp = client
         .post("https://api.groq.com/openai/v1/chat/completions")
         .bearer_auth(api_key)

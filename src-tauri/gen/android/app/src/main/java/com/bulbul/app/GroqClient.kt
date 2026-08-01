@@ -5,10 +5,10 @@
 // ~80 lines but it's stdlib-only and exactly what we need: stream the
 // WAV bytes as a form file, parse the JSON response, return the text.
 //
-// Model choice: whisper-large-v3-turbo. It's the fastest Whisper
-// variant on Groq (~10× quicker than large-v3) and quality is close
-// enough for short dictation that the latency win wins. We can swap
-// this for a config-driven choice once Settings is wired on mobile.
+// STT model chain: whisper-large-v3-turbo first (fastest Whisper variant on
+// Groq, quality close enough for short dictation that the latency win wins),
+// falling back to whisper-large-v3 if turbo fails. Mirrors the desktop STT
+// chain (groq.rs STT_FALLBACK) so a decommissioned model can't kill dictation.
 
 package com.bulbul.app
 
@@ -26,19 +26,32 @@ object GroqClient {
     private const val TAG = "BulbulGroq"
     private const val ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
     private const val CHAT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
-    private const val MODEL = "whisper-large-v3-turbo"
+    /// STT model order, primary-first — mirrors the desktop STT chain
+    /// (groq.rs STT_FALLBACK). turbo is fast; large-v3 is the resilience
+    /// fallback so a decommissioned turbo doesn't kill dictation.
+    private val STT_MODELS = listOf("whisper-large-v3-turbo", "whisper-large-v3")
     private const val BOUNDARY = "----BulbulMultipartBoundary"
     private const val CRLF = "\r\n"
 
     /// Posts the WAV bytes to Groq Whisper and returns the transcript.
-    /// Returns null on any failure — caller logs + decides what to do
-    /// with the audio (fall back to disk write so the user doesn't
-    /// lose their dictation).
+    /// Tries each model in STT_MODELS until one succeeds; returns null only
+    /// if every model fails, so the caller can fall back to disk (audio kept
+    /// so the user doesn't lose their dictation).
     fun transcribe(apiKey: String, wav: ByteArray): String? {
         if (apiKey.isBlank()) {
             Log.w(TAG, "no API key set; not transcribing")
             return null
         }
+        for (model in STT_MODELS) {
+            val text = transcribeWith(apiKey, wav, model)
+            if (text != null) return text
+            Log.w(TAG, "STT model $model failed; trying next in chain")
+        }
+        Log.w(TAG, "all STT models in the fallback chain failed")
+        return null
+    }
+
+    private fun transcribeWith(apiKey: String, wav: ByteArray, model: String): String? {
         return try {
             val url = URL(ENDPOINT)
             val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -51,7 +64,7 @@ object GroqClient {
             }
 
             DataOutputStream(conn.outputStream).use { out ->
-                writeFormField(out, "model", MODEL)
+                writeFormField(out, "model", model)
                 writeFormField(out, "response_format", "json")
                 writeFileField(out, "file", "audio.wav", "audio/wav", wav)
                 out.writeBytes("--$BOUNDARY--$CRLF")
@@ -62,12 +75,12 @@ object GroqClient {
                 conn.inputStream.bufferedReader().use(BufferedReader::readText)
             } else {
                 val err = conn.errorStream?.let { InputStreamReader(it).buffered().readText() } ?: ""
-                Log.w(TAG, "Groq returned $code: $err")
+                Log.w(TAG, "Groq ($model) returned $code: $err")
                 return null
             }
             JSONObject(body).optString("text").trim().takeIf { it.isNotEmpty() }
         } catch (t: Throwable) {
-            Log.w(TAG, "Groq transcribe failed", t)
+            Log.w(TAG, "Groq transcribe ($model) failed", t)
             null
         }
     }
@@ -77,7 +90,7 @@ object GroqClient {
     /// selected text to transform. Returns the model's output, or null on any
     /// failure (no key, network, non-2xx, empty completion) so the caller can
     /// surface a toast instead of silently replacing the selection with junk.
-    fun chat(apiKey: String, systemPrompt: String, userText: String, model: String): String? {
+    fun chat(apiKey: String, systemPrompt: String, userText: String, model: String, temperature: Double = 0.3): String? {
         if (apiKey.isBlank()) {
             Log.w(TAG, "no API key set; not transforming")
             return null
@@ -85,7 +98,8 @@ object GroqClient {
         return try {
             val payload = JSONObject().apply {
                 put("model", model)
-                put("temperature", 0.3)
+                put("temperature", temperature)
+                reasoningEffortFor(model)?.let { put("reasoning_effort", it) }
                 put("messages", JSONArray().apply {
                     put(JSONObject().put("role", "system").put("content", systemPrompt))
                     put(JSONObject().put("role", "user").put("content", userText))
@@ -117,6 +131,16 @@ object GroqClient {
             Log.w(TAG, "Groq chat failed", t)
             null
         }
+    }
+
+    /// Groq's reasoning models add latency + burn tokens unless told to stop.
+    /// Mirrors desktop (groq.rs reasoning_effort_for): qwen fully disables
+    /// reasoning ("none"); gpt-oss accepts only low/medium/high (use "low");
+    /// anything else omits the field.
+    private fun reasoningEffortFor(model: String): String? = when {
+        model.startsWith("qwen/") -> "none"
+        model.startsWith("openai/gpt-oss") -> "low"
+        else -> null
     }
 
     private fun writeFormField(out: DataOutputStream, name: String, value: String) {
