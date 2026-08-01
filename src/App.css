@@ -1599,7 +1599,8 @@ kbd {
    collapse or missize — the "broken heatmap" on Mac/Linux. Width IS definite
    (columns flex to fill the panel, capped by max-width), so squaring off width
    renders identically on every engine. The column then takes its natural height
-   from its 7 cells; the legend's margin-top:auto pins it to the panel bottom. */
+   from its 7 cells; the grid + legend are then centered vertically in the panel
+   (auto margins, below) so an equal-height card fills without a void. */
 .insights-page .heatmap {
   display: flex;
   gap: 3px;
@@ -1607,6 +1608,9 @@ kbd {
   justify-content: center;
   width: 100%;
   min-height: 0;
+  /* Pairs with the legend's margin-bottom:auto to center the grid + legend
+     vertically in the (equal-height) panel — see .heatmap-legend below. */
+  margin-top: auto;
 }
 
 .insights-page .heatmap-col {
@@ -1629,7 +1633,13 @@ kbd {
 }
 
 .insights-page .heatmap-legend {
-  margin-top: auto;
+  /* Hug the grid at the top (via the panel's flex `gap`); the bottom auto-margin
+     balances the heatmap's margin-top:auto so the {grid + legend} group sits
+     vertically centered in the panel body. This keeps the streak panel the SAME
+     height as the usage panel next to it (no uneven cards) while removing the
+     void the old margin-top:auto left above a bottom-pinned legend. */
+  margin-top: 0;
+  margin-bottom: auto;
 }
 
 .insights-page .panel-header h2 {
