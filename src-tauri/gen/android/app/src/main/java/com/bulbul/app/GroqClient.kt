@@ -133,6 +133,29 @@ object GroqClient {
         }
     }
 
+    /// Transform-model order, primary-first — mirrors Cleanup.CLEANUP_FALLBACK
+    /// and groq.rs CLEANUP_FALLBACK. Keep in sync.
+    private val CHAT_FALLBACK = listOf("openai/gpt-oss-20b", "openai/gpt-oss-120b")
+
+    /// Chat completion with model fallthrough — the transform pipeline's
+    /// resilience layer, mirroring desktop execute_transform. Tries
+    /// [primaryModel, gpt-oss-20b, gpt-oss-120b] (deduped) and returns the first
+    /// non-null; null only if EVERY model fails (rate-limit / dead model /
+    /// network), so a rate-limited cleanup model no longer breaks a transform.
+    fun chatWithFallback(apiKey: String, systemPrompt: String, userText: String, primaryModel: String): String? {
+        val chain = ArrayList<String>()
+        val p = primaryModel.trim()
+        if (p.isNotEmpty()) chain.add(p)
+        for (m in CHAT_FALLBACK) if (!chain.contains(m)) chain.add(m)
+        for (model in chain) {
+            val out = chat(apiKey, systemPrompt, userText, model)
+            if (out != null) return out
+            Log.w(TAG, "transform model $model failed; trying next in chain")
+        }
+        Log.w(TAG, "transform: all models in the fallback chain failed")
+        return null
+    }
+
     /// Groq's reasoning models add latency + burn tokens unless told to stop.
     /// Mirrors desktop (groq.rs reasoning_effort_for): qwen fully disables
     /// reasoning ("none"); gpt-oss accepts only low/medium/high (use "low");

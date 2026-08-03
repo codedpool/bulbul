@@ -427,10 +427,10 @@ fn stt_chain(cfg: &Config) -> Vec<String> {
     chain
 }
 
-/// Single attempt, no retry/backoff. The cleanup and STT chains use this so a
-/// failure (rate limit, decommissioned model, 5xx, network) falls straight
-/// through to the next model — each has its own Groq rate bucket, so trying the
-/// next beats a 30s backoff. transform and voice profile keep send_with_retry,
+/// Single attempt, no retry/backoff. The cleanup, STT, and transform chains use
+/// this so a failure (rate limit, decommissioned model, 5xx, network) falls
+/// straight through to the next model — each has its own Groq rate bucket, so
+/// trying the next beats a 30s backoff. Voice profile keeps send_with_retry,
 /// where there's no alternate model to fall back to.
 async fn send_once(make: impl Fn() -> reqwest::RequestBuilder) -> Result<String> {
     let resp = make().send().await.context("send")?;
@@ -700,8 +700,7 @@ pub async fn execute_transform(
     text: &str,
     notify: Option<&RetryNotify<'_>>,
 ) -> Result<String> {
-    let (base, key, model) = chat_endpoint(cfg);
-    if key.is_empty() {
+    if cfg.groq_api_key.trim().is_empty() {
         return Err(anyhow!("No API key set"));
     }
     if text.trim().is_empty() {
@@ -728,43 +727,70 @@ pub async fn execute_transform(
     };
     let augmented_system = format!("{}{}", system_prompt, user_context);
 
-    let request = ChatRequest {
-        model,
-        messages: vec![
-            ChatMessage {
-                role: "system",
-                content: augmented_system,
-            },
-            ChatMessage {
-                role: "user",
-                content: text.to_string(),
-            },
-        ],
-        temperature: 0.3,
-        // Same per-model reasoning policy as cleanup — critically, qwen must
-        // get "none" here too, or it dumps a <think> block into the rewrite.
-        reasoning_effort: reasoning_effort_for(model),
-    };
-
     let client = shared_client();
-    let url = format!("{base}/chat/completions");
-    let make = || {
-        client
-            .post(url.as_str())
-            .bearer_auth(key)
-            .json(&request)
-    };
-    let body = send_with_retry(make, "transform", notify).await?;
-    let parsed: ChatResponse =
-        serde_json::from_str(&body).with_context(|| format!("parsing transform body: {body}"))?;
-    let out = parsed
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message.content)
-        .unwrap_or_default();
-    // Cerebras reasoning models (GLM/Qwen) prepend a <think> block; drop it.
-    Ok(strip_reasoning(&out))
+    let url = format!("{BASE_URL}/chat/completions");
+    // Same qwen -> gpt-oss-20b -> gpt-oss-120b fallback chain as cleanup: if the
+    // primary (chat_model) is rate-limited or decommissioned, fall through to the
+    // next model rather than failing the transform (each has its own Groq rate
+    // bucket, so trying the next beats a backoff). Unlike cleanup there is NO raw
+    // floor — a transform has no meaningful "unchanged" output — so if every
+    // model fails the last error surfaces to the caller.
+    let chain = cleanup_chain(cfg);
+    let _ = notify; // the chain fails fast to the next model; no backoff to report
+    let mut last_err: Option<anyhow::Error> = None;
+
+    for model in &chain {
+        let model = model.as_str();
+        let request = ChatRequest {
+            model,
+            messages: vec![
+                ChatMessage {
+                    role: "system",
+                    content: augmented_system.clone(),
+                },
+                ChatMessage {
+                    role: "user",
+                    content: text.to_string(),
+                },
+            ],
+            temperature: 0.3,
+            // qwen must get "none" or it dumps a <think> block into the rewrite;
+            // gpt-oss gets "low". Same per-model policy as cleanup.
+            reasoning_effort: reasoning_effort_for(model),
+        };
+        let make = || {
+            client
+                .post(url.as_str())
+                .bearer_auth(cfg.groq_api_key.trim())
+                .json(&request)
+        };
+        let body = match send_once(make).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("transform: model {model} failed ({e:#}); trying next in chain");
+                last_err = Some(e);
+                continue;
+            }
+        };
+        let parsed: ChatResponse = match serde_json::from_str(&body) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("transform: model {model} gave unparseable body ({e:#}); trying next");
+                last_err = Some(anyhow!("parsing transform body: {e}"));
+                continue;
+            }
+        };
+        let out = parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .unwrap_or_default();
+        // Reasoning models can still prepend a <think> block; drop it.
+        return Ok(strip_reasoning(&out));
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow!("all transform models in the fallback chain failed")))
 }
 
 const VOICE_PROFILE_SYSTEM_PROMPT: &str = "You are writing a personalized 'voice profile' for a user of a voice dictation app called Bulbul.\n\

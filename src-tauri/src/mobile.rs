@@ -421,6 +421,42 @@ async fn groq_chat(
         .ok_or_else(|| "Groq returned an empty response".to_string())
 }
 
+/// Transform/cleanup model fallback chain, primary-first — mirrors desktop's
+/// groq.rs CLEANUP_FALLBACK. The user's chat_model is tried first, then these,
+/// deduped; each has its own Groq rate bucket.
+const CHAT_FALLBACK: &[&str] = &["openai/gpt-oss-20b", "openai/gpt-oss-120b"];
+
+/// Chat completion with model fallthrough: try the primary (chat_model), then
+/// CHAT_FALLBACK (deduped), returning the first success. If every model fails
+/// the last error surfaces. Mirrors desktop `execute_transform`, so a
+/// rate-limited or decommissioned cleanup model no longer breaks a transform.
+async fn groq_chat_chain(
+    api_key: &str,
+    primary: &str,
+    system: &str,
+    user: &str,
+    temperature: f32,
+) -> Result<String, String> {
+    let mut chain: Vec<&str> = Vec::new();
+    let p = primary.trim();
+    if !p.is_empty() {
+        chain.push(p);
+    }
+    for &m in CHAT_FALLBACK {
+        if !chain.contains(&m) {
+            chain.push(m);
+        }
+    }
+    let mut last_err = "no models in the fallback chain".to_string();
+    for model in chain {
+        match groq_chat(api_key, model, system, user, temperature).await {
+            Ok(out) => return Ok(out),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
 /// Read a store, or seed + persist it if the file doesn't exist yet.
 /// Keyed on file existence (not emptiness) so an emptied list stays empty.
 fn load_store(app: &tauri::AppHandle, file: &str, seed: impl FnOnce() -> Vec<Value>) -> Vec<Value> {
@@ -1164,7 +1200,7 @@ async fn run_transform_on_text(
         .find(|t| t["id"].as_i64() == Some(transform_id))
         .and_then(|t| t["system_prompt"].as_str().map(|s| s.to_string()))
         .ok_or_else(|| "Transform not found".to_string())?;
-    groq_chat(cfg.groq_api_key.trim(), &cfg.chat_model, &prompt, &text, 0.3).await
+    groq_chat_chain(cfg.groq_api_key.trim(), &cfg.chat_model, &prompt, &text, 0.3).await
 }
 
 // ---------- Notes / scratchpad ----------
