@@ -4,10 +4,16 @@ import { listen } from "@tauri-apps/api/event";
 import FeatureHero from "../components/FeatureHero.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { IS_ANDROID } from "../platform.js";
+import { useInPageChordFallback } from "../inPageHotkey.js";
 
 const AUTOSAVE_DELAY_MS = 600;
 
 export default function ScratchpadView() {
+  // In-page hotkey fallback for the WebView2 focus bug (Windows). No-op unless
+  // the saved hotkey is a modifier-only chord the global hook isn't catching
+  // while this window is focused; then it drives the real dictation in-page.
+  useInPageChordFallback();
+
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");

@@ -5,11 +5,17 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import ConfirmDialog from "./components/ConfirmDialog.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
 import { IS_MAC } from "./platform.js";
+import { useInPageChordFallback } from "./inPageHotkey.js";
 import "./ScratchpadWindow.css";
 
 const AUTOSAVE_DELAY_MS = 600;
 
 export default function ScratchpadWindow() {
+  // In-page hotkey fallback for the WebView2 focus bug (Windows) — see
+  // inPageHotkey.js. No-op unless a modifier-only chord isn't being caught by
+  // the global hook while this standalone window is focused.
+  useInPageChordFallback();
+
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");

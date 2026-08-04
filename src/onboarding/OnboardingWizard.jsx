@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
 import { applyTheme } from "../theme.js";
 import { IS_ANDROID, IS_LINUX, IS_MAC, IS_WINDOWS, META_KEY_NAME } from "../platform.js";
+import { useInPageChordFallback } from "../inPageHotkey.js";
 import "./onboarding.css";
 
 // The stored hotkey VALUES are platform-independent — Bulbul's parser maps
@@ -1089,6 +1090,15 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
     };
   }, []);
 
+  // In-page hotkey fallback — a recent WebView2 update stopped delivering
+  // modifier-only chords (Ctrl+Win) to our global keyboard hook while Bulbul's
+  // own window is focused, so the wizard's live test never fired. The shared
+  // hook detects the chord in-page and drives the real dictation. It returns
+  // whether that fallback actually fired — which only happens when the global
+  // hook ISN'T intercepting the chord in-window — so we can show an honest note
+  // pointing at the key-based alternative for anyone whose hotkey is blocked.
+  const usedInPageFallback = useInPageChordFallback(activeHotkey);
+
   const requiredParts = parseChordParts(activeHotkey);
 
   async function choose(value) {
@@ -1301,6 +1311,14 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
             )}
             <button className="onb-link" type="button" onClick={clearTest}>Clear and try again</button>
           </div>
+
+          {usedInPageFallback && (
+            <div className="onb-fallback-note">
+              Note: if {formatComboForDisplay(activeHotkey)} doesn't fire in your other apps, a
+              recent Windows update may be blocking it — you can switch to{" "}
+              <code>{formatComboForDisplay("Ctrl+Shift+Space")}</code> anytime in Settings.
+            </div>
+          )}
         </div>
       </div>
 

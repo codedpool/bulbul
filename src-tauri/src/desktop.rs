@@ -2044,6 +2044,7 @@ pub fn run() {
             save_config,
             validate_api_key,
             complete_onboarding,
+            inpage_hotkey,
             track_event,
             check_for_updates,
             get_staged_update_version,
@@ -2498,6 +2499,31 @@ fn cli_toggle_dictation(app: &AppHandle, polish: bool) {
         tracing::info!("cli toggle: stop");
         let _ = state.hotkey_tx.send(evt);
     }
+}
+
+/// Fire a hold-to-talk dictation from an in-page key event in one of Bulbul's
+/// OWN WebView windows (setup wizard, scratchpad). A recent WebView2 update
+/// stopped delivering modifier-only chords (Ctrl+Win) to our global keyboard
+/// hook while Bulbul's own window is focused — so pressing the hotkey inside
+/// those windows never started dictation. The keys DO still reach the web page,
+/// so the page detects the completed chord itself and drives the real pipeline
+/// through here: on press the orchestrator starts recording and shows the
+/// listening tray; on release it transcribes and, since Bulbul is the
+/// foreground app, routes the text back into whichever Bulbul window is
+/// focused. The orchestrator's one-recording-at-a-time guard means this can't
+/// double-fire even if the global hook also fires.
+#[tauri::command]
+fn inpage_hotkey(pressed: bool, state: tauri::State<'_, AppState>) {
+    let evt = if pressed {
+        HotkeyEvent::DictationPressed
+    } else {
+        HotkeyEvent::DictationReleased
+    };
+    tracing::info!(
+        "inpage_hotkey: {} (in-page chord fallback)",
+        if pressed { "press" } else { "release" }
+    );
+    let _ = state.hotkey_tx.send(evt);
 }
 
 /// SIGUSR2 toggles dictation, SIGUSR1 toggles polish dictation — the
