@@ -4,6 +4,26 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.2.0] — unreleased
+
+Resilience + reach: cleanup and transcription now survive a model being retired or rate-limited by rotating through backups, the cleanup prompt is leaner (more dictations per day), and Android gains the same AI cleanup the desktop has. Includes everything in 1.1.1.
+
+### Added
+
+- **Full AI cleanup on Android** — the mobile app now runs the same cleanup pass as desktop, driven by the Cleanup-mode dropdown (Raw / Clean / Polished). Android previously injected near-raw transcription; it now removes fillers, fixes punctuation, resolves self-corrections, handles bullet lists, and adapts tone per app — matching the desktop output.
+
+### Improved
+
+- **Cleanup survives model changes** — the cleanup step rotates through a chain of models (Qwen3 → GPT-OSS 20B → GPT-OSS 120B, then the raw transcript as a floor) instead of depending on a single one. If a model is rate-limited or retired, your dictation still gets cleaned instead of breaking. Text transforms and the Android cleanup get the same fallthrough.
+- **Speech-to-text fallback** — transcription falls back from Whisper Large v3 Turbo to Whisper Large v3 if the primary is unavailable.
+- **More dictations per day** — the cleanup prompt was trimmed substantially (roughly 1.8× the daily dictation budget on Groq's free tier) with no drop in cleanup quality.
+- **Simpler Settings** — the cleanup-model picker is gone; Bulbul picks the model automatically, with the fallback chain behind it.
+- **Insights heatmap** — the streak card no longer leaves an empty gap between the grid and its legend.
+
+### Changed
+
+- **"Personalize cleanup from past dictations" now defaults to off** on every platform — opt in when you want it.
+
 ## [1.1.1] — 2026-08-08
 
 The public launch. Everything from the cross-platform 1.1.0, plus editable transform hotkeys, accurate per-app names on every desktop, reliable Android auto-updates, and a round of window-chrome and install polish.
