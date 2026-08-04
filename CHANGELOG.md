@@ -22,6 +22,7 @@ The public launch. Everything from the cross-platform 1.1.0, plus editable trans
 - **Clearer Windows first run** — if Windows Defender false-flags the unsigned installer, it now explains that it's a known false positive and how to allow it, instead of a bare error.
 - **Onboarding** — the "how to get a Groq API key" step plays a short video walkthrough.
 - **More reliable Windows hotkey** — the modifier-only hotkeys (Ctrl+Win, Alt+Win) use a low-level keyboard hook that Windows could quietly drop after background power-throttling, a screen lock, or sleep/resume — silently killing hold-to-talk until you restarted Bulbul. Bulbul now keeps the hook alive (opting out of power throttling) and re-asserts it on a watchdog, so it recovers on its own within seconds instead of staying dead. And if something blocks the hook outright (some security software does), it now shows a banner instead of failing silently — with a one-tap switch to a key-based shortcut, which isn't affected.
+- **In-app dictation on updated Windows** — a recent Windows WebView2 update stopped routing the modifier-only hotkeys (Ctrl+Win, Alt+Win) to Bulbul's global hook while Bulbul's *own* window had focus, so the setup-wizard hotkey test and in-app scratchpad dictation stopped responding (dictation into every other app was unaffected). Bulbul now detects the chord in the window itself and drives the dictation directly, so those work again.
 
 ### Contributors
 

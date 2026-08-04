@@ -814,6 +814,29 @@ html.platform-android .onb-actions .onb-btn {
   font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
 }
 
+/* Honest heads-up shown ONLY when the in-page fallback fired (i.e. the global
+   hook isn't intercepting the chord in-window). Soft amber accent — a note,
+   not an alarm. */
+.onb-fallback-note {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  line-height: 1.5;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--fill);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #d9a441;
+}
+
+.onb-fallback-note code {
+  background: var(--field);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+
 /* ─────────── Test pane (right column of hotkey step) ─────────── */
 .onb-test-pane {
   display: flex;
