@@ -42,8 +42,8 @@ body, html, #root {
    title bar strip is transparent and content extends behind it. The
    React .titlebar is redundant (native chrome renders traffic lights
    + drag region); hide it. The sidebar toggle floats at the same Y
-   as the traffic lights, positioned to their right — Wispr Flow /
-   Linear / Raycast pattern. */
+   as the traffic lights, positioned to their right — the Linear /
+   Raycast pattern. */
 .platform-mac .titlebar {
   display: none;
 }
@@ -83,7 +83,7 @@ body, html, #root {
   pointer-events: none;
 }
 
-/* Wispr Flow-style sidebar toggle: sits inline with the traffic
+/* Floating sidebar toggle: sits inline with the traffic
    lights, immediately to their right. Overlay title bar mode extends
    window content up to Y=0, so we can place a fixed-position button
    at (top: 10px, left: 84px) — 84px clears the ~78px cluster + a
