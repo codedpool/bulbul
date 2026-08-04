@@ -1360,7 +1360,7 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // other Mac app), plus TitleBarStyle::Overlay + hiddenTitle so the
     // title bar strip is transparent and our content extends behind
     // it. That lets us place a small sidebar toggle at the same Y as
-    // the traffic lights — the Wispr Flow / Linear / Raycast pattern.
+    // the traffic lights — the Linear / Raycast pattern.
     // Win/Linux stay borderless because their custom React SpTitleBar
     // draws its own min/close.
     #[cfg(target_os = "macos")]
