@@ -4369,3 +4369,49 @@ html.platform-android .panel-header { flex-wrap: wrap; gap: 4px; }
 html.platform-android .page { max-width: 100%; }
 html.platform-android .m-content > * { min-width: 0; }
 html.platform-android table { display: block; overflow-x: auto; }
+
+/* ── Hotkey-health warning banner ─────────────────────────────────────────
+   Shown by HotkeyHealthBanner.jsx when the Windows keyboard-hook watchdog
+   reports the dictation hotkey can't be installed (blocked by AV / a keyboard
+   utility). Engine-safe colors (no color-mix); theme-aware text via --text. */
+.hotkey-health-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: var(--text, inherit);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.hhb-icon { flex: none; font-size: 15px; }
+.hhb-text { flex: 1; min-width: 0; }
+.hotkey-health-banner strong { font-weight: 600; }
+.hhb-action {
+  flex: none;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  background: var(--field, rgba(127, 127, 127, 0.08));
+  color: var(--text, inherit);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hhb-action:hover { background: var(--fill, rgba(127, 127, 127, 0.16)); }
+.hhb-dismiss {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text, inherit);
+  opacity: 0.6;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.hhb-dismiss:hover { opacity: 1; }

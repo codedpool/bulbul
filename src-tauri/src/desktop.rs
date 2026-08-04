@@ -2087,6 +2087,11 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
+            // Let the Windows keyboard-hook thread surface hotkey-health to the
+            // dashboard (it was spawned earlier, before the app handle existed).
+            #[cfg(target_os = "windows")]
+            keyboard_hook::set_app_handle(handle.clone());
+
             // Must precede install_global_shortcuts below — the Linux
             // hotkey watchers (portal + X11) report their fate through
             // linux_env::emit_hotkey_status, which needs the handle.

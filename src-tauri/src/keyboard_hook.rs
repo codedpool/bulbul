@@ -40,6 +40,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCWSTR;
 
+use tauri::{AppHandle, Emitter};
+
 use crate::hotkey::{HotkeyEvent, ParsedHotkey};
 
 // ─── Modifier bitmask ─────────────────────────────────────────────────
@@ -108,6 +110,11 @@ fn send_event(evt: HotkeyEvent) {
 /// permanently hotkey-dead for the session.
 static HOOK_THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
 
+/// App handle for surfacing hotkey-health to the dashboard. Set once at startup
+/// (`set_app_handle`); the watchdog emits a `hotkey-status` event through it when
+/// the hook can't be (re)installed while a modifier-only chord is bound.
+static HOOK_APP: OnceLock<AppHandle> = OnceLock::new();
+
 // ─── Public API ───────────────────────────────────────────────────────
 
 /// Install the global LL keyboard hook on a dedicated thread, idempotent.
@@ -122,6 +129,12 @@ pub fn install(tx: Sender<HotkeyEvent>) {
         .name("bulbul-kbd-hook".into())
         .spawn(|| unsafe { hook_thread_main() })
         .expect("spawn keyboard hook thread");
+}
+
+/// Give the hook thread a handle so it can surface hotkey-health to the UI.
+/// Call once at startup (from the Tauri setup hook).
+pub fn set_app_handle(app: AppHandle) {
+    let _ = HOOK_APP.set(app);
 }
 
 /// Set (or clear, with 0) the chord-modifier mask the hook should
@@ -192,6 +205,13 @@ unsafe fn hook_thread_main() {
     const WATCHDOG_MS: u32 = 5_000;
     let timer_id = SetTimer(HWND::default(), 0, WATCHDOG_MS, None);
 
+    // Hook-health tracking for the UI (see emit_hotkey_health). `fails` counts
+    // consecutive (re)install failures; the alarm only fires once it's clearly
+    // persistent AND a modifier-only chord is bound (a key-based hotkey doesn't
+    // rely on this hook).
+    let mut fails: u32 = if hook.is_some() { 0 } else { 1 };
+    let mut alarm_reported = false;
+
     let mut msg = MSG::default();
     while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
         if msg.message == WM_TIMER && msg.wParam.0 == timer_id {
@@ -212,6 +232,15 @@ unsafe fn hook_thread_main() {
                     }
                     _ => {}
                 }
+                // Surface persistent install failure to the UI. Only alarm when a
+                // chord hotkey is actually bound — a key-based hotkey doesn't use
+                // this hook, so a dead hook is irrelevant to it.
+                fails = if hook.is_some() { 0 } else { fails.saturating_add(1) };
+                let alarm = fails >= 2 && CHORD_MASK.load(Ordering::Acquire) != 0;
+                if alarm != alarm_reported {
+                    alarm_reported = alarm;
+                    emit_hotkey_health(!alarm);
+                }
             }
             continue;
         }
@@ -224,6 +253,26 @@ unsafe fn hook_thread_main() {
     }
     let _ = KillTimer(HWND::default(), timer_id);
     tracing::info!("keyboard_hook: message loop exited");
+}
+
+/// Surface hotkey-health to the dashboard. `ok=false` = the hook can't install
+/// while a chord hotkey is bound, so the user's dictation hotkey is dead and the
+/// banner offers a key-based fallback. Emitted only on transitions.
+fn emit_hotkey_health(ok: bool) {
+    if ok {
+        tracing::info!("keyboard_hook: hotkey health recovered");
+    } else {
+        tracing::warn!("keyboard_hook: hotkey DOWN — surfacing to UI");
+    }
+    if let Some(app) = HOOK_APP.get() {
+        let _ = app.emit(
+            "hotkey-status",
+            serde_json::json!({
+                "ok": ok,
+                "detail": "Bulbul couldn't install the Windows keyboard hook your dictation hotkey relies on — it may be blocked by security software or a keyboard utility.",
+            }),
+        );
+    }
 }
 
 /// (Re)install the LL keyboard hook. `None` = the call failed (AV/EDR block,

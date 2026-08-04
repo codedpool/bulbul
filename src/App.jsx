@@ -14,6 +14,7 @@ import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
 import LinuxSupportBanner from "./LinuxSupportBanner.jsx";
+import HotkeyHealthBanner from "./HotkeyHealthBanner.jsx";
 import { applyTheme } from "./theme.js";
 import { IS_LINUX, IS_MAC, RELAUNCH_HINT, IS_ANDROID } from "./platform.js";
 import "./App.css";
@@ -554,6 +555,7 @@ function App() {
 
       <main className="content">
         {IS_LINUX && <LinuxSupportBanner />}
+        <HotkeyHealthBanner config={config} updateConfig={updateConfig} />
         {stagedUpdate && (
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />
