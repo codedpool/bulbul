@@ -31,6 +31,11 @@ use std::time::Duration;
 
 use windows::Win32::Foundation::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, ProcessPowerThrottling, SetProcessInformation,
+    PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+    PROCESS_POWER_THROTTLING_STATE,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCWSTR;
@@ -96,10 +101,12 @@ fn send_event(evt: HotkeyEvent) {
     }
 }
 
-/// Has the keyboard hook thread already been spawned? Atomic so the
-/// installer can be called multiple times (e.g. on settings reload)
-/// without ever installing the hook twice.
-static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
+/// Has the keyboard hook thread already been spawned? Atomic so the installer
+/// can be called multiple times (e.g. on settings reload) without spawning a
+/// second thread. The thread itself owns installing AND re-installing the hook
+/// (retry + watchdog), so a failed SetWindowsHookExW no longer leaves the app
+/// permanently hotkey-dead for the session.
+static HOOK_THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
 
 // ─── Public API ───────────────────────────────────────────────────────
 
@@ -108,7 +115,7 @@ static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// startup; the orchestrator can later swap the sender if needed.
 pub fn install(tx: Sender<HotkeyEvent>) {
     *event_tx_slot().lock() = Some(tx);
-    if HOOK_INSTALLED.swap(true, Ordering::AcqRel) {
+    if HOOK_THREAD_SPAWNED.swap(true, Ordering::AcqRel) {
         return;
     }
     thread::Builder::new()
@@ -138,6 +145,13 @@ pub fn set_chord_mask(mask: u8) {
 // ─── Hook thread ──────────────────────────────────────────────────────
 
 unsafe fn hook_thread_main() {
+    // Keep this process out of Windows 11 power throttling (EcoQoS). A throttled
+    // process can have its threads suspended long enough that the hook callback
+    // overruns LowLevelHooksTimeout (~300ms), at which point Windows SILENTLY
+    // removes the hook — the single biggest cause of "the hotkey worked, then
+    // suddenly stopped".
+    disable_process_power_throttling();
+
     // Seed HELD_MODS from the OS's actual key state so we don't start
     // with a lie. If the user is holding a modifier at the instant our
     // hook comes up (autostart-at-login, lock-screen unlock with a key
@@ -155,24 +169,87 @@ unsafe fn hook_thread_main() {
             return;
         }
     };
-    let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), h_mod, 0) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("keyboard_hook: SetWindowsHookExW failed: {e:?}");
-            return;
-        }
-    };
-    tracing::info!("keyboard_hook: WH_KEYBOARD_LL installed (HHOOK={:?})", hook.0);
 
-    // Pump messages so the hook stays alive. GetMessageW blocks; the
-    // OS posts hook messages here as keystrokes flow through. We never
-    // post a quit message — the hook lives for the process lifetime.
+    // Install the hook. If it fails (blocked by security software, a transient
+    // error, …) we do NOT bail — the watchdog timer below retries every few
+    // seconds. This kills the old bug where one failed SetWindowsHookExW left
+    // the app hotkey-dead for the whole session with no recovery.
+    let mut hook = install_hook(h_mod);
+    match hook {
+        Some(h) => tracing::info!("keyboard_hook: WH_KEYBOARD_LL installed (HHOOK={:?})", h.0),
+        None => {
+            tracing::error!("keyboard_hook: initial SetWindowsHookExW failed — retrying on watchdog")
+        }
+    }
+
+    // Watchdog. Windows removes LL hooks on timeout / session switch (Win+L) /
+    // sleep-resume with NO notification, and there's no API to query "is my
+    // hook still alive?". So we periodically re-assert it: unhook the old handle
+    // (harmless if already gone) and install a fresh one — which also puts us
+    // back at the front of the hook chain. This is what makes the hotkey
+    // self-heal instead of staying dead until an app restart. `SetTimer` with a
+    // null HWND posts WM_TIMER to this thread's own message queue.
+    const WATCHDOG_MS: u32 = 5_000;
+    let timer_id = SetTimer(HWND::default(), 0, WATCHDOG_MS, None);
+
     let mut msg = MSG::default();
     while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+        if msg.message == WM_TIMER && msg.wParam.0 == timer_id {
+            // Never churn the hook mid-chord: a re-install has a microscopic
+            // window where the releasing KEYUP could be missed and leave a
+            // recording stuck open. Wait for the next tick.
+            if !CHORD_ENGAGED.load(Ordering::Acquire) {
+                let had_hook = hook.is_some();
+                if let Some(h) = hook.take() {
+                    let _ = UnhookWindowsHookEx(h);
+                }
+                hook = install_hook(h_mod);
+                // Only log real transitions so we don't spam the log every 5s.
+                match (had_hook, hook.is_some()) {
+                    (false, true) => tracing::info!("keyboard_hook: re-installed after a drop"),
+                    (true, false) => {
+                        tracing::warn!("keyboard_hook: re-install FAILED — hotkey may be down")
+                    }
+                    _ => {}
+                }
+            }
+            continue;
+        }
         let _ = TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+
+    if let Some(h) = hook {
+        let _ = UnhookWindowsHookEx(h);
+    }
+    let _ = KillTimer(HWND::default(), timer_id);
     tracing::info!("keyboard_hook: message loop exited");
+}
+
+/// (Re)install the LL keyboard hook. `None` = the call failed (AV/EDR block,
+/// transient error); the caller retries on the watchdog timer.
+unsafe fn install_hook(h_mod: HINSTANCE) -> Option<HHOOK> {
+    SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), h_mod, 0).ok()
+}
+
+/// Opt this process out of Windows 11 power throttling (EcoQoS) so the hook
+/// thread is never suspended past LowLevelHooksTimeout. Best-effort: pre-1809
+/// Windows lacks the API, in which case this just warns.
+unsafe fn disable_process_power_throttling() {
+    let state = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        StateMask: 0, // bit clear in the mask = throttling DISABLED (full speed)
+    };
+    match SetProcessInformation(
+        GetCurrentProcess(),
+        ProcessPowerThrottling,
+        &state as *const PROCESS_POWER_THROTTLING_STATE as *const core::ffi::c_void,
+        std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+    ) {
+        Ok(()) => tracing::info!("keyboard_hook: EcoQoS power throttling disabled"),
+        Err(e) => tracing::warn!("keyboard_hook: couldn't disable power throttling: {e:?}"),
+    }
 }
 
 // ─── Callback ─────────────────────────────────────────────────────────
