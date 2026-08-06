@@ -6,7 +6,6 @@
   z-index: 1000;
   display: flex;
   flex-direction: column;
-  -webkit-app-region: drag;
   font-family: "DM Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
   font-optical-sizing: auto;
 }
@@ -45,6 +44,7 @@
   gap: 14px;
   flex-shrink: 0;
   height: 48px;
+  -webkit-app-region: drag;
 }
 
 .onb-brand {
@@ -761,13 +761,13 @@ html.platform-android .onb-actions .onb-btn {
   display: flex;
   align-items: flex-start;
   gap: 9px;
-  padding: 10px 13px;
+  padding: 8px 12px;
   border-radius: 10px;
   background: var(--fill);
   border: 1px solid var(--border);
   color: var(--text-2);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .onb-hotkey-note svg {
@@ -800,7 +800,7 @@ html.platform-android .onb-actions .onb-btn {
   color: var(--text-faint);
   line-height: 1.5;
   margin-top: 2px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   background: var(--fill);
   border-radius: 8px;
   border: 1px dashed var(--border);
@@ -841,8 +841,8 @@ html.platform-android .onb-actions .onb-btn {
 .onb-test-pane {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: 5px;
+  padding: 10px 14px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 11px;
@@ -885,7 +885,7 @@ html.platform-android .onb-actions .onb-btn {
   font-style: italic;
   line-height: 1.45;
   color: var(--text-2);
-  padding: 8px 12px;
+  padding: 6px 12px;
   border-left: 3px solid #5ec8c0;
   background: rgba(94, 200, 192, 0.06);
   border-radius: 4px;
@@ -907,12 +907,12 @@ html.platform-android .onb-actions .onb-btn {
   justify-content: center;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 8px 14px;
+  padding: 6px 14px;
   margin: 0;
   border-radius: 10px;
   background: linear-gradient(180deg, rgba(94, 200, 192, 0.05), rgba(94, 200, 192, 0.01));
   border: 1px dashed rgba(94, 200, 192, 0.35);
-  min-height: 54px;
+  min-height: 46px;
 }
 
 .onb-chord-empty {
@@ -981,7 +981,7 @@ html.platform-android .onb-actions .onb-btn {
 
 .onb-textarea {
   width: 100%;
-  min-height: 64px;
+  min-height: 44px;
   background: var(--field);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -1215,13 +1215,13 @@ html.platform-android .onb-actions .onb-btn {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 14px;
-  margin: 4px 0;
+  padding: 6px 14px;
+  margin: 2px 0;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--fill);
   transition: background 200ms ease, border-color 200ms ease, transform 200ms ease;
-  min-height: 48px;
+  min-height: 40px;
 }
 
 .onb-hold-indicator.state-listening {
@@ -1277,7 +1277,7 @@ html.platform-android .onb-actions .onb-btn {
 .onb-hold-visual {
   flex-shrink: 0;
   width: 44px;
-  height: 56px;
+  height: 44px;
   display: flex;
   flex-direction: column;
   align-items: center;
