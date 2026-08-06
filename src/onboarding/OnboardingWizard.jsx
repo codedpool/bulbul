@@ -137,6 +137,38 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
 
   const win = getCurrentWindow();
 
+  // The wizard has no maximize/restore control, so double-clicking the
+  // draggable top bar would maximize the window and strand the user with no way
+  // back. Disable maximizing while the wizard is shown (and un-maximize if
+  // we're already stuck there); restore it when onboarding finishes.
+  useEffect(() => {
+    // Hard guarantee against the "stuck maximized" trap: the wizard has no
+    // restore control, so revert any maximize while it's shown. We also disable
+    // maximizing (ideally it never happens) and only the header is a drag
+    // region now, so double-clicking the body can't maximize either. Restored
+    // on unmount.
+    win.setMaximizable(false).catch(() => {});
+    const revertIfMaximized = () =>
+      win
+        .isMaximized()
+        .then((m) => {
+          if (m) win.unmaximize();
+        })
+        .catch(() => {});
+    revertIfMaximized();
+    let unlisten;
+    win
+      .onResized(revertIfMaximized)
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      win.setMaximizable(true).catch(() => {});
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   return (
     <div className="onb-shell">
       <header className="onb-top">
@@ -1220,12 +1252,12 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
           <InfoIcon />
           <p>
             <strong>Some shortcuts can be blocked on your PC.</strong> Security
-            software — antivirus, corporate security, or game anti-cheat —
-            sometimes blocks modifier-only shortcuts like{" "}
-            <code>{formatComboForDisplay("Ctrl+Win")}</code>. It's specific to your
-            machine, not a Bulbul bug. If your shortcut doesn't respond, pick{" "}
-            <code>{formatComboForDisplay("Ctrl+Shift+Space")}</code> — it uses a
-            different method that works everywhere.
+            software (antivirus, corporate, or anti-cheat) sometimes blocks
+            modifier-only shortcuts like{" "}
+            <code>{formatComboForDisplay("Ctrl+Win")}</code> — that's your machine,
+            not a Bulbul bug. If yours doesn't respond, pick{" "}
+            <code>{formatComboForDisplay("Ctrl+Shift+Space")}</code>, which works
+            everywhere.
           </p>
         </div>
       )}
