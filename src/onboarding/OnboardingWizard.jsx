@@ -86,8 +86,12 @@ const HOTKEY_PRESETS = IS_MAC
     ? HOTKEY_PRESETS_LINUX
     : HOTKEY_PRESETS_DESKTOP;
 
-const VIDEO_URL = "https://www.youtube.com/watch?v=lRo4r_b4twI";
-const VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/lRo4r_b4twI";
+// The "how to get a Groq key" walkthrough differs by platform (the mobile UI +
+// key-paste flow differ from desktop), so Android gets its own recording while
+// desktop keeps the original.
+const VIDEO_ID = IS_ANDROID ? "DFdMRX1sPHI" : "lRo4r_b4twI";
+const VIDEO_URL = `https://www.youtube.com/watch?v=${VIDEO_ID}`;
+const VIDEO_EMBED = `https://www.youtube-nocookie.com/embed/${VIDEO_ID}`;
 
 // Sample line deliberately seeded with "um", "uh", "like" so the cleanup
 // pass visibly removes them — the user sees Bulbul not just transcribe but
