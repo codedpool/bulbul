@@ -4,7 +4,7 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
-## [1.1.1] — 2026-07-19
+## [1.1.1] — 2026-08-08
 
 The public launch. Everything from the cross-platform 1.1.0, plus editable transform hotkeys, accurate per-app names on every desktop, reliable Android auto-updates, and a round of window-chrome and install polish.
 
