@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Global low-level keyboard hook for modifier-only chord dictation.
 //!
 //! Why this exists: Windows decides "open Start menu?" by checking whether

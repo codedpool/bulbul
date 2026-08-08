@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // Injects a transcript into the field the user is focused in.
 //
 // The trick: the foreground service does the work, but only the

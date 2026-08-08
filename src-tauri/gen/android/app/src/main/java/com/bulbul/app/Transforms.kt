@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // The built-in transforms offered in the text-selection sheet.
 //
 // These mirror the desktop defaults seeded in db.rs (DEFAULT_TRANSFORMS)

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;

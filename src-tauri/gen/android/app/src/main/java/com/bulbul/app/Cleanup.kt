@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // AI cleanup for mobile dictation — the Android port of desktop's
 // `groq::cleanup` (src-tauri/src/groq.rs). It mirrors, as closely as a
 // second implementation can, the desktop system prompt, the qwen→gpt-oss

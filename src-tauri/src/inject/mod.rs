@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Text injection into the focused app: writes to clipboard, fires the
 //! OS-level "paste" combo (Ctrl+V on Windows, Cmd+V on macOS), restores
 //! the prior clipboard contents after a short delay.

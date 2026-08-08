@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // Bulbul on Android (and eventually iOS).
 //
 // Phase 1: Tauri app that boots, opens the WebView, loads dist/index.html.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Bulbul library entry point.
 //!
 //! The crate compiles for desktop (Windows/macOS/Linux) AND for mobile

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Linux session introspection + support-status plumbing.
 //!
 //! One place that answers "what kind of Linux is this?" so the hotkey,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! macOS-native hotkey primitives.
 //!
 //! Polling-based, mirroring the Windows architecture: a dedicated

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! macOS foreground-app detection via NSWorkspace.
 //!
 //! `foreground_app()` returns the frontmost app's bundle identifier

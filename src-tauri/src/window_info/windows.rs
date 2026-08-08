@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 use super::AppInfo;
 use std::ffi::c_void;
 use windows::core::{PCWSTR, PWSTR};

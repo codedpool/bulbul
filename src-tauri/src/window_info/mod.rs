@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Foreground-app detection. The cleanup pipeline + correction watcher
 //! both need to know which app the user is dictating into.
 //!

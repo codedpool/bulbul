@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // Shared reader for the config.json that the Rust `save_config` command
 // writes (see mobile.rs). Two Kotlin components need the Groq key + chat
 // model out of it — the foreground service (transcription) and the

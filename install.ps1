@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Romanch Roshan Singh
+
 # Bulbul installer
 # Usage:  irm https://bulbultypes.xyz/install.ps1 | iex
 #

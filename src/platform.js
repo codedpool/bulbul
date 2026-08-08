@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // Lightweight runtime platform detection for the frontend. Tauri's
 // webview UA reliably contains "Mac" / "Linux" / "Windows" / "Android"
 // tokens, so we read straight off navigator.userAgent — no plugin

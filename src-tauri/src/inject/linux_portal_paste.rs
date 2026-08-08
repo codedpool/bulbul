@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Portal-native paste keystrokes for Wayland — no external tools.
 //!
 //! Two backends, chosen by desktop at spawn():

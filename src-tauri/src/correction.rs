@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Correction memory (V3.1) — watch what the user changes about the text we
 //! injected, so the cleanup model can learn their fixes over time.
 //!
