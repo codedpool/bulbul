@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // One-time permission walker.
 //
 // Bulbul needs three Android grants to do its job:

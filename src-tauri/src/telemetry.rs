@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Opt-in anonymous telemetry, posted directly to a Supabase REST endpoint.
 //!
 //! Design constraints:

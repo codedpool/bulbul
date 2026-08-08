@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 use crate::config::{config_dir, CleanupMode};
 use anyhow::{Context, Result};
 use parking_lot::Mutex;

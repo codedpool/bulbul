@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // Per-app dictation style — the Android side of the desktop "Style"
 // feature. The desktop biases its cleanup LLM with a tone hint chosen by
 // which app you're dictating into (WhatsApp → casual, Outlook → formal,

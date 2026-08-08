@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // Opt-in anonymous telemetry — the Android counterpart of telemetry.rs.
 //
 // The Android dictation pipeline lives in Kotlin (the foreground service),

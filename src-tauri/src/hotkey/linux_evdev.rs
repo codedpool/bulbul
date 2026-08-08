@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Direct evdev keyboard reading — instant hold-to-talk on Linux.
 //!
 //! This is to the *hotkey* what uinput is to *typing*: it reads

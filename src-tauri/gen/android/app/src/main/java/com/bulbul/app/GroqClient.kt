@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // Talks to Groq's OpenAI-compatible /audio/transcriptions endpoint.
 //
 // We use HttpURLConnection rather than OkHttp to avoid pulling another

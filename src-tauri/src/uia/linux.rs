@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Linux focused-element reader — stub.
 //!
 //! Phase 5 replaces these with AT-SPI (`atspi-rs` crate). AT-SPI is the

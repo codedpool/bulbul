@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Linux foreground-app detection.
 //!
 //! X11 path (also works on Wayland sessions that have XWayland — i.e.

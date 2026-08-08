@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Wayland-native global hotkeys via the GlobalShortcuts portal.
 //!
 //! Wayland compositors deliberately refuse global key grabs — the only

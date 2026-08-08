@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Linux-native hotkey primitives (X11 path).
 //!
 //! Polling-based, mirroring the Windows + Mac architecture. A dedicated

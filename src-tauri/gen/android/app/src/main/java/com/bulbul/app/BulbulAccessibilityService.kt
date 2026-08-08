@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // Bulbul's accessibility service. Two jobs:
 //
 //   1. Decide when the floating bubble should be on screen — the rule

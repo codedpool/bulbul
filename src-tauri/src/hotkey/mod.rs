@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Hotkey registration + the orchestrator-bound event channel.
 //!
 //! This module owns the platform-agnostic parts:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 // The text-selection transform sheet.
 //
 // This is the Android-native answer to "let me transform selected text

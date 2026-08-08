@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Romanch Roshan Singh
+
 //! Minimal UI Automation reader used by the correction-memory watcher.
 //!
 //! After Bulbul pastes text into the focused field, we want to read that
