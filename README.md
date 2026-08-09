@@ -134,10 +134,24 @@ The installer picks the right package for your distro: **`.deb`** (Debian / Ubun
 
 ### 🤖 Android
 
-Download the arm64 **`.apk`** from the [latest release](https://github.com/codedpool/bulbul/releases/latest) and sideload it (allow "install unknown apps" for your browser or file manager when prompted).
+Grab the arm64 **`.apk`** (`Bulbul-android-arm64.apk`) from the [latest release](https://github.com/codedpool/bulbul/releases/latest) or [bulbultypes.xyz](https://bulbultypes.xyz), then install it one of three ways:
+
+**1. ADB — recommended (no app blocking).** Play-attributed, so UPI apps like Paytm keep working inside dictation.
+
+```sh
+adb install -i com.android.vending -r Bulbul-android-arm64.apk
+```
+
+Enable **USB debugging** on the phone and connect it; run `adb devices` to confirm it appears, then run the command above (tip: drag the downloaded APK into the terminal to fill in its path). No `adb`? Grab the [SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools).
+
+**2. Direct APK — simplest.** No Play attribution, so some UPI apps (Paytm) may block it — fine for everything else. Temporarily pause **Play Protect**, then open the downloaded APK and install.
+
+**3. Split APKs Installer (SAI).** Install **Split APKs Installer (SAI)** from the Play Store, open it, pick the Bulbul APK, and follow the prompts.
+
+After installing:
 
 - A floating **bubble** rides above your keyboard — **hold or tap it** to dictate into any app.
-- Grant **Microphone**, and enable Bulbul's **Accessibility service** so it can type into other apps — the app walks you through both on first run.
+- Grant **Microphone**, **Display over other apps** (the overlay bubble), and Bulbul's **Accessibility service** so it can type into other apps — the app walks you through these on first run. With methods 2 and 3 (sideloaded), Android may block Accessibility until you open **App info → ⋮ → Allow restricted settings**; the ADB method avoids this.
 - The transcript is injected straight into the focused text field — no clipboard round-trip, no paste toast.
 
 ---
