@@ -418,7 +418,7 @@ function App() {
                   <img src={bulbulMark} alt="" className="m-sheet-brand-mark" aria-hidden />
                   <span className="m-sheet-brand-text">bulbul</span>
                 </span>
-                <span className="muted small">v1.1.1 · GPL-3.0</span>
+                <span className="muted small">v1.2.0 · GPL-3.0</span>
               </div>
             </div>
           </div>
@@ -552,7 +552,7 @@ function App() {
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
           </div>
-          <div className="version muted small">v1.1.1 · GPL-3.0</div>
+          <div className="version muted small">v1.2.0 · GPL-3.0</div>
         </div>
       </aside>
 
