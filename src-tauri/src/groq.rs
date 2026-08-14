@@ -391,14 +391,6 @@ const CLEANUP_FALLBACK: &[&str] = &[
     "openai/gpt-oss-120b",
 ];
 
-/// True when `model` is a cleanup model we still support (it's in the fallback
-/// chain). Config migration uses this to sweep a retired saved model — e.g. the
-/// llama-3.x an updated install carries over, decommissioned 2026-08-16 — back
-/// onto the default, so cleanup never leads with a dead model.
-pub fn is_supported_cleanup_model(model: &str) -> bool {
-    CLEANUP_FALLBACK.contains(&model.trim())
-}
-
 /// The ordered cleanup chain for this config: the user-selected model first
 /// (Settings dropdown), then the standard fallback order, deduped. So the
 /// selector still picks the primary and the chain covers rate-limits /

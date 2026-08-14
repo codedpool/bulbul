@@ -619,6 +619,17 @@ pub fn load() -> Config {
     migrate(cfg)
 }
 
+/// Cleanup models we still support (keep in sync with groq.rs CLEANUP_FALLBACK).
+/// A saved `chat_model` outside this set is stale — `migrate` sweeps it onto
+/// `default_chat_model()`. Lives here, not groq.rs, because config is shared
+/// with the mobile target where the groq module isn't compiled.
+const SUPPORTED_CHAT_MODELS: &[&str] =
+    &["qwen/qwen3.6-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
+
+fn is_supported_chat_model(model: &str) -> bool {
+    SUPPORTED_CHAT_MODELS.contains(&model.trim())
+}
+
 /// One-shot fixups for configs written by earlier builds. Runs on every
 /// load; each rule must be a no-op once applied.
 fn migrate(cfg: Config) -> Config {
@@ -647,7 +658,7 @@ fn migrate(cfg: Config) -> Config {
     // llama-3.1-8b-instant an updated install carries over, which Groq retires
     // 2026-08-16) is swept onto the current default, so cleanup never leads with
     // a dead model. In-memory only — no-op once chat_model is supported.
-    if !crate::groq::is_supported_cleanup_model(&cfg.chat_model) {
+    if !is_supported_chat_model(&cfg.chat_model) {
         tracing::info!(
             "cleanup model '{}' unsupported; using default '{}'",
             cfg.chat_model,
