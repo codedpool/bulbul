@@ -641,6 +641,20 @@ fn migrate(cfg: Config) -> Config {
             tracing::warn!("could not persist hotkey migration: {e:#}");
         }
     }
+
+    // The cleanup-model picker was removed in 1.2.0, so a saved `chat_model` is
+    // only ever a stale default. Any model we no longer support (e.g. the
+    // llama-3.1-8b-instant an updated install carries over, which Groq retires
+    // 2026-08-16) is swept onto the current default, so cleanup never leads with
+    // a dead model. In-memory only — no-op once chat_model is supported.
+    if !crate::groq::is_supported_cleanup_model(&cfg.chat_model) {
+        tracing::info!(
+            "cleanup model '{}' unsupported; using default '{}'",
+            cfg.chat_model,
+            default_chat_model()
+        );
+        cfg.chat_model = default_chat_model();
+    }
     cfg
 }
 
