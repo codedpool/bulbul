@@ -119,8 +119,17 @@ object BulbulConfig {
         return out
     }
 
-    fun chatModel(context: Context): String =
-        read(context)?.optString("chat_model", "").orEmpty().ifBlank { DEFAULT_CHAT_MODEL }
+    // Cleanup models we still support. A saved chat_model outside this set is
+    // stale (e.g. the llama-3.1-8b-instant an older install carries over, which
+    // Groq retires 2026-08-16) — fall back to the default so cleanup never leads
+    // with a dead model. Keep in sync with groq.rs CLEANUP_FALLBACK.
+    private val SUPPORTED_CHAT_MODELS =
+        setOf("qwen/qwen3.6-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b")
+
+    fun chatModel(context: Context): String {
+        val saved = read(context)?.optString("chat_model", "").orEmpty().trim()
+        return if (saved in SUPPORTED_CHAT_MODELS) saved else DEFAULT_CHAT_MODEL
+    }
 
     /// Cleanup mode the dictation pipeline runs in: "raw" | "clean" | "polished".
     /// Written by the Settings "Cleanup mode" dropdown; drives Cleanup.clean.
