@@ -4,9 +4,9 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
-## [1.2.0] — unreleased
+## [1.2.0] — 2026-08-15
 
-Resilience + reach: cleanup and transcription now survive a model being retired or rate-limited by rotating through backups, the cleanup prompt is leaner (more dictations per day), and Android gains the same AI cleanup the desktop has. Includes everything in 1.1.1.
+**The public launch.** Resilience + reach: cleanup and transcription now survive a model being retired or rate-limited by rotating through backups, the cleanup prompt is leaner (more dictations per day), and Android gains the same AI cleanup the desktop has. Includes everything in the cross-platform 1.1.x line.
 
 ### Added
 
@@ -26,7 +26,7 @@ Resilience + reach: cleanup and transcription now survive a model being retired 
 
 ## [1.1.1] — 2026-08-08
 
-The public launch. Everything from the cross-platform 1.1.0, plus editable transform hotkeys, accurate per-app names on every desktop, reliable Android auto-updates, and a round of window-chrome and install polish.
+A cross-platform polish release ahead of the public launch. Everything from the cross-platform 1.1.0, plus editable transform hotkeys, accurate per-app names on every desktop, reliable Android auto-updates, and a round of window-chrome and install polish.
 
 ### Added
 
