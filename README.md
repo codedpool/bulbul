@@ -10,10 +10,19 @@
 </p>
 
 <p align="center">
+  <a href="https://bulbultypes.xyz"><img alt="Website" src="https://img.shields.io/badge/website-bulbultypes.xyz-5ec8c0" /></a>
   <a href="https://github.com/codedpool/bulbul/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/codedpool/bulbul?color=5ec8c0&label=release" /></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-4c8bf5" />
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-44b268" /></a>
   <img alt="Powered by Groq" src="https://img.shields.io/badge/powered%20by-Groq-f55036" />
+</p>
+
+<p align="center">
+  <a href="https://youtu.be/-myjwDagJj8">
+    <img src="https://i.ytimg.com/vi/-myjwDagJj8/maxresdefault.jpg" alt="Watch the Bulbul demo — talk, and clean text appears where your cursor already is" width="640" />
+  </a>
+  <br/>
+  <a href="https://youtu.be/-myjwDagJj8"><b>▶ Watch the 2-minute demo</b></a>
 </p>
 
 Bulbul talks directly to [Groq](https://groq.com) using your own API key — no Bulbul-owned server in between, no subscription, no usage caps beyond Groq's own free tier. Your dictation history, dictionary, snippets, and settings all live in a local SQLite file on your machine.
@@ -63,7 +72,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 
 ## What's in the box
 
-- **Two-step pipeline**: Whisper Large v3 Turbo (STT) → Llama 3.1 8B (cleanup) — both via Groq, both fast.
+- **Two-step pipeline**: Whisper Large v3 Turbo (STT) → a fast cleanup LLM on Groq (Qwen 3), with an automatic fallback chain so dictation keeps working if a model is busy or retired.
 - **Cleanup modes**: Raw (just fix obvious errors), Clean (remove fillers, fix punctuation — default), Polished (rewrite for clarity).
 - **Polish hotkey**: a second hold-to-talk shortcut that forces Polished mode regardless of your global setting. Default `Shift+Alt+P`.
 - **Modifier-only hotkeys**: hold `Ctrl+Win` or `Alt+Win`. No letter needed.
@@ -167,7 +176,7 @@ After installing:
                                          ▼
                                    ┌──────────┐    text     ┌────────────┐
                                    │  Cleanup │ ──────────▶│   Groq     │
-                                   │  module  │             │  Llama 3.1 │
+                                   │  module  │             │  Qwen 3    │
                                    └────┬─────┘ ◀── cleaned─┴────────────┘
                                          │
                                          ▼ apply dictionary + snippets
@@ -221,7 +230,7 @@ Bulbul is a solo project, but contributions are welcome. Open an issue first to 
 
 **[GPL-3.0](LICENSE)** — free and open-source. Use it, study it, modify it, share it. The one catch: if you distribute a modified version, you have to release your source under GPL-3.0 too. Keeps Bulbul open for everyone and stops it being quietly closed-up and resold.
 
-Copyright © 2026 Bulbul contributors.
+Copyright © 2026 Romanch Roshan Singh.
 
 ---
 
