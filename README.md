@@ -17,12 +17,10 @@
   <img alt="Powered by Groq" src="https://img.shields.io/badge/powered%20by-Groq-f55036" />
 </p>
 
+https://github.com/user-attachments/assets/990cffb5-1178-4c29-b989-2835fd824e98
+
 <p align="center">
-  <a href="https://youtu.be/-myjwDagJj8">
-    <img src="https://i.ytimg.com/vi/-myjwDagJj8/maxresdefault.jpg" alt="Watch the Bulbul demo — talk, and clean text appears where your cursor already is" width="640" />
-  </a>
-  <br/>
-  <a href="https://youtu.be/-myjwDagJj8"><b>▶ Watch the 2-minute demo</b></a>
+  <a href="https://youtu.be/-myjwDagJj8"><b>▶ Prefer YouTube? Watch the 2-minute demo →</b></a>
 </p>
 
 Bulbul talks directly to [Groq](https://groq.com) using your own API key — no Bulbul-owned server in between, no subscription, no usage caps beyond Groq's own free tier. Your dictation history, dictionary, snippets, and settings all live in a local SQLite file on your machine.
