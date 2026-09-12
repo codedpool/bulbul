@@ -11,10 +11,13 @@
 //      Settings → Accessibility; there's no programmatic grant
 //
 // MainActivity launches this activity if any of the three are
-// missing. The user can grant them in any order. The activity polls
-// in onResume (since two of the three require leaving the app), and
-// auto-finishes the instant all three are granted so the user can't
-// accidentally back into a wedged setup screen after they're done.
+// missing. The walker shows ONE permission per screen, easiest
+// first, and requires the current one to be granted before it
+// advances — auto-advancing (with a brief success beat) the moment
+// it detects the grant, rather than a manual Next button. It polls
+// in onResume (since two of the three require leaving the app) and
+// auto-finishes the instant all three are granted, so the user can't
+// end up wedged on a setup screen after they're actually done.
 //
 // UI is intentionally built in code — no XML layout — to keep this
 // flow self-contained and to avoid one more file in the gen tree
@@ -29,7 +32,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -41,6 +43,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -49,20 +52,83 @@ import androidx.core.content.ContextCompat
 
 class SetupActivity : Activity() {
 
-    private lateinit var micRow: PermissionRow
-    private lateinit var overlayRow: PermissionRow
-    private lateinit var accessibilityRow: PermissionRow
+    /// Which of [steps] is on screen. Advances only when that step's
+    /// permission is freshly granted (see [checkForAutoAdvance]); Back
+    /// always moves freely since it can't un-grant anything.
+    private var step = 0
+
+    /// Snapshot of whether the current step was ALREADY granted at the
+    /// moment it was rendered — the auto-advance trigger is the
+    /// not-granted-to-granted transition, not "is granted", so that
+    /// paging Back to an already-done step doesn't immediately bounce
+    /// forward again.
+    private var stepEnteredGranted = false
+
+    private lateinit var dotsContainer: LinearLayout
+    private lateinit var backButton: TextView
+    private lateinit var contentContainer: FrameLayout
+
+    private data class PermStep(
+        val title: String,
+        val blurb: String,
+        val actionLabel: String,
+        val onAction: () -> Unit,
+        val isGranted: () -> Boolean,
+        val extra: (() -> View)? = null,
+    )
+
+    private val steps: List<PermStep> by lazy {
+        listOf(
+            PermStep(
+                title = "Microphone",
+                blurb = "Used only while you hold or tap the floating bubble.",
+                actionLabel = "Allow microphone",
+                onAction = ::requestMic,
+                isGranted = ::micGranted,
+            ),
+            PermStep(
+                title = "Display over other apps",
+                blurb = "Lets the floating bubble appear above your keyboard in any app.",
+                actionLabel = "Open Display settings",
+                onAction = ::openOverlaySettings,
+                isGranted = ::overlayGranted,
+            ),
+            PermStep(
+                title = "Accessibility",
+                blurb = "Lets Bulbul see which text field you tapped into and paste cleaned-up transcripts there.",
+                actionLabel = "Open Accessibility settings",
+                onAction = ::openAccessibilitySettings,
+                isGranted = ::accessibilityGranted,
+                extra = { buildRestrictedHelpCard() },
+            ),
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(buildLayout())
-        refreshStatuses()
+        // Start at the FIRST permission that's actually missing, not always
+        // step 0. Covers two cases: (a) a later launch after one permission
+        // got revoked mid-use — the walker should only ask for that one, not
+        // repeat ones already granted; (b) with auto-advance being the only
+        // forward motion (no manual Next), always starting at 0 would leave
+        // an already-granted step just sitting there showing "✓ Granted"
+        // with nothing to trigger the advance. Already-granted steps stay
+        // reachable via Back if the user wants to double-check them.
+        val firstMissing = steps.indexOfFirst { !it.isGranted() }
+        if (firstMissing < 0) {
+            // Nothing is actually missing — e.g. reopened after everything
+            // was already granted elsewhere. Nothing to walk through.
+            finish()
+            return
+        }
+        step = firstMissing
+        setContentView(buildScaffold())
+        renderStep(animate = false)
     }
 
     override fun onResume() {
         super.onResume()
-        refreshStatuses()
-        if (allGranted()) finish()
+        checkForAutoAdvance()
     }
 
     override fun onRequestPermissionsResult(
@@ -71,10 +137,7 @@ class SetupActivity : Activity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_MIC) {
-            refreshStatuses()
-            if (allGranted()) finish()
-        }
+        if (requestCode == REQ_MIC) checkForAutoAdvance()
     }
 
     // ---------------- Permission state ----------------
@@ -92,10 +155,29 @@ class SetupActivity : Activity() {
     private fun allGranted(): Boolean =
         micGranted() && overlayGranted() && accessibilityGranted()
 
-    private fun refreshStatuses() {
-        micRow.setGranted(micGranted())
-        overlayRow.setGranted(overlayGranted())
-        accessibilityRow.setGranted(accessibilityGranted())
+    /// Re-checks the CURRENT step's permission on every resume/permission
+    /// result. If it just flipped from not-granted to granted during this
+    /// visit, plays a brief success beat and advances to the next step
+    /// (or finishes, on the last one). If all three end up granted — e.g.
+    /// the user already had one from an earlier partial run — finishes
+    /// immediately, same guarantee the old single-screen version made.
+    private fun checkForAutoAdvance() {
+        if (allGranted()) {
+            finish()
+            return
+        }
+        if (step !in steps.indices) return
+        val current = steps[step]
+        if (current.isGranted() && !stepEnteredGranted) {
+            playSuccessBeat {
+                if (step < steps.lastIndex) {
+                    step++
+                    renderStep(animate = true)
+                } else {
+                    finish()
+                }
+            }
+        }
     }
 
     // ---------------- Theme ----------------
@@ -116,10 +198,11 @@ class SetupActivity : Activity() {
     private val bodyColor get() = col(0xFF475569.toInt(), 0xFF94A3B8.toInt())
     private val mutedColor get() = col(0xFF94A3B8.toInt(), 0xFF6B7280.toInt())
     private val accentColor get() = col(0xFF12A594.toInt(), 0xFF5EC8C0.toInt())
+    private val onAccentColor get() = col(0xFFFFFFFF.toInt(), 0xFF0B0E12.toInt())
 
-    // ---------------- Layout (code-built) ----------------
+    // ---------------- Scaffold (static chrome; only the step card swaps) ----------------
 
-    private fun buildLayout(): View {
+    private fun buildScaffold(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(40), dp(24), dp(24))
@@ -154,49 +237,43 @@ class SetupActivity : Activity() {
             setPadding(0, 0, 0, dp(8))
         })
         root.addView(TextView(this).apply {
-            text = "Bulbul needs three permissions before the floating bubble can dictate into other apps. Grant them in any order — this screen closes itself once all three are on."
+            text = "Bulbul needs three quick permissions before the floating bubble can work. We'll walk through them one at a time."
             textSize = 14f
             setTextColor(bodyColor)
-            setPadding(0, 0, 0, dp(24))
+            setPadding(0, 0, 0, dp(20))
         })
 
-        micRow = PermissionRow(
-            this, night,
-            title = "Microphone",
-            blurb = "Used only while you hold or tap the floating bubble.",
-            actionLabel = "Allow microphone",
-            onAction = ::requestMic,
-        )
-        overlayRow = PermissionRow(
-            this, night,
-            title = "Display over other apps",
-            blurb = "Lets the floating bubble appear above your keyboard in any app.",
-            actionLabel = "Open Display settings",
-            onAction = ::openOverlaySettings,
-        )
-        accessibilityRow = PermissionRow(
-            this, night,
-            title = "Accessibility",
-            blurb = "Lets Bulbul see which text field you tapped into and paste cleaned-up transcripts there.",
-            actionLabel = "Open Accessibility settings",
-            onAction = ::openAccessibilitySettings,
-        )
+        dotsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        root.addView(dotsContainer)
 
-        root.addView(micRow.view)
-        root.addView(overlayRow.view)
-        root.addView(accessibilityRow.view)
+        backButton = TextView(this).apply {
+            text = "← Back"
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(accentColor)
+            setPadding(0, dp(16), 0, dp(4))
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+            setOnClickListener {
+                if (step > 0) {
+                    step--
+                    renderStep(animate = true)
+                }
+            }
+        }
+        root.addView(backButton)
 
-        // Sideload gotcha: Android 13+ greys out the Accessibility toggle for
-        // apps not installed from a store ("restricted settings"). Spell out
-        // the one-time fix right where people get stuck.
-        root.addView(buildRestrictedHelpCard())
-
-        root.addView(TextView(this).apply {
-            text = "All three are required because of how Android isolates apps from each other — there's no privileged shortcut."
-            textSize = 12f
-            setTextColor(mutedColor)
-            setPadding(0, dp(16), 0, 0)
-        })
+        contentContainer = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(8) }
+        }
+        root.addView(contentContainer)
 
         return ScrollView(this).apply {
             addView(root, ViewGroup.LayoutParams(
@@ -205,6 +282,148 @@ class SetupActivity : Activity() {
             ))
             setBackgroundColor(bgColor)
         }
+    }
+
+    // ---------------- Step rendering ----------------
+
+    private fun renderStep(animate: Boolean) {
+        val s = steps[step]
+        stepEnteredGranted = s.isGranted()
+        renderDots()
+        backButton.visibility = if (step > 0) View.VISIBLE else View.GONE
+
+        val newContent = buildStepCard(s, stepEnteredGranted)
+        val old = contentContainer.getChildAt(0)
+        if (!animate || old == null) {
+            contentContainer.removeAllViews()
+            contentContainer.addView(newContent)
+            return
+        }
+        // Quick slide-and-fade crossfade between steps — no extra deps,
+        // just ViewPropertyAnimator. The illustrated per-permission loop
+        // each screen should eventually show (see the motion-graphics
+        // plan) layers on top of this same transition later.
+        old.animate().alpha(0f).translationX(dp(-16).toFloat()).setDuration(140)
+            .withEndAction {
+                contentContainer.removeAllViews()
+                newContent.alpha = 0f
+                newContent.translationX = dp(16).toFloat()
+                contentContainer.addView(newContent)
+                newContent.animate().alpha(1f).translationX(0f).setDuration(200).start()
+            }.start()
+    }
+
+    private fun renderDots() {
+        dotsContainer.removeAllViews()
+        for (i in steps.indices) {
+            val active = i == step
+            val size = if (active) dp(9) else dp(7)
+            val dot = View(this).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(if (i <= step) accentColor else mutedColor)
+                }
+            }
+            val lp = LinearLayout.LayoutParams(size, size)
+            lp.marginStart = dp(4)
+            lp.marginEnd = dp(4)
+            dot.layoutParams = lp
+            dotsContainer.addView(dot)
+        }
+    }
+
+    private fun buildStepCard(s: PermStep, granted: Boolean): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        card.addView(TextView(this).apply {
+            text = "Step ${step + 1} of ${steps.size}"
+            textSize = 12f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(mutedColor)
+            setPadding(0, 0, 0, dp(6))
+        })
+        card.addView(TextView(this).apply {
+            text = s.title
+            textSize = 26f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(headingColor)
+            setPadding(0, 0, 0, dp(10))
+        })
+        card.addView(TextView(this).apply {
+            text = s.blurb
+            textSize = 15f
+            setTextColor(bodyColor)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            setPadding(0, 0, 0, dp(24))
+        })
+
+        if (granted) {
+            card.addView(TextView(this).apply {
+                text = "✓ Granted"
+                textSize = 15f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(accentColor)
+            })
+        } else {
+            card.addView(Button(this).apply {
+                text = s.actionLabel
+                isAllCaps = false
+                textSize = 15f
+                setTextColor(onAccentColor)
+                background = GradientDrawable().apply {
+                    setColor(accentColor)
+                    cornerRadius = dp(999).toFloat()
+                }
+                stateListAnimator = null
+                setPadding(dp(28), dp(14), dp(28), dp(14))
+                setOnClickListener { s.onAction() }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            })
+        }
+
+        s.extra?.let { card.addView(it()) }
+
+        return card
+    }
+
+    /// A brief native placeholder for "permission granted" before the wizard
+    /// auto-advances — a check mark pops in over the card, holds briefly,
+    /// then [onDone] fires. This is the MECHANISM only; the illustrated
+    /// per-permission motion graphic each screen should eventually carry
+    /// (see the onboarding motion-graphics plan) layers on top of this same
+    /// hook once those assets exist.
+    private fun playSuccessBeat(onDone: () -> Unit) {
+        val overlay = TextView(this).apply {
+            text = "✓"
+            textSize = 48f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(accentColor)
+            gravity = Gravity.CENTER
+            alpha = 0f
+            scaleX = 0.6f
+            scaleY = 0.6f
+        }
+        contentContainer.addView(
+            overlay,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ),
+        )
+        overlay.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(220)
+            .withEndAction {
+                overlay.postDelayed({
+                    overlay.animate().alpha(0f).setDuration(160).withEndAction {
+                        contentContainer.removeView(overlay)
+                        onDone()
+                    }.start()
+                }, 500)
+            }.start()
     }
 
     /// Accent-tinted note explaining the Android 13+ "restricted settings"
@@ -224,7 +443,7 @@ class SetupActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(4) }
+            ).apply { topMargin = dp(16) }
         }
         card.addView(TextView(this).apply {
             text = "Accessibility greyed out or \"restricted\"?"
@@ -237,10 +456,9 @@ class SetupActivity : Activity() {
             text = "Android blocks Accessibility for sideloaded apps.\n\n" +
                 "Easiest way: install Bulbul with \"Split APKs Installer\" from the Play Store (you'll watch one short ad) — then you can allow every permission with no blocks.\n\n" +
                 "Or do it once manually:\n" +
-                "1.  Allow the permissions you can here; skip any you can't for now.\n" +
-                "2.  Open App info → tap ⋮ (top-right) → Allow restricted settings.\n" +
-                "3.  Go to Settings → Accessibility → allow Bulbul.\n" +
-                "4.  Reopen Bulbul and finish."
+                "1.  Open App info → tap ⋮ (top-right) → Allow restricted settings.\n" +
+                "2.  Come back here and tap \"Open Accessibility settings\" again.\n" +
+                "3.  Allow Bulbul, then return to this screen."
             textSize = 13f
             setTextColor(bodyColor)
             setLineSpacing(dp(2).toFloat(), 1f)
@@ -310,102 +528,5 @@ class SetupActivity : Activity() {
             }
             return false
         }
-    }
-}
-
-/// One row per permission: title, blurb, status pill, grant button. Themed
-/// (light/dark) to match the Bulbul palette.
-private class PermissionRow(
-    context: Context,
-    night: Boolean,
-    title: String,
-    blurb: String,
-    actionLabel: String,
-    onAction: () -> Unit,
-) {
-    val view: View
-    private val status: TextView
-    private val grantedColor = if (night) 0xFF5EC8C0.toInt() else 0xFF12A594.toInt()
-    private val notGrantedColor = if (night) 0xFFF87171.toInt() else 0xFFDC2626.toInt()
-
-    init {
-        val cardBg = if (night) 0xFF1B1F27.toInt() else 0xFFF1F5F9.toInt()
-        val titleColor = if (night) 0xFFF1F5F9.toInt() else 0xFF0F172A.toInt()
-        val bodyColor = if (night) 0xFF94A3B8.toInt() else 0xFF475569.toInt()
-        val accentColor = if (night) 0xFF5EC8C0.toInt() else 0xFF12A594.toInt()
-        val onAccent = if (night) 0xFF0B0E12.toInt() else 0xFFFFFFFF.toInt()
-
-        val card = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(context, 16), dp(context, 16), dp(context, 16), dp(context, 16))
-            background = GradientDrawable().apply {
-                setColor(cardBg)
-                cornerRadius = dp(context, 14).toFloat()
-            }
-            val lp = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-            lp.bottomMargin = dp(context, 12)
-            layoutParams = lp
-        }
-        val header = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        header.addView(TextView(context).apply {
-            text = title
-            textSize = 16f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(titleColor)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        status = TextView(context).apply {
-            text = "Not granted"
-            textSize = 12f
-            setTextColor(notGrantedColor)
-        }
-        header.addView(status)
-        card.addView(header)
-        card.addView(TextView(context).apply {
-            text = blurb
-            textSize = 13f
-            setTextColor(bodyColor)
-            setPadding(0, dp(context, 6), 0, dp(context, 12))
-        })
-        card.addView(Button(context).apply {
-            text = actionLabel
-            isAllCaps = false
-            setTextColor(onAccent)
-            background = GradientDrawable().apply {
-                setColor(accentColor)
-                cornerRadius = dp(context, 999).toFloat()
-            }
-            stateListAnimator = null
-            setPadding(dp(context, 20), dp(context, 10), dp(context, 20), dp(context, 10))
-            setOnClickListener { onAction() }
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-        })
-        view = card
-    }
-
-    fun setGranted(granted: Boolean) {
-        if (granted) {
-            status.text = "✓ Granted"
-            status.setTextColor(grantedColor)
-        } else {
-            status.text = "Not granted"
-            status.setTextColor(notGrantedColor)
-        }
-    }
-
-    companion object {
-        private fun dp(context: Context, v: Int): Int =
-            TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), context.resources.displayMetrics,
-            ).toInt()
     }
 }
