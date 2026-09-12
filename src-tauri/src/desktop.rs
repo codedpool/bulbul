@@ -10,6 +10,7 @@ mod hotkey;
 mod inject;
 #[cfg(target_os = "windows")]
 mod keyboard_hook;
+mod model_config;
 #[cfg(target_os = "linux")]
 mod linux_env;
 mod telemetry;
@@ -2313,6 +2314,11 @@ pub fn run() {
             // installers into AppState.staged_update, fire `update-staged`
             // event. The UI banner and the tray Quit handler do the rest.
             spawn_update_watcher(handle.clone());
+
+            // Remote cleanup-model chain: lets a future Groq model rotation
+            // be fixed by editing bulbultypes.xyz/models.json, not shipping
+            // a release. See model_config.rs.
+            model_config::spawn_model_config_watcher(handle.clone());
 
             // Telemetry boot. The opt-in toggle is per-call, but we always
             // start the periodic flush so any track() calls that happen

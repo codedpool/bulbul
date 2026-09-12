@@ -15,6 +15,7 @@
 
 package com.bulbul.app
 
+import android.content.Context
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -142,14 +143,18 @@ object GroqClient {
 
     /// Chat completion with model fallthrough — the transform pipeline's
     /// resilience layer, mirroring desktop execute_transform. Tries
-    /// [primaryModel, gpt-oss-20b, gpt-oss-120b] (deduped) and returns the first
-    /// non-null; null only if EVERY model fails (rate-limit / dead model /
-    /// network), so a rate-limited cleanup model no longer breaks a transform.
-    fun chatWithFallback(apiKey: String, systemPrompt: String, userText: String, primaryModel: String): String? {
+    /// [primaryModel, ...fallback] (deduped) and returns the first non-null;
+    /// null only if EVERY model fails (rate-limit / dead model / network),
+    /// so a rate-limited cleanup model no longer breaks a transform. The
+    /// fallback order comes from BulbulConfig.cachedCleanupChain when a
+    /// remote fetch has ever succeeded (see Cleanup.cleanupChain), else the
+    /// embedded CHAT_FALLBACK seed.
+    fun chatWithFallback(context: Context, apiKey: String, systemPrompt: String, userText: String, primaryModel: String): String? {
         val chain = ArrayList<String>()
         val p = primaryModel.trim()
         if (p.isNotEmpty()) chain.add(p)
-        for (m in CHAT_FALLBACK) if (!chain.contains(m)) chain.add(m)
+        val fallback = BulbulConfig.cachedCleanupChain(context) ?: CHAT_FALLBACK
+        for (m in fallback) if (!chain.contains(m)) chain.add(m)
         for (model in chain) {
             val out = chat(apiKey, systemPrompt, userText, model)
             if (out != null) return out
