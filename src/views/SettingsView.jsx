@@ -264,7 +264,21 @@ export default function SettingsView({
     }
   }
 
+  // Android has no keyless way to ask "is there a newer version on Play"
+  // (that needs the Google Play Developer API — real infra Bulbul doesn't
+  // have), and unlike desktop's GitHub-release channel, Play already
+  // manages its own update rollout and notifications independently of the
+  // app. So there's nothing to "check" here on Android — just open
+  // Bulbul's Play listing, where Play's own UI accurately shows
+  // Update/Open. This also fixes what used to be actively wrong: the old
+  // GitHub-based check pointed at a DIFFERENT package (GitHub ships
+  // com.bulbul.app; the Play build is xyz.bulbultypes.app), so a Play
+  // user "updating" that way would have tried to sideload a different app.
   async function checkUpdates() {
+    if (IS_ANDROID) {
+      openUrl("https://play.google.com/store/apps/details?id=xyz.bulbultypes.app").catch(() => {});
+      return;
+    }
     setUpdateState({ state: "checking", message: "" });
     try {
       const result = await invoke("check_for_updates");
@@ -829,19 +843,27 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
   };
   return (
     <>
-      <Row title="Updates" hint="Bulbul checks GitHub releases on a schedule." stack>
+      <Row
+        title="Updates"
+        hint={IS_ANDROID ? "Play Store keeps Bulbul up to date." : "Bulbul checks GitHub releases on a schedule."}
+        stack
+      >
         <div className="row">
           <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
-            {updateState.state === "checking" ? "Checking…" : "Check for updates"}
+            {IS_ANDROID
+              ? "Open Play Store"
+              : updateState.state === "checking"
+                ? "Checking…"
+                : "Check for updates"}
           </button>
         </div>
-        {updateState.state === "available" && (
+        {!IS_ANDROID && updateState.state === "available" && (
           <p className="ok small">Update available: {updateState.message}</p>
         )}
-        {updateState.state === "uptodate" && (
+        {!IS_ANDROID && updateState.state === "uptodate" && (
           <p className="muted small">{updateState.message}</p>
         )}
-        {updateState.state === "error" && (
+        {!IS_ANDROID && updateState.state === "error" && (
           <p className="err small">{updateState.message}</p>
         )}
       </Row>
@@ -872,7 +894,7 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
         </div>
       </Row>
       <p className="muted small settings-note">
-        Bulbul v1.2.0 · GPL-3.0 · made with care · <a
+        Bulbul v1.2.1 · GPL-3.0 · made with care · <a
           href="#"
           onClick={(e) => { e.preventDefault(); openUrl("https://bulbultypes.xyz"); }}
         >bulbultypes.xyz</a>

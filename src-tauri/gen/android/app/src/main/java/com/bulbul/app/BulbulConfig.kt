@@ -27,8 +27,16 @@ object BulbulConfig {
     private const val OVERLAY_FILE = "overlay.json"
     // Matches desktop's config.rs default_chat_model. qwen (reasoning disabled
     // in the cleanup call) is fast, non-reasoning, and not deprecated — unlike
-    // llama-3.1-8b-instant, which Groq retires 2026-08-16.
-    private const val DEFAULT_CHAT_MODEL = "qwen/qwen3.6-27b"
+    // llama-3.1-8b-instant, which Groq retired 2026-08-16. This is 3.8, since
+    // Groq retired qwen3.6-27b on 2026-09-14.
+    private const val DEFAULT_CHAT_MODEL = "qwen/qwen3.8-27b"
+
+    // Remote cleanup-model chain (see fetchAndCacheModelChain below) — a
+    // separate SharedPreferences bucket, not config.json, since this is a
+    // resilience cache the app maintains for itself, not a user setting.
+    private const val MODEL_CONFIG_PREFS = "bulbul_model_config"
+    private const val MODEL_CONFIG_CHAIN = "cleanup_chain"
+    private const val MODELS_URL = "https://bulbultypes.xyz/models.json"
 
     private var cachedDir: File? = null
 
@@ -124,11 +132,56 @@ object BulbulConfig {
     // Groq retires 2026-08-16) — fall back to the default so cleanup never leads
     // with a dead model. Keep in sync with groq.rs CLEANUP_FALLBACK.
     private val SUPPORTED_CHAT_MODELS =
-        setOf("qwen/qwen3.6-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b")
+        setOf("qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b")
 
     fun chatModel(context: Context): String {
         val saved = read(context)?.optString("chat_model", "").orEmpty().trim()
         return if (saved in SUPPORTED_CHAT_MODELS) saved else DEFAULT_CHAT_MODEL
+    }
+
+    /// Reads the remote cleanup-model chain cached by fetchAndCacheModelChain,
+    /// if a fetch has ever succeeded. Null means "nothing cached yet, use the
+    /// embedded CLEANUP_FALLBACK/CHAT_FALLBACK default" — not an error. A
+    /// local SharedPreferences read only, no network — safe on the dictation
+    /// hot path. Mirrors desktop's model_config::cached_cleanup_chain.
+    fun cachedCleanupChain(context: Context): List<String>? {
+        val raw = context.getSharedPreferences(MODEL_CONFIG_PREFS, Context.MODE_PRIVATE)
+            .getString(MODEL_CONFIG_CHAIN, null) ?: return null
+        return try {
+            val arr = org.json.JSONArray(raw)
+            val list = (0 until arr.length()).map { arr.getString(it) }
+            list.ifEmpty { null }
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /// Fetches bulbultypes.xyz/models.json and caches its cleanup_chain
+    /// locally, so a future Groq model rotation (like qwen3.6-27b's
+    /// 2026-09-14 retirement) can be fixed by editing that JSON file and
+    /// redeploying the site — no app release, no store review. Blocking
+    /// network call; run off the main thread (see
+    /// BulbulForegroundService.spawnModelConfigRefresh). Failures are
+    /// logged and swallowed — the cache simply keeps whatever it last had.
+    fun fetchAndCacheModelChain(context: Context) {
+        try {
+            val conn = java.net.URL(MODELS_URL).openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 15_000
+            conn.requestMethod = "GET"
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            val chain = JSONObject(body).getJSONArray("cleanup_chain")
+            if (chain.length() == 0) {
+                Log.w(TAG, "model config: models.json cleanup_chain is empty — ignoring")
+                return
+            }
+            context.getSharedPreferences(MODEL_CONFIG_PREFS, Context.MODE_PRIVATE)
+                .edit().putString(MODEL_CONFIG_CHAIN, chain.toString()).apply()
+            Log.i(TAG, "model config: cached remote cleanup chain $chain")
+        } catch (t: Throwable) {
+            Log.w(TAG, "model config fetch failed", t)
+        }
     }
 
     /// Cleanup mode the dictation pipeline runs in: "raw" | "clean" | "polished".

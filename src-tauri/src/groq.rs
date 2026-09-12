@@ -384,9 +384,10 @@ fn reasoning_effort_for(model: &str) -> Option<&'static str> {
 /// Cleanup model fallback order, primary-first. qwen (reasoning disabled) is
 /// the fast non-reasoning lead; gpt-oss-20b then 120b are the backups. All
 /// three are current, non-deprecated Groq models — llama-3.x is intentionally
-/// absent (Groq decommissions it 2026-08-16).
+/// absent (Groq decommissioned it 2026-08-16), and this is qwen3.8, since
+/// Groq decommissioned qwen3.6-27b on 2026-09-14.
 const CLEANUP_FALLBACK: &[&str] = &[
-    "qwen/qwen3.6-27b",
+    "qwen/qwen3.8-27b",
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
 ];
@@ -395,15 +396,26 @@ const CLEANUP_FALLBACK: &[&str] = &[
 /// (Settings dropdown), then the standard fallback order, deduped. So the
 /// selector still picks the primary and the chain covers rate-limits /
 /// deprecations underneath it.
+///
+/// The fallback order itself comes from `model_config::cached_cleanup_chain`
+/// when a remote fetch from bulbultypes.xyz/models.json has ever succeeded
+/// (a local disk read, not a network call — this never adds latency to a
+/// dictation) — that's what lets a future Groq model rotation be fixed by
+/// editing that JSON file instead of shipping a release. Falls back to the
+/// embedded `CLEANUP_FALLBACK` seed below when nothing's cached yet (first
+/// run, offline, or the site unreachable).
 fn cleanup_chain(cfg: &Config) -> Vec<String> {
     let mut chain: Vec<String> = Vec::new();
     let primary = cfg.chat_model.trim();
     if !primary.is_empty() {
         chain.push(primary.to_string());
     }
-    for &m in CLEANUP_FALLBACK {
-        if !chain.iter().any(|c| c == m) {
-            chain.push(m.to_string());
+    let fallback = crate::model_config::cached_cleanup_chain().unwrap_or_else(|| {
+        CLEANUP_FALLBACK.iter().map(|s| s.to_string()).collect()
+    });
+    for m in fallback {
+        if !chain.iter().any(|c| c == &m) {
+            chain.push(m);
         }
     }
     chain

@@ -94,6 +94,7 @@ class BulbulForegroundService : Service() {
         startInForeground()
         recorder = AudioRecorder(this)
         showBubble()
+        spawnModelConfigRefresh()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -319,7 +320,17 @@ class BulbulForegroundService : Service() {
         if (!prefs.contains(BUBBLE_X)) return null
         val x = prefs.getInt(BUBBLE_X, 0)
         val y = prefs.getInt(BUBBLE_Y, 0)
-        val sizePx = BUBBLE_SIZE_DP.dp(this)
+        // MUST match the size showBubble() actually renders with
+        // (BulbulConfig.overlaySize, user-adjustable 40-120dp), not the
+        // unrelated BUBBLE_SIZE_DP=56 constant. That mismatch used to
+        // treat a perfectly valid edge-flush position — the default
+        // 52dp bubble is smaller than the 56dp assumed here — as
+        // off-screen, silently discarding it on every service restart
+        // (routine under Android's battery-management kills, given
+        // START_STICKY) and snapping back to the default corner. This
+        // is what made a user-dragged position look like it kept
+        // "changing on its own".
+        val sizePx = BulbulConfig.overlaySize(this).dp(this)
         val screenW = resources.displayMetrics.widthPixels
         val screenH = resources.displayMetrics.heightPixels
         // If the saved position would put the bubble entirely or
@@ -473,6 +484,25 @@ class BulbulForegroundService : Service() {
         }
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(channel)
+    }
+
+    /// Background refresh of the remote cleanup-model chain (see
+    /// BulbulConfig.fetchAndCacheModelChain) — lets a future Groq model
+    /// rotation be fixed by editing bulbultypes.xyz/models.json and
+    /// redeploying the site, not shipping an app release. Runs once
+    /// shortly after the service starts, then repeats on a slow cadence
+    /// for any long-lived session; most of the time a fresh fetch happens
+    /// anyway on the next service restart, which Android does routinely
+    /// for a foreground service like this one (see the START_STICKY note
+    /// on onStartCommand).
+    private fun spawnModelConfigRefresh() {
+        thread {
+            Thread.sleep(10_000)
+            while (true) {
+                BulbulConfig.fetchAndCacheModelChain(this)
+                Thread.sleep(6 * 60 * 60 * 1000L)
+            }
+        }
     }
 
     private fun showBubble() {

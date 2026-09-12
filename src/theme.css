@@ -19,6 +19,16 @@
      both themes, since the accent is the same in both).
    ───────────────────────────────────────────────────────────── */
 
+/* Android's WebView (Chromium) shows a gray tap-highlight rectangle over
+   any tapped element by default; nothing suppressed it anywhere in the
+   app, so every tap — most visibly the bottom nav — flashed an unwanted
+   box. Kill it globally; each control's own :active/pressed state (where
+   present) provides real tap feedback instead. */
+html.platform-android,
+html.platform-android * {
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* Cinematic crossfade between themes. theme.js adds .theme-anim to <html>
    only for the duration of a switch, so these transitions never slow down
    hover/interaction states the rest of the time. Limited to colour-ish

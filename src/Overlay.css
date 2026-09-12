@@ -31,12 +31,15 @@ html, body, #root {
 }
 
 .pill {
-  height: 16px;
-  width: 16px;
-  background: rgba(14, 14, 14, 0.78);
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* Idle pill is always on screen over the live desktop. No
+     backdrop-filter here — blurring live desktop pixels forces the GPU
+     to recomposite every frame at idle; the near-opaque background
+     carries the look without it. Stretched pill with fully rounded
+     ends, not a circle. */
+  height: 9px;
+  width: 40px;
+  background: transparent;
+  border: 1px solid rgba(205, 205, 205, 0.8);
   border-radius: 999px;
   display: flex;
   align-items: center;
@@ -62,10 +65,13 @@ html, body, #root {
   padding: 0 10px;
   gap: 8px;
   background: rgba(14, 14, 14, 0.92);
+  /* Restore the filled dark look + faint rim once expanded/active; the
+     light outline is only for the idle (collapsed) capsule. */
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .hovered.expanded .pill {
-  width: 32px;
+  width: 40px;
   padding: 0;
 }
 
@@ -137,18 +143,15 @@ html, body, #root {
   to { opacity: 1; }
 }
 
+/* Static, grayed dot — no pulse. An infinite animation on the
+   always-visible idle pill keeps the compositor running forever, which
+   is what pinned the GPU process at idle. */
 .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.42);
   display: block;
-  animation: idle-pulse 2.4s ease-in-out infinite;
-}
-
-@keyframes idle-pulse {
-  0%, 100% { opacity: 0.45; transform: scale(1); }
-  50%      { opacity: 0.85; transform: scale(1.15); }
 }
 
 .pill-icon svg { display: block; color: #d6d6d6; }

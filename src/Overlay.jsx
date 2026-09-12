@@ -203,7 +203,7 @@ function renderIcon(state, hovered) {
     case "silent":
       return <span className="glyph">!</span>;
     default:
-      return hovered ? <MicIcon /> : <span className="dot" aria-hidden />;
+      return hovered ? <MicIcon /> : null;
   }
 }
 
