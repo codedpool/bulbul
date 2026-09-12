@@ -1137,6 +1137,16 @@ html.platform-android .onb-actions .onb-btn {
   z-index: 5;
 }
 
+/* Android's WebView reports env(safe-area-inset-bottom) as 0 as
+   unreliably as it does safe-area-inset-top (see the .onb-top /
+   .m-appbar fix), so a 3-button nav bar could sit right on top of the
+   Continue button — worst case cutting into the name field above it on
+   the Welcome step. Same generous-fixed-floor treatment as the top bar,
+   sized to clear a 3-button bar (~48dp) with real breathing room. */
+html.platform-android .onb-actions {
+  padding-bottom: max(44px, calc(env(safe-area-inset-bottom) + 20px));
+}
+
 .onb-actions-center { justify-content: center; }
 
 .onb-btn {
