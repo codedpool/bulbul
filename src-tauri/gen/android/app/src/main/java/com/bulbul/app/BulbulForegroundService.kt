@@ -319,7 +319,17 @@ class BulbulForegroundService : Service() {
         if (!prefs.contains(BUBBLE_X)) return null
         val x = prefs.getInt(BUBBLE_X, 0)
         val y = prefs.getInt(BUBBLE_Y, 0)
-        val sizePx = BUBBLE_SIZE_DP.dp(this)
+        // MUST match the size showBubble() actually renders with
+        // (BulbulConfig.overlaySize, user-adjustable 40-120dp), not the
+        // unrelated BUBBLE_SIZE_DP=56 constant. That mismatch used to
+        // treat a perfectly valid edge-flush position — the default
+        // 52dp bubble is smaller than the 56dp assumed here — as
+        // off-screen, silently discarding it on every service restart
+        // (routine under Android's battery-management kills, given
+        // START_STICKY) and snapping back to the default corner. This
+        // is what made a user-dragged position look like it kept
+        // "changing on its own".
+        val sizePx = BulbulConfig.overlaySize(this).dp(this)
         val screenW = resources.displayMetrics.widthPixels
         val screenH = resources.displayMetrics.heightPixels
         // If the saved position would put the bubble entirely or
