@@ -3788,7 +3788,10 @@ html.platform-android .m-tabbar {
   background: var(--bg);
   border-top: 1px solid var(--fill);
   padding: 6px 8px;
-  padding-bottom: max(8px, env(safe-area-inset-bottom));
+  /* env(safe-area-inset-bottom) is as unreliable on this WebView as
+     inset-top (see .m-appbar) — 8px alone left a 3-button nav bar
+     overlapping the tab bar. Generous fixed floor, same pattern as top. */
+  padding-bottom: max(44px, calc(env(safe-area-inset-bottom) + 20px));
 }
 html.platform-android .m-tab {
   flex: 1;
@@ -3809,6 +3812,14 @@ html.platform-android .m-tab .m-tab-icon svg {
   width: 22px;
   height: 22px;
   display: block;
+}
+/* Deliberate press feedback in place of the suppressed default tap
+   highlight (see theme.css) — a quick, subtle dim + scale so taps still
+   feel responsive. */
+html.platform-android .m-tab:active {
+  background: var(--fill);
+  transform: scale(0.96);
+  transition: background 80ms ease, transform 80ms ease;
 }
 html.platform-android .m-tab.active { color: #5ec8c0; }
 html.platform-android .m-tab.active .m-tab-icon {
@@ -3853,7 +3864,9 @@ html.platform-android .m-sheet {
   border-radius: 18px 18px 0 0;
   border-top: 1px solid var(--border);
   padding: 8px 14px;
-  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  /* Same unreliable-inset floor as the tab bar (see .m-tabbar) — 14px
+     wasn't enough to clear a 3-button nav bar. */
+  padding-bottom: max(44px, calc(env(safe-area-inset-bottom) + 20px));
   animation: m-sheet-up 180ms ease-out;
 }
 @keyframes m-sheet-up {
@@ -3949,13 +3962,16 @@ html.platform-android .m-settings-head-spacer { width: 52px; }
 html.platform-android .m-settings-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 16px calc(24px + env(safe-area-inset-bottom));
+  /* Same unreliable-inset floor as .m-tabbar — the last row could sit
+     under a 3-button nav bar otherwise. */
+  padding: 4px 16px max(44px, calc(env(safe-area-inset-bottom) + 20px));
 }
 /* Drill-down list: one tappable row per section. */
 html.platform-android .m-settings-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 12px calc(24px + env(safe-area-inset-bottom));
+  /* Same unreliable-inset floor as .m-tabbar. */
+  padding: 8px 12px max(44px, calc(env(safe-area-inset-bottom) + 20px));
 }
 html.platform-android .m-settings-row {
   display: flex;
