@@ -283,10 +283,11 @@ fn default_stt_model() -> String {
 fn default_chat_model() -> String {
     // qwen with reasoning disabled (see groq::reasoning_effort_for): fast,
     // non-reasoning, good quality, and NOT deprecated — Groq's own recommended
-    // replacement for the retiring llamas (gone 2026-08-16). The groq.rs
-    // cleanup chain falls back to gpt-oss-20b → gpt-oss-120b if it fails.
-    // Users can change the primary in Settings → Account.
-    "qwen/qwen3.6-27b".to_string()
+    // replacement for the retiring llamas (gone 2026-08-16). qwen3.6-27b
+    // itself was retired by Groq on 2026-09-14; this is 3.8, its successor.
+    // The groq.rs cleanup chain falls back to gpt-oss-20b → gpt-oss-120b if
+    // it fails. Users can change the primary in Settings → Account.
+    "qwen/qwen3.8-27b".to_string()
 }
 fn default_min_seconds() -> f32 {
     0.4
@@ -624,7 +625,7 @@ pub fn load() -> Config {
 /// `default_chat_model()`. Lives here, not groq.rs, because config is shared
 /// with the mobile target where the groq module isn't compiled.
 const SUPPORTED_CHAT_MODELS: &[&str] =
-    &["qwen/qwen3.6-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
+    &["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
 
 fn is_supported_chat_model(model: &str) -> bool {
     SUPPORTED_CHAT_MODELS.contains(&model.trim())
