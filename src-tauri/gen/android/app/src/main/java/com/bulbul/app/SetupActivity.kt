@@ -33,6 +33,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Typeface
+import android.os.Build
+import android.widget.Toast
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -63,6 +65,16 @@ class SetupActivity : Activity() {
     /// paging Back to an already-done step doesn't immediately bounce
     /// forward again.
     private var stepEnteredGranted = false
+
+    /// True while a scheduled advance (success beat -> step++ -> render) is
+    /// in flight. Granting mic fires BOTH onResume (the system dialog
+    /// closing brings the activity back) and onRequestPermissionsResult
+    /// (the actual result) in quick succession, and the real step++ doesn't
+    /// happen until playSuccessBeat's delayed callback completes — so
+    /// without this guard, both calls see "not yet advanced" and each
+    /// schedules its own advance, net-advancing by two and skipping a
+    /// screen. Reset once the in-flight advance's step++ actually runs.
+    private var advancing = false
 
     private lateinit var dotsContainer: LinearLayout
     private lateinit var backButton: TextView
@@ -99,7 +111,14 @@ class SetupActivity : Activity() {
                 actionLabel = "Open Accessibility settings",
                 onAction = ::openAccessibilitySettings,
                 isGranted = ::accessibilityGranted,
-                extra = { buildRestrictedHelpCard() },
+                // The "restricted settings" block this card explains only
+                // ever hits sideloaded installs — a real Play install never
+                // trips it — so only show it when we're NOT running under
+                // Play. Otherwise Play users see irrelevant sideload
+                // troubleshooting on a build that will never need it.
+                extra = if (!installedViaPlayStore()) {
+                    { buildRestrictedHelpCard() }
+                } else null,
             ),
         )
     }
@@ -140,7 +159,40 @@ class SetupActivity : Activity() {
         if (requestCode == REQ_MIC) checkForAutoAdvance()
     }
 
+    /// Disabled while the walker is up — reaching this Activity at all means
+    /// at least one permission is still missing (allGranted() already
+    /// finishes the Activity everywhere else), so exiting via system Back
+    /// would just reveal MainActivity's onboarding underneath with setup
+    /// incomplete. Per product decision: nothing proceeds until all three
+    /// are granted.
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        Toast.makeText(
+            this,
+            "Please finish granting these permissions to continue.",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
     // ---------------- Permission state ----------------
+
+    /// Whether Bulbul was installed via the Play Store, vs. a sideloaded
+    /// APK (GitHub direct download, adb install, etc.). Used to hide
+    /// sideload-only troubleshooting (buildRestrictedHelpCard) from Play
+    /// users, for whom it's never relevant.
+    private fun installedViaPlayStore(): Boolean {
+        val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                packageManager.getInstallSourceInfo(packageName).installingPackageName
+            } catch (t: Throwable) {
+                null
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getInstallerPackageName(packageName)
+        }
+        return installer == "com.android.vending"
+    }
 
     private fun micGranted(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
@@ -166,10 +218,13 @@ class SetupActivity : Activity() {
             finish()
             return
         }
+        if (advancing) return
         if (step !in steps.indices) return
         val current = steps[step]
         if (current.isGranted() && !stepEnteredGranted) {
+            advancing = true
             playSuccessBeat {
+                advancing = false
                 if (step < steps.lastIndex) {
                     step++
                     renderStep(animate = true)
