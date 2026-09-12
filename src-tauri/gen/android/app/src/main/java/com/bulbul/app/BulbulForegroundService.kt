@@ -94,6 +94,7 @@ class BulbulForegroundService : Service() {
         startInForeground()
         recorder = AudioRecorder(this)
         showBubble()
+        spawnModelConfigRefresh()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -483,6 +484,25 @@ class BulbulForegroundService : Service() {
         }
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(channel)
+    }
+
+    /// Background refresh of the remote cleanup-model chain (see
+    /// BulbulConfig.fetchAndCacheModelChain) — lets a future Groq model
+    /// rotation be fixed by editing bulbultypes.xyz/models.json and
+    /// redeploying the site, not shipping an app release. Runs once
+    /// shortly after the service starts, then repeats on a slow cadence
+    /// for any long-lived session; most of the time a fresh fetch happens
+    /// anyway on the next service restart, which Android does routinely
+    /// for a foreground service like this one (see the START_STICKY note
+    /// on onStartCommand).
+    private fun spawnModelConfigRefresh() {
+        thread {
+            Thread.sleep(10_000)
+            while (true) {
+                BulbulConfig.fetchAndCacheModelChain(this)
+                Thread.sleep(6 * 60 * 60 * 1000L)
+            }
+        }
     }
 
     private fun showBubble() {
