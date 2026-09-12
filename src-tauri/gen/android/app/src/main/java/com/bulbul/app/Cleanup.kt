@@ -49,7 +49,7 @@ object Cleanup {
 
         val system = buildSystemPrompt(context, mode, appPkg, friendly)
         val user = "Raw transcript:\n$transcript"
-        val chain = cleanupChain(BulbulConfig.chatModel(context))
+        val chain = cleanupChain(context, BulbulConfig.chatModel(context))
         val rawWords = wordCount(transcript)
 
         for (model in chain) {
@@ -85,11 +85,17 @@ object Cleanup {
         return transcript.trim()
     }
 
-    private fun cleanupChain(primary: String): List<String> {
+    /// Fallback order comes from BulbulConfig.cachedCleanupChain when a
+    /// remote fetch from bulbultypes.xyz/models.json has ever succeeded (a
+    /// local SharedPreferences read, not network — no added latency here),
+    /// falling back to the embedded CLEANUP_FALLBACK seed when nothing's
+    /// cached yet. Mirrors groq.rs cleanup_chain.
+    private fun cleanupChain(context: Context, primary: String): List<String> {
         val chain = ArrayList<String>()
         val p = primary.trim()
         if (p.isNotEmpty()) chain.add(p)
-        for (m in CLEANUP_FALLBACK) if (!chain.contains(m)) chain.add(m)
+        val fallback = BulbulConfig.cachedCleanupChain(context) ?: CLEANUP_FALLBACK
+        for (m in fallback) if (!chain.contains(m)) chain.add(m)
         return chain
     }
 

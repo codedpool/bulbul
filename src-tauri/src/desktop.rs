@@ -10,6 +10,7 @@ mod hotkey;
 mod inject;
 #[cfg(target_os = "windows")]
 mod keyboard_hook;
+mod model_config;
 #[cfg(target_os = "linux")]
 mod linux_env;
 mod telemetry;
@@ -1586,8 +1587,19 @@ fn set_tray_visible(
         cfg.hide_tray = !visible;
         config::save(&cfg).map_err(|e| format!("{e:#}"))?;
     }
-    if let Some(tray) = app.tray_by_id("bulbul-tray") {
-        tray.set_visible(visible).map_err(|e| format!("{e}"))?;
+    if visible {
+        if let Some(tray) = app.tray_by_id("bulbul-tray") {
+            tray.set_visible(true).map_err(|e| format!("{e}"))?;
+        } else {
+            // The tray wasn't built at startup because hide_tray was on.
+            // Build it now (visible). Creating it at runtime — after the
+            // shell and message loop have settled — sidesteps the startup
+            // add-then-remove race entirely.
+            let has_key = { app.state::<AppState>().config.lock().has_api_key() };
+            setup_tray(&app, has_key).map_err(|e| format!("{e}"))?;
+        }
+    } else if let Some(tray) = app.tray_by_id("bulbul-tray") {
+        tray.set_visible(false).map_err(|e| format!("{e}"))?;
     }
     // The user expects the pill to disappear the moment they toggle
     // "Hide tray" on. We don't track current dictation state here, so
@@ -2218,7 +2230,17 @@ pub fn run() {
                 hotkey_tx.clone(),
             );
 
-            setup_tray(&handle, has_key_on_boot)?;
+            // Only build the tray when it should be visible. If hide_tray
+            // is on we deliberately do NOT create it here: Tauri 2's builder
+            // adds the icon visible (Windows NIM_ADD) and a set_visible(false)
+            // issued before the shell has registered the icon fails, which is
+            // why a hidden tray used to reappear on restart. Not creating it
+            // avoids that race entirely; it's built lazily in set_tray_visible
+            // when the user unhides.
+            let hide_tray_on_boot = handle.state::<AppState>().config.lock().hide_tray;
+            if !hide_tray_on_boot {
+                setup_tray(&handle, has_key_on_boot)?;
+            }
             setup_overlay_window(&handle)?;
             setup_scratchpad_window(&handle)?;
             reconcile_autostart(&handle);
@@ -2293,6 +2315,11 @@ pub fn run() {
             // event. The UI banner and the tray Quit handler do the rest.
             spawn_update_watcher(handle.clone());
 
+            // Remote cleanup-model chain: lets a future Groq model rotation
+            // be fixed by editing bulbultypes.xyz/models.json, not shipping
+            // a release. See model_config.rs.
+            model_config::spawn_model_config_watcher(handle.clone());
+
             // Telemetry boot. The opt-in toggle is per-call, but we always
             // start the periodic flush so any track() calls that happen
             // while opted in get drained on a steady cadence. If the user
@@ -2358,7 +2385,6 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
         "Bulbul — set your Groq API key in Settings"
     };
 
-    let initial_visible = !app.state::<AppState>().config.lock().hide_tray;
     // `mut` is unused on non-Mac (the cfg-gated reassignment below
     // compiles away). Suppress the lint rather than duplicate the
     // whole builder chain.
@@ -2421,13 +2447,14 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    // Tauri 2's TrayIconBuilder has no .visible() — apply the
-    // hide_tray preference after build. Best-effort: if the platform
-    // refuses to hide, we log and keep going (tray simply stays
-    // visible until the user retries).
-    if let Err(e) = tray.set_visible(initial_visible) {
-        tracing::warn!("could not apply initial tray visibility: {e}");
-    }
+    // setup_tray is only ever called when the tray SHOULD be visible — at
+    // startup when hide_tray is off, or from set_tray_visible when the user
+    // unhides. We never build it while hidden: Tauri 2's builder has no
+    // .visible(), so build() adds the icon visible (Windows NIM_ADD), and a
+    // set_visible(false) issued before the shell registers the icon fails —
+    // which is why a hidden tray used to reappear on restart. Not creating
+    // it at all avoids that race by construction.
+    let _ = tray;
     Ok(())
 }
 

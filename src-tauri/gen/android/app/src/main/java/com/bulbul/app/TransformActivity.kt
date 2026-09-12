@@ -219,7 +219,7 @@ class TransformActivity : Activity() {
                 }
                 return@thread
             }
-            val out = GroqClient.chatWithFallback(apiKey, t.prompt, input, BulbulConfig.chatModel(this))
+            val out = GroqClient.chatWithFallback(this, apiKey, t.prompt, input, BulbulConfig.chatModel(this))
             runOnUiThread {
                 if (out.isNullOrBlank()) {
                     toast("Transform failed — check your connection")

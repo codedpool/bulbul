@@ -30,7 +30,7 @@ android {
     namespace = "com.bulbul.app"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "com.bulbul.app"
+        applicationId = "xyz.bulbultypes.app"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
