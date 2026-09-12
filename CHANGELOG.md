@@ -4,6 +4,21 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-09-12
+
+A stability and Android-polish release, plus a permanent fix for how Bulbul keeps up with changes on Groq's side.
+
+### Improved
+
+- **Cleanup keeps up with Groq automatically** — the model order Bulbul uses for AI cleanup is now fetched from a small remote config in the background and cached locally, so a future change to Groq's available models no longer needs a new version of Bulbul to keep working smoothly. The default cleanup model is also updated to Qwen3.8 (Groq retired the previous Qwen3.6).
+- **Android permission setup, one step at a time** — the first-run permission screen now walks Microphone, Display over other apps, and Accessibility one at a time instead of all three at once, and if a permission is later revoked, only asks again for whichever one is actually missing.
+- **The floating bubble stays where you put it** — a stale internal size check was wrongly treating a validly placed bubble as off-screen and quietly resetting it to the default corner.
+- **Cleaner Android taps** — removed the gray highlight box that flashed on every tap, most visible on the bottom navigation, replacing it with a proper pressed state.
+- **Onboarding and the dashboard no longer sit under the 3-button navigation bar** on Android devices that use it instead of gestures.
+- **Bulbul now shows up under the right category** in Android's app drawer and Settings, instead of "Others."
+- **"Hide tray icon" actually stays hidden** across a restart on Windows.
+- **The overlay pill is lighter on system resources while idle** — it no longer keeps redrawing itself continuously, and is restyled as a slimmer, quieter capsule.
+
 ## [1.2.0] — 2026-08-15
 
 **The public launch.** Resilience + reach: cleanup and transcription now survive a model being retired or rate-limited by rotating through backups, the cleanup prompt is leaner (more dictations per day), and Android gains the same AI cleanup the desktop has. Includes everything in the cross-platform 1.1.x line.

@@ -189,11 +189,18 @@ function App() {
         setSettingsOpen(true);
     });
     invoke("get_autostart").then(setAutostart).catch(() => {});
-    // Mode-B auto-update: the Rust watcher emits this event after it
-    // downloads a new installer. If the user reopens the app between
-    // checks, the version is still in the slot — fetch it on mount.
-    invoke("get_staged_update_version").then(setStagedUpdate).catch(() => {});
-    const unStaged = listen("update-staged", (e) => setStagedUpdate(e.payload));
+    // Mode-B auto-update (desktop only): the Rust watcher emits this event
+    // after it downloads a new installer. If the user reopens the app
+    // between checks, the version is still in the slot — fetch it on
+    // mount. Android has no equivalent — Play manages its own update
+    // rollout and notifications, and there's no keyless way to ask "is
+    // there a newer version on Play" the way desktop asks GitHub — so
+    // Bulbul doesn't try to detect updates itself there (see Settings ▸
+    // About, which just opens the Play listing on Android instead).
+    if (!IS_ANDROID) invoke("get_staged_update_version").then(setStagedUpdate).catch(() => {});
+    const unStaged = IS_ANDROID
+      ? Promise.resolve(() => {})
+      : listen("update-staged", (e) => setStagedUpdate(e.payload));
     const un = listen("bulbul-status", (e) => setStatus(e.payload));
     const onKey = (e) => {
       // Escape-to-hide is desktop-only — Android handles app dismissal
@@ -242,15 +249,13 @@ function App() {
     };
   }, []);
 
+  // Desktop only — stagedUpdate is never set on Android (see the mount
+  // effect above), so this never runs there. Returns only on failure; on
+  // success the installer kills this process mid-call.
   async function installUpdate() {
     setInstalling(true);
     try {
-      // Desktop: returns only on failure — on success the installer kills
-      // this process mid-call. Android: opens the release APK in the system
-      // installer and returns normally (the app keeps running), so clear
-      // the spinner afterward.
       await invoke("install_staged_update");
-      if (IS_ANDROID) setInstalling(false);
     } catch (e) {
       console.error("install_staged_update failed:", e);
       setInstalling(false);
@@ -418,7 +423,7 @@ function App() {
                   <img src={bulbulMark} alt="" className="m-sheet-brand-mark" aria-hidden />
                   <span className="m-sheet-brand-text">bulbul</span>
                 </span>
-                <span className="muted small">v1.2.0 · GPL-3.0</span>
+                <span className="muted small">v1.2.1 · GPL-3.0</span>
               </div>
             </div>
           </div>
@@ -552,35 +557,28 @@ function App() {
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
           </div>
-          <div className="version muted small">v1.2.0 · GPL-3.0</div>
+          <div className="version muted small">v1.2.1 · GPL-3.0</div>
         </div>
       </aside>
 
       <main className="content">
         {IS_LINUX && <LinuxSupportBanner />}
         <HotkeyHealthBanner config={config} updateConfig={updateConfig} />
+        {/* Desktop only — stagedUpdate is never set on Android (see the
+            mount effect above); Android's equivalent lives in Settings ▸
+            About, which opens the Play listing instead. */}
         {stagedUpdate && (
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />
             <span className="update-banner-text">
-              {IS_ANDROID ? (
-                <><strong>Bulbul v{stagedUpdate}</strong> is available on GitHub.</>
-              ) : (
-                <><strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.</>
-              )}
+              <strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.
             </span>
             <button
               className="update-banner-btn"
               onClick={installUpdate}
               disabled={installing}
             >
-              {installing
-                ? IS_ANDROID
-                  ? "Opening…"
-                  : "Installing…"
-                : IS_ANDROID
-                  ? "Update"
-                  : "Install & restart"}
+              {installing ? "Installing…" : "Install & restart"}
             </button>
           </div>
         )}
