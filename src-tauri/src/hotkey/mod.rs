@@ -59,6 +59,104 @@ pub enum HotkeyEvent {
     TransformTriggered(i64),
 }
 
+// ─── "Tap to talk" ──────────────────────────────────────────────────────
+//
+// When on, the dictation/polish hotkeys toggle instead of requiring a
+// hold: one tap starts, the next tap stops. A plain global rather than
+// something threaded through HotkeySet/re_register, because the Windows
+// LL keyboard hook (keyboard_hook.rs) is installed ONCE at boot and isn't
+// re-created per hotkey registration the way the other physical-key
+// producers are — a global is the one thing every producer can reach
+// without re-plumbing each of their call sites individually.
+//
+// `route_physical_event` is the single choke point every PHYSICAL
+// press/release producer sends through instead of hitting `tx` directly:
+// the Windows LL keyboard hook (modifier-only chords like the default
+// Ctrl+Win), the global-shortcut handler + native release poller (regular
+// combos, e.g. Shift+Alt+P), and Linux evdev (direct /dev/input reading,
+// the default Linux path once the user has input-device access).
+//
+// Deliberately NOT wired into two other producers:
+//   - `cli_toggle_dictation` (desktop.rs) — the Linux CLI/signal escape
+//     hatch for GNOME Wayland users whose compositor can't register the
+//     hotkey at all. It already has its own complete, independent toggle
+//     state and sends straight to AppState.hotkey_tx without going
+//     through hotkey::re_register or this function at all, so it's
+//     structurally unaffected by this setting either way — which is
+//     exactly what keeps it working regardless of whether "Tap to talk"
+//     is on.
+//   - `linux_portal.rs` (the Wayland GlobalShortcuts portal, used when
+//     evdev access isn't available yet) — it already implements its own
+//     toggle-tolerance as a workaround for a GNOME bug where a held
+//     shortcut sometimes never emits a release signal at all: a second
+//     Activated while already active is treated as the missing release
+//     and turned into a synthesized `DictationReleased`. Passing that
+//     synthesized release back through this translation would swallow it
+//     (tap mode treats a raw release as "ignore, wait for the next tap"),
+//     silently breaking the exact GNOME workaround it depends on. Until
+//     that's unified deliberately, "Tap to talk" simply has no effect on
+//     the portal path — a real hold still behaves as a real hold there.
+static TAP_TO_TALK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static DICTATION_TAP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static POLISH_TAP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Updates the shared "Tap to talk" flag every physical producer reads.
+/// Call at boot (from the loaded config) and whenever Settings saves a
+/// change to it. Resets both per-hotkey toggle states so flipping the
+/// setting can never leave a stale "already active" flag around that
+/// would silently eat the next real tap.
+pub fn set_tap_to_talk_enabled(on: bool) {
+    use std::sync::atomic::Ordering;
+    TAP_TO_TALK.store(on, Ordering::SeqCst);
+    DICTATION_TAP_ACTIVE.store(false, Ordering::SeqCst);
+    POLISH_TAP_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+/// Routes one raw physical press/release through "Tap to talk"
+/// translation when it's on, before forwarding to `tx`: a tap starts
+/// (forwards Pressed), a raw release is swallowed, and the next tap stops
+/// (forwards Released instead of Pressed). Passed straight through
+/// unchanged when the setting is off, and for event kinds it doesn't
+/// apply to (`TransformTriggered` — slots are already tap-to-trigger).
+pub fn route_physical_event(evt: HotkeyEvent, tx: &Sender<HotkeyEvent>) {
+    use std::sync::atomic::Ordering;
+    if !TAP_TO_TALK.load(Ordering::SeqCst) {
+        let _ = tx.send(evt);
+        return;
+    }
+    match evt {
+        HotkeyEvent::DictationPressed => {
+            toggle_forward(&DICTATION_TAP_ACTIVE, HotkeyEvent::DictationPressed, HotkeyEvent::DictationReleased, tx)
+        }
+        HotkeyEvent::DictationReleased => {}
+        HotkeyEvent::PolishDictationPressed => toggle_forward(
+            &POLISH_TAP_ACTIVE,
+            HotkeyEvent::PolishDictationPressed,
+            HotkeyEvent::PolishDictationReleased,
+            tx,
+        ),
+        HotkeyEvent::PolishDictationReleased => {}
+        other => {
+            let _ = tx.send(other);
+        }
+    }
+}
+
+fn toggle_forward(
+    active: &std::sync::atomic::AtomicBool,
+    pressed: HotkeyEvent,
+    released: HotkeyEvent,
+    tx: &Sender<HotkeyEvent>,
+) {
+    use std::sync::atomic::Ordering;
+    if !active.swap(true, Ordering::SeqCst) {
+        let _ = tx.send(pressed);
+    } else {
+        active.store(false, Ordering::SeqCst);
+        let _ = tx.send(released);
+    }
+}
+
 /// Parsed hotkey: required modifier state + non-modifier key.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ParsedHotkey {
@@ -362,11 +460,13 @@ fn re_register(
                 *last = Some(Instant::now());
             }
             tracing::debug!("global-shortcut dictation pressed: {:?}", sc);
-            let _ = tx_dict.send(HotkeyEvent::DictationPressed);
+            route_physical_event(HotkeyEvent::DictationPressed, &tx_dict);
 
             // Spawn a one-shot poller that watches for release, sends the
             // release event, then clears `dict_active` so the next press
-            // can fire again.
+            // can fire again. Still runs in tap mode — route_physical_event
+            // is what decides whether the release actually gets forwarded
+            // or swallowed, not this poller.
             let tx_release = tx_dict.clone();
             let parsed = dict_parsed.clone();
             let dict_active_clone = dict_active.clone();
@@ -374,7 +474,7 @@ fn re_register(
                 let (poll_tx, poll_rx) = mpsc::channel();
                 native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
-                    let _ = tx_release.send(evt);
+                    route_physical_event(evt, &tx_release);
                 }
                 *dict_active_clone.lock() = false;
             });
@@ -431,7 +531,7 @@ fn re_register(
                 *last = Some(Instant::now());
             }
             tracing::debug!("global-shortcut polish-dictation pressed: {:?}", sc);
-            let _ = tx_pol.send(HotkeyEvent::PolishDictationPressed);
+            route_physical_event(HotkeyEvent::PolishDictationPressed, &tx_pol);
 
             let tx_release = tx_pol.clone();
             let parsed = pol_parsed.clone();
@@ -440,7 +540,7 @@ fn re_register(
                 let (poll_tx, poll_rx) = mpsc::channel();
                 native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
-                    let _ = tx_release.send(evt);
+                    route_physical_event(evt, &tx_release);
                 }
                 *pol_active_clone.lock() = false;
             });

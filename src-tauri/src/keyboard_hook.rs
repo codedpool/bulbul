@@ -102,7 +102,11 @@ fn event_tx_slot() -> &'static Mutex<Option<Sender<HotkeyEvent>>> {
 
 fn send_event(evt: HotkeyEvent) {
     if let Some(tx) = event_tx_slot().lock().as_ref() {
-        let _ = tx.send(evt);
+        // Routed through the shared "Tap to talk" translation, since this
+        // is how the default modifier-only chord (Ctrl+Win) reaches the
+        // orchestrator — see hotkey::route_physical_event for why this is
+        // a global rather than something threaded through here.
+        crate::hotkey::route_physical_event(evt, tx);
     }
 }
 
