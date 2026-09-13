@@ -385,17 +385,42 @@ unsafe extern "system" fn keyboard_hook_proc(
     // Ctrl+A / Ctrl+V system-wide. If reality says the chord modifiers
     // aren't all really held, resync HELD_MODS to match and skip the
     // engagement.
+    //
+    // GetAsyncKeyState turned out to have its own, separate wrinkle, and
+    // a retry loop (tried 2026-09-13) didn't fix it: on an ordinary FAST
+    // two-key press — exactly what "Tap to talk" asks for, since the
+    // whole point is not holding — GetAsyncKeyState can still read the
+    // first-pressed key as already-released by the time this check runs,
+    // even after several retries a few ms apart. Device-tested: this was
+    // averting on nearly every tap, in both directions (start AND stop,
+    // since Tap to talk's "stop" is just another full press-cycle
+    // through this same gate) — the chord only ever engaged on a
+    // second, deliberately-slower attempt.
+    //
+    // The cross-check's actual job — refusing to trust a HELD_MODS bit
+    // that's been silently stuck true since some earlier missed event —
+    // matters because a false HOLD-to-talk engagement is costly (it
+    // starts recording and won't stop until a modifier comes up,
+    // potentially breaking Ctrl+A/Ctrl+V for a while). A false TAP
+    // engagement is cheap: worst case it starts a listen the user
+    // immediately taps again to cancel, or it comes back too-short and
+    // gets discarded. So the check only runs for hold-to-talk, where
+    // that cost actually applies; "Tap to talk" trusts HELD_MODS
+    // immediately, trading the rare stale-bit risk for actually working
+    // on a real tap.
     if !was_engaged && now_engaged {
-        let real = current_real_modifier_state();
-        if (real & mask) != mask {
-            tracing::warn!(
-                "keyboard_hook: false engagement averted — HELD_MODS=0b{:04b} but real=0b{:04b}, mask=0b{:04b}. Resyncing.",
-                new_held,
-                real,
-                mask
-            );
-            HELD_MODS.store(real, Ordering::Release);
-            return CallNextHookEx(None, code, wparam, lparam);
+        if !crate::hotkey::tap_to_talk_enabled() {
+            let real = current_real_modifier_state();
+            if (real & mask) != mask {
+                tracing::warn!(
+                    "keyboard_hook: false engagement averted — HELD_MODS=0b{:04b} but real=0b{:04b}, mask=0b{:04b}. Resyncing.",
+                    new_held,
+                    real,
+                    mask
+                );
+                HELD_MODS.store(real, Ordering::Release);
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
         }
         CHORD_ENGAGED.store(true, Ordering::Release);
         tracing::debug!("keyboard_hook: chord engaged → sending DictationPressed");

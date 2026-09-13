@@ -114,6 +114,15 @@ pub fn set_tap_to_talk_enabled(on: bool) {
     POLISH_TAP_ACTIVE.store(false, Ordering::SeqCst);
 }
 
+/// Whether "Tap to talk" is currently on. Used by keyboard_hook.rs's
+/// modifier-chord engagement check to decide whether it can trust a fast
+/// tap immediately or should keep cross-checking GetAsyncKeyState first —
+/// see the comment at that call site for why the two modes need
+/// different answers to the same question.
+pub fn tap_to_talk_enabled() -> bool {
+    TAP_TO_TALK.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Routes one raw physical press/release through "Tap to talk"
 /// translation when it's on, before forwarding to `tx`: a tap starts
 /// (forwards Pressed), a raw release is swallowed, and the next tap stops
