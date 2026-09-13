@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
+import MouseButtonRecorder from "../components/MouseButtonRecorder.jsx";
 import { AUTOSTART_LABEL, IS_ANDROID, IS_LINUX, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
 
 const MODES = [
@@ -801,6 +802,15 @@ function PaneStartup({ config, updateConfig, autostart, onAutostartChange, autos
         checked={!!config.hide_tray}
         onChange={(v) => onHideTrayChange?.(v)}
       />
+      <Row
+        title="Mouse button"
+        hint="Which button triggers Mouse mode (the sidebar toggle) — click to start dictating, click again to stop."
+      >
+        <MouseButtonRecorder
+          value={config.mouse_button || "middle"}
+          onChange={(v) => updateConfig({ ...config, mouse_button: v })}
+        />
+      </Row>
     </>
   );
 }

@@ -198,6 +198,21 @@ pub struct Config {
     #[serde(default = "default_tap_to_talk")]
     pub tap_to_talk: bool,
 
+    /// When true, a configured mouse button always toggles dictation —
+    /// click to start, click again to stop — independent of tap_to_talk,
+    /// which only governs the keyboard hotkey. On by default (middle
+    /// click), since it's an additive, opt-out convenience rather than a
+    /// behavior change to an existing control.
+    #[serde(default = "default_mouse_mode")]
+    pub mouse_mode: bool,
+
+    /// Which mouse button triggers mouse_mode: "middle" | "back" |
+    /// "forward". Parsed via hotkey::MouseButton::parse, which falls
+    /// back to "middle" for anything else — so a stale/invalid value can
+    /// never leave mouse mode pointing at nothing.
+    #[serde(default = "default_mouse_button")]
+    pub mouse_button: String,
+
     #[serde(default = "default_language")]
     pub language: String,
 
@@ -316,6 +331,12 @@ fn default_hide_tray() -> bool {
 }
 fn default_tap_to_talk() -> bool {
     false
+}
+fn default_mouse_mode() -> bool {
+    true
+}
+fn default_mouse_button() -> String {
+    "middle".to_string()
 }
 fn default_language() -> String {
     "auto".to_string()
@@ -533,6 +554,8 @@ impl Default for Config {
             display_name: default_display_name(),
             hide_tray: default_hide_tray(),
             tap_to_talk: default_tap_to_talk(),
+            mouse_mode: default_mouse_mode(),
+            mouse_button: default_mouse_button(),
             language: default_language(),
             style_enabled: default_style_enabled(),
             style_personal: default_style_personal(),

@@ -43,6 +43,13 @@ const RELEASE_POLL_TIMEOUT_SECS: u64 = 60;
 //   bool CGEventSourceKeyState(CGEventSourceStateID stateID, CGKeyCode key);
 extern "C" {
     fn CGEventSourceKeyState(state_id: CGEventSourceStateID, key: u16) -> bool;
+    // bool CGEventSourceButtonState(CGEventSourceStateID stateID, CGMouseButton button);
+    // CGMouseButton only names 0=left/1=right/2=center in the public
+    // headers, but the underlying type is a plain button index — 3/4 for
+    // the two side buttons work the same way "other mouse button"
+    // CGEvents number them. Same minimal extern-C shape as
+    // CGEventSourceKeyState above, not a new FFI surface.
+    fn CGEventSourceButtonState(state_id: CGEventSourceStateID, button: u32) -> bool;
 }
 
 // Mac virtual key codes for modifiers. L+R because the physical keyboard
@@ -239,6 +246,61 @@ pub fn spawn_release_poller(
             if !main_down || !required_mods_held(&hotkey, state) {
                 let _ = tx.send(release_evt.clone());
                 return;
+            }
+        }
+    });
+}
+
+/// macOS button numbers for CGEventSourceButtonState: 0=left, 1=right,
+/// 2=center (middle), 3/4=the two "other" (side) buttons. Matches how
+/// AppKit/Quartz number extra mouse buttons generally.
+fn mac_button_number(btn: super::MouseButton) -> u32 {
+    match btn {
+        super::MouseButton::Middle => 2,
+        super::MouseButton::Back => 3,
+        super::MouseButton::Forward => 4,
+    }
+}
+
+fn is_button_down(button: u32) -> bool {
+    unsafe { CGEventSourceButtonState(CGEventSourceStateID::CombinedSessionState, button) }
+}
+
+/// "Mouse mode" watcher — polls whichever button is currently configured
+/// (hotkey::should_handle_mouse_click reads that live) every
+/// RELEASE_POLL_MS, and toggles dictation via hotkey::route_mouse_click
+/// on each up→down edge. Spawned once at boot, independent lifecycle
+/// from the modifier-chord watcher above — mouse mode has no per-hotkey
+/// state to re-parse on settings changes, just the shared on/off +
+/// button-choice atomics in hotkey::mod.
+///
+/// Observe-only, like the Linux evdev mouse watcher: CGEventSourceButtonState
+/// only reads live button state, it doesn't intercept or suppress
+/// anything, so the configured button's normal effect elsewhere still
+/// happens too. Real suppression would need a CGEventTap — a
+/// significantly larger, unverified-on-this-machine FFI surface (Mach
+/// ports, run loops, a C callback ABI) that this file has never used
+/// anywhere; left for a pass with real Mac hardware/CI to build safely
+/// against instead of writing blind.
+pub fn spawn_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
+    thread::spawn(move || {
+        let mut was_down = [false; 3]; // indexed by MouseButton::as index below
+        tracing::info!("Mac mouse-mode watcher started (observe-only)");
+        loop {
+            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
+            for (i, btn) in [
+                super::MouseButton::Middle,
+                super::MouseButton::Back,
+                super::MouseButton::Forward,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let down = is_button_down(mac_button_number(btn));
+                if down && !was_down[i] && super::should_handle_mouse_click(btn) {
+                    super::route_mouse_click(&tx);
+                }
+                was_down[i] = down;
             }
         }
     });

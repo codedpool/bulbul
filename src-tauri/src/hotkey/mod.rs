@@ -44,6 +44,8 @@ use linux as native;
 mod linux_portal;
 #[cfg(target_os = "linux")]
 mod linux_evdev;
+#[cfg(target_os = "linux")]
+mod linux_mouse;
 
 /// Minimum gap between two fires of the same hotkey. Guards against
 /// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
@@ -155,6 +157,117 @@ fn toggle_forward(
         active.store(false, Ordering::SeqCst);
         let _ = tx.send(released);
     }
+}
+
+// ─── "Mouse mode" ───────────────────────────────────────────────────────
+//
+// A user-configured mouse button (default: middle-click) always toggles
+// dictation — click to start, click again to stop — independent of
+// "Tap to talk" above, which only governs the keyboard hotkey. This is
+// the user's separate choice to dictate via a click at all.
+//
+// Platform reality, by design (confirmed before building):
+//   - Windows: `mouse_hook.rs`'s WH_MOUSE_LL hook sits inline in the
+//     delivery path, so the configured button's normal effect (browser
+//     back/forward, etc.) is genuinely suppressed while Mouse mode is on.
+//   - Linux: `linux_mouse.rs` reads /dev/input directly (evdev), the same
+//     observe-only mechanism `linux_evdev.rs` already uses for the
+//     keyboard hotkey. It runs in PARALLEL with whatever else reads the
+//     same device (the compositor via libinput) — it can't suppress
+//     anything. The click still does its normal thing in the focused
+//     app at the same time Bulbul reacts to it. True suppression would
+//     need exclusive device access (EVIOCGRAB) plus re-injecting every
+//     OTHER click via uinput — out of scope for this pass.
+//   - macOS: the modifier-chord watcher in `macos.rs` only polls key
+//     state (CGEventSourceKeyState) and can't suppress anything either;
+//     the mouse-mode poller mirrors that (CGEventSourceButtonState),
+//     same observe-only trade-off as Linux.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MouseButton {
+    Middle,
+    Back,
+    Forward,
+}
+
+impl MouseButton {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "back" => MouseButton::Back,
+            "forward" => MouseButton::Forward,
+            _ => MouseButton::Middle,
+        }
+    }
+
+    fn as_u8(self) -> u8 {
+        match self {
+            MouseButton::Middle => 0,
+            MouseButton::Back => 1,
+            MouseButton::Forward => 2,
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => MouseButton::Back,
+            2 => MouseButton::Forward,
+            _ => MouseButton::Middle,
+        }
+    }
+}
+
+static MOUSE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static MOUSE_BUTTON: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static MOUSE_DICTATION_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Updates the shared "Mouse mode" on/off flag. Call at boot (from the
+/// loaded config) and whenever Settings saves a change to it. Resets the
+/// toggle state so flipping it can't leave a stale "already active" flag
+/// that would silently eat the next real click.
+pub fn set_mouse_mode_enabled(on: bool) {
+    use std::sync::atomic::Ordering;
+    MOUSE_MODE.store(on, Ordering::SeqCst);
+    MOUSE_DICTATION_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+/// Updates the currently-configured mouse button. Call at boot and on
+/// every save_config. Also resets the toggle state, for the same reason
+/// as set_mouse_mode_enabled.
+pub fn set_mouse_button(btn: MouseButton) {
+    use std::sync::atomic::Ordering;
+    MOUSE_BUTTON.store(btn.as_u8(), Ordering::SeqCst);
+    MOUSE_DICTATION_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+/// Whether a detected click on `btn` should actually be treated as a
+/// mouse-mode trigger right now — Mouse mode is on AND it's the
+/// currently-configured button. Platform watchers call this to decide
+/// both whether to react at all, and (Windows only) whether to suppress
+/// the click.
+pub fn should_handle_mouse_click(btn: MouseButton) -> bool {
+    use std::sync::atomic::Ordering;
+    MOUSE_MODE.load(Ordering::SeqCst) && MouseButton::from_u8(MOUSE_BUTTON.load(Ordering::SeqCst)) == btn
+}
+
+/// Toggles dictation on a mouse-mode click: the first click starts
+/// (forwards Pressed), the next stops (forwards Released). Always
+/// toggles — unlike route_physical_event, this doesn't consult
+/// "Tap to talk" at all, since a mouse click is never a hold.
+pub fn route_mouse_click(tx: &Sender<HotkeyEvent>) {
+    toggle_forward(
+        &MOUSE_DICTATION_ACTIVE,
+        HotkeyEvent::DictationPressed,
+        HotkeyEvent::DictationReleased,
+        tx,
+    );
+}
+
+/// Thin public entry point for desktop.rs's boot sequence — `macos` is a
+/// private submodule (platform internals stay out of the public API
+/// surface, same as the rest of this file), so this is the one crack in
+/// that wall, purely to spawn the watcher once at startup.
+#[cfg(target_os = "macos")]
+pub fn spawn_mac_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
+    macos::spawn_mouse_mode_watcher(tx);
 }
 
 /// Parsed hotkey: required modifier state + non-modifier key.
@@ -400,6 +513,19 @@ fn re_register(
         linux_evdev::stop();
         Vec::new()
     };
+
+    // Mouse mode: independent of the dictation hotkey's own path above —
+    // it reads whichever mouse devices are available regardless of
+    // whether the keyboard hotkey itself is using evdev or the portal.
+    // Observe-only (see linux_mouse.rs); registered unconditionally
+    // whenever a mouse is readable, since should_handle_mouse_click
+    // gates on the live mouse_mode/mouse_button config either way.
+    #[cfg(target_os = "linux")]
+    if linux_mouse::available() {
+        linux_mouse::register(tx.clone());
+    } else {
+        linux_mouse::stop();
+    }
 
     // Linux Wayland WITHOUT evdev access (pre-relogin, AppImage): fall
     // back to the GlobalShortcuts portal for dictation + polish. Neither

@@ -10,6 +10,7 @@ import bulbulMark from "../assets/bulbul-mark.png";
 import { applyTheme } from "../theme.js";
 import { IS_ANDROID, IS_LINUX, IS_MAC, IS_WINDOWS, META_KEY_NAME } from "../platform.js";
 import { useInPageChordFallback } from "../inPageHotkey.js";
+import MouseButtonRecorder, { mouseButtonLabel } from "../components/MouseButtonRecorder.jsx";
 import "./onboarding.css";
 
 // The stored hotkey VALUES are platform-independent — Bulbul's parser maps
@@ -111,8 +112,8 @@ const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test, and like, it loo
 const STEP_SEQUENCE = IS_ANDROID
   ? ["welcome", "apiKey", "language", "done"]
   : IS_MAC
-  ? ["welcome", "permissions", "apiKey", "language", "hotkey", "done"]
-  : ["welcome", "apiKey", "language", "hotkey", "done"];
+  ? ["welcome", "permissions", "apiKey", "language", "hotkey", "mouseMode", "done"]
+  : ["welcome", "apiKey", "language", "hotkey", "mouseMode", "done"];
 
 export default function OnboardingWizard({ config, updateConfig, onComplete }) {
   const [step, setStep] = useState(0);
@@ -254,6 +255,14 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
         )}
         {currentStepName === "hotkey" && (
           <StepHotkey
+            config={config}
+            updateConfig={updateConfig}
+            onBack={goBack}
+            onNext={goNext}
+          />
+        )}
+        {currentStepName === "mouseMode" && (
+          <StepMouseMode
             config={config}
             updateConfig={updateConfig}
             onBack={goBack}
@@ -1364,6 +1373,215 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
       <div className="onb-actions">
         <button className="onb-btn ghost" onClick={onBack}>← Back</button>
         <button className="onb-btn primary" onClick={onNext}>Continue →</button>
+      </div>
+    </div>
+  );
+}
+
+// Mouse mode's own live-test step, mirroring StepHotkey's bulbul-status /
+// bulbul-focused-insert wiring (same event stream the production overlay
+// uses) but without any of the chord-assembly visuals — a click is a
+// single discrete action, not something to assemble key-by-key. Skippable:
+// mouse_mode defaults on regardless, so skipping just means the user
+// didn't sit through the demo, not that the feature gets turned off.
+function StepMouseMode({ config, updateConfig, onBack, onNext }) {
+  const [transcript, setTranscript] = useState("");
+  const [clickState, setClickState] = useState("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+  const textareaRef = useRef(null);
+  const mouseButton = config.mouse_button || "middle";
+
+  useEffect(() => {
+    const un = listen("bulbul-focused-insert", (event) => {
+      const text = String(event.payload || "");
+      const el = textareaRef.current;
+      if (!text || !el) return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      const caret = start + text.length;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      setTranscript(el.value);
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    const un = listen("bulbul-status", (e) => {
+      const { state, message } = e.payload || {};
+      if (state === "listening") {
+        setClickState("listening");
+      } else if (state === "processing" || state === "injecting") {
+        setClickState("processing");
+      } else if (state === "done") {
+        setClickState("done");
+      } else if (state === "error") {
+        setClickState("error");
+        setErrorMsg(message || "");
+      } else if (state === "idle") {
+        if (message && /too short/i.test(message)) {
+          setClickState("too_short");
+        } else if (message && /(silence|no speech)/i.test(message)) {
+          setClickState("silent");
+        } else {
+          setClickState("idle");
+        }
+      }
+    });
+    return () => { un.then((f) => f()); };
+  }, []);
+
+  useEffect(() => {
+    if (clickState === "idle" || clickState === "listening" || clickState === "processing") return;
+    const dwell = clickState === "done" ? 2200 : 3000;
+    const t = setTimeout(() => setClickState("idle"), dwell);
+    return () => clearTimeout(t);
+  }, [clickState]);
+
+  let title;
+  let subtitle;
+  switch (clickState) {
+    case "listening":
+      title = "Listening — click again to stop";
+      subtitle = "Say a sentence, then click your mouse button once more.";
+      break;
+    case "processing":
+      title = "Transcribing…";
+      subtitle = "One quick round-trip to Groq, then your text lands below.";
+      break;
+    case "done":
+      title = "Got it!";
+      subtitle = "Your transcript is in the box below. Try once more if you like.";
+      break;
+    case "too_short":
+      title = "Stopped too quickly";
+      subtitle = "Leave a moment between the two clicks — that clip was too short to transcribe.";
+      break;
+    case "silent":
+      title = "Couldn't hear you";
+      subtitle = "Try speaking a bit louder, or check your mic is on the right input.";
+      break;
+    case "error":
+      title = "Something went wrong";
+      subtitle = errorMsg || "Look at the dashboard's overlay for details, or try again.";
+      break;
+    default:
+      title = `Click ${mouseButtonLabel(mouseButton).toLowerCase()} to start`;
+      subtitle = "Click it again when you're done speaking.";
+  }
+
+  function clearTest() {
+    setTranscript("");
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+      textareaRef.current.focus();
+    }
+  }
+
+  return (
+    <div className="onb-page-inner">
+      <header className="onb-step-head">
+        <h2>Or dictate with your mouse</h2>
+        <p className="onb-sub">
+          Click a mouse button to start, click again to stop — no holding required. On by default; change the button or turn it off anytime in Settings.
+        </p>
+      </header>
+
+      <div className="onb-hotkey-grid">
+        <div className="onb-hotkey-list">
+          <div className="onb-hotkey-row selected">
+            <div className="onb-hotkey-meta">
+              <div className="onb-hotkey-label">Mouse button</div>
+              <div className="onb-hotkey-detail">
+                Middle click is the safest default — it's rarely bound to anything else. The side buttons work too, if your mouse has them and nothing else has claimed them.
+              </div>
+              <div className="onb-hotkey-custom">
+                <MouseButtonRecorder
+                  value={mouseButton}
+                  onChange={(v) => updateConfig({ ...config, mouse_button: v })}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="onb-test-pane">
+          <div className="onb-test-header">
+            <div className="onb-test-eyebrow">Try it now</div>
+            <div className="onb-test-instructions">
+              Click {mouseButtonLabel(mouseButton).toLowerCase()}, read the sample line aloud, then click again:
+            </div>
+            <div className="onb-sample-line">"{SAMPLE_LINE}"</div>
+          </div>
+
+          <div className={`onb-hold-indicator state-${clickState}`} role="status" aria-live="polite">
+            <div className="onb-hold-visual">
+              {clickState === "listening" && (
+                <>
+                  <div className="onb-hold-mic">
+                    <MicIcon active />
+                    <div className="onb-hold-pulse" aria-hidden />
+                  </div>
+                  <div className="onb-hold-waveform" aria-hidden>
+                    <span /><span /><span /><span /><span />
+                  </div>
+                </>
+              )}
+              {clickState === "processing" && <div className="onb-hold-spinner" aria-hidden />}
+              {clickState === "done" && <div className="onb-hold-check" aria-hidden>✓</div>}
+              {(clickState === "too_short" || clickState === "silent") && (
+                <div className="onb-hold-warn" aria-hidden>!</div>
+              )}
+              {clickState === "error" && <div className="onb-hold-error" aria-hidden>✕</div>}
+              {clickState === "idle" && (
+                <div className="onb-hold-mic idle">
+                  <MicIcon />
+                </div>
+              )}
+            </div>
+            <div className="onb-hold-meta">
+              <div className="onb-hold-title">{title}</div>
+              <div className="onb-hold-sub">{subtitle}</div>
+            </div>
+          </div>
+
+          <textarea
+            ref={textareaRef}
+            className="onb-textarea"
+            placeholder="Click, speak, click again — the transcript will land here…"
+            onChange={(e) => setTranscript(e.target.value)}
+            spellCheck={false}
+          />
+
+          <div className="onb-test-foot">
+            {transcript.trim().length > 0 && (
+              <span className="onb-ok">✓ Dictation works — that's your transcript.</span>
+            )}
+            <button className="onb-link" type="button" onClick={clearTest}>Clear and try again</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="onb-actions">
+        <button className="onb-btn ghost" onClick={onBack}>← Back</button>
+        <div className="onb-actions-right">
+          <button
+            className="onb-btn ghost"
+            onClick={() => {
+              // Skip only means "didn't sit through the demo" — mouse_mode
+              // stays whatever it already was (on, by default), since a
+              // harmless watcher that never fires for a missing/unused
+              // button costs nothing.
+              onNext();
+            }}
+          >
+            Skip
+          </button>
+          <button className="onb-btn primary" onClick={onNext}>Continue →</button>
+        </div>
       </div>
     </div>
   );
