@@ -640,6 +640,9 @@ function App() {
       onAutostartChange={toggleAutostart}
       autostartError={autostartError}
       onHideTrayChange={toggleHideTray}
+      stagedUpdate={stagedUpdate}
+      installUpdate={installUpdate}
+      installing={installing}
     />
     <TooltipProvider />
     </>

@@ -1982,15 +1982,42 @@ fn set_tray_visible(
     Ok(())
 }
 
+/// Checks for an update and, if one exists, downloads and stages it in the
+/// same `staged_update` slot `spawn_update_watcher` uses — so a manual
+/// check and the background watcher are indistinguishable to the rest of
+/// the app once either one finds something. That's what lets the
+/// Settings "Check for updates" button turn directly into "Install &
+/// restart" itself instead of just reporting availability and leaving
+/// the user to find the separate dashboard banner: this command does the
+/// download eagerly rather than making the user click twice (once to
+/// learn an update exists, again to fetch it).
 #[tauri::command]
-async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
+async fn check_for_updates(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| format!("{e}"))?;
-    match updater.check().await {
-        Ok(Some(update)) => Ok(Some(update.version.to_string())),
-        Ok(None) => Ok(None),
-        Err(e) => Err(format!("{e}")),
+    // Already staged, whether by an earlier click or the background
+    // watcher — reuse it instead of re-downloading the same installer.
+    if let Some(staged) = state.staged_update.lock().as_ref() {
+        return Ok(Some(staged.version.clone()));
     }
+    let updater = app.updater().map_err(|e| format!("{e}"))?;
+    let Some(update) = updater.check().await.map_err(|e| format!("{e}"))? else {
+        return Ok(None);
+    };
+    let version = update.version.clone();
+    let bytes = update
+        .download(|_chunk, _len| {}, || {})
+        .await
+        .map_err(|e| format!("download failed: {e}"))?;
+    *state.staged_update.lock() = Some(StagedUpdate {
+        update,
+        bytes,
+        version: version.clone(),
+    });
+    let _ = app.emit("update-staged", version.clone());
+    Ok(Some(version))
 }
 
 /// If the background watcher (see `spawn_update_watcher`) has downloaded
