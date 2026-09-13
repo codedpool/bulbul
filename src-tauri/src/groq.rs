@@ -941,6 +941,34 @@ pub async fn list_cerebras_models(api_key: &str) -> Result<Vec<String>> {
     Ok(ids)
 }
 
+/// List Groq's currently-served model ids (OpenAI-compatible GET
+/// /v1/models). Used by the remote model-config safety net to cross-check
+/// the cleanup chain fetched from bulbultypes.xyz against what Groq
+/// actually still serves, so a stale or forgotten site update can't lead
+/// dictation with a model Groq has since retired.
+pub async fn list_groq_models(api_key: &str) -> Result<Vec<String>> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err(anyhow!("Groq API key is empty"));
+    }
+    let client = shared_client();
+    let resp = client
+        .get(format!("{BASE_URL}/models"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .context("GET Groq /models")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("Groq rejected key ({status}): {body}"));
+    }
+    let body = resp.text().await.context("reading Groq /models body")?;
+    let parsed: ModelsResponse = serde_json::from_str(&body)
+        .with_context(|| format!("parsing Groq models: {body}"))?;
+    Ok(parsed.data.into_iter().map(|m| m.id).collect())
+}
+
 #[derive(Deserialize)]
 struct ModelsResponse {
     data: Vec<ModelEntry>,
