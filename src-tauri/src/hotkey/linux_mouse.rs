@@ -27,7 +27,7 @@
 //! module already); no new crate was added for this.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -167,37 +167,25 @@ fn grabbed_reader_loop(
     let mut batch: Vec<InputEvent> = Vec::new();
     let mut swallowed_code: Option<u16> = None;
     loop {
-        // Binding the call's result to a place (`fetch_result`) before
-        // matching on it, rather than matching on `device.fetch_events()`
-        // directly, is load-bearing: a match's scrutinee is a temporary
-        // whose drop scope is the *whole* match (all arms), so
-        // `FetchEventsSynced`'s borrow of `device` would otherwise still
-        // be considered live inside the `Err` arm too, and calling
-        // `device.ungrab()` there (a second `&mut device`) wouldn't
-        // compile. Matching on the named local instead lets NLL see that
-        // this control path never actually constructed the borrowing
-        // `Ok` value, so the borrow has already ended by here.
-        let fetch_result = device.fetch_events();
-        let events = match fetch_result {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::debug!("evdev mouse (grabbed) reader for {path:?} ending: {e}");
-                let _ = device.ungrab();
-                return;
-            }
-        };
-        if GENERATION.load(Ordering::SeqCst) != generation {
-            // `events` is a live value here (not yet consumed by the `for`
-            // loop below) with its own `Drop` impl, so the compiler must
-            // account for its destructor running — which still holds a
-            // borrow of `device` — before allowing another `&mut device`
-            // call. Dropping it explicitly ends that borrow on our terms
-            // instead of at the implicit end-of-scope this early return
-            // would otherwise trigger after `device.ungrab()`.
-            drop(events);
+        // fetch_batch takes `&mut device` and returns a fully owned
+        // Vec<InputEvent> (or None) — no FetchEventsSynced, no borrow of
+        // `device`, survives the call. Two earlier attempts tried to keep
+        // the match on `device.fetch_events()` inline here and call
+        // `device.ungrab()` in the failure arms, and both failed the same
+        // way (E0499): `FetchEventsSynced` has a real Drop impl, and
+        // wherever that value (or anything derived from matching it) is
+        // still in scope, the compiler must assume its destructor might
+        // still run — which needs `device` borrowed — so a second
+        // `&mut device` call anywhere before its scope truly ends won't
+        // compile, regardless of which arm is live at runtime. Isolating
+        // the fetch+borrow in its own function sidesteps the question
+        // entirely: by the time it returns, the borrow is unconditionally
+        // over, by ordinary function-return semantics, not the sort of
+        // same-block liveness inference that kept tripping this up.
+        let Some(events) = fetch_batch(&mut device, &path, generation) else {
             let _ = device.ungrab();
             return;
-        }
+        };
         for ev in events {
             if ev.event_type() == EventType::SYNCHRONIZATION {
                 if !batch.is_empty() {
@@ -228,6 +216,24 @@ fn grabbed_reader_loop(
             batch.push(ev);
         }
     }
+}
+
+/// Reads one batch, or None if the read failed or a config change
+/// (generation bump) means the caller should stop. Collecting into a
+/// Vec ends `device`'s borrow the moment this returns — see the comment
+/// at the call site for why that's the point.
+fn fetch_batch(device: &mut Device, path: &Path, generation: u64) -> Option<Vec<InputEvent>> {
+    let events = match device.fetch_events() {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::debug!("evdev mouse (grabbed) reader for {path:?} ending: {e}");
+            return None;
+        }
+    };
+    if GENERATION.load(Ordering::SeqCst) != generation {
+        return None;
+    }
+    Some(events.collect())
 }
 
 /// Fallback path when grabbing or mirroring failed: identical to the
