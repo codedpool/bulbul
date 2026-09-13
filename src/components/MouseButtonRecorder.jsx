@@ -13,7 +13,12 @@ import { useEffect, useState } from "react";
 const BUTTON_TO_VALUE = { 1: "middle", 3: "back", 4: "forward" };
 const VALUE_TO_LABEL = { middle: "Middle click", back: "Side button (back)", forward: "Side button (forward)" };
 
+// `value` falsy (null/undefined) means "nothing recorded yet" — distinct
+// from any real button choice, so the recorder can show a clear
+// call-to-action instead of silently defaulting to "Middle click" as if
+// that had already been picked.
 export function mouseButtonLabel(value) {
+  if (!value) return "Click to record a button";
   return VALUE_TO_LABEL[value] || VALUE_TO_LABEL.middle;
 }
 

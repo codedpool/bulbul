@@ -1390,6 +1390,11 @@ function StepMouseMode({ config, updateConfig, onBack, onNext }) {
   const [errorMsg, setErrorMsg] = useState("");
   const textareaRef = useRef(null);
   const mouseButton = config.mouse_button || "middle";
+  // Tracks whether "Custom" is the selected radio, independent of whether
+  // a real button has actually been recorded yet — so picking "Custom"
+  // shows a clear "click to record" prompt instead of silently guessing
+  // a button (e.g. "back") and displaying it as if it were already set.
+  const [customPicked, setCustomPicked] = useState(mouseButton !== "middle");
 
   useEffect(() => {
     const un = listen("bulbul-focused-insert", (event) => {
@@ -1492,20 +1497,43 @@ function StepMouseMode({ config, updateConfig, onBack, onNext }) {
 
       <div className="onb-hotkey-grid">
         <div className="onb-hotkey-list">
-          <div className="onb-hotkey-row selected">
+          <label className={`onb-hotkey-row ${!customPicked ? "selected" : ""}`}>
+            <input
+              type="radio"
+              name="mouseButton"
+              checked={!customPicked}
+              onChange={() => {
+                setCustomPicked(false);
+                updateConfig({ ...config, mouse_button: "middle" });
+              }}
+            />
             <div className="onb-hotkey-meta">
-              <div className="onb-hotkey-label">Mouse button</div>
-              <div className="onb-hotkey-detail">
-                Middle click is the safest default — it's rarely bound to anything else. The side buttons work too, if your mouse has them and nothing else has claimed them.
-              </div>
-              <div className="onb-hotkey-custom">
-                <MouseButtonRecorder
-                  value={mouseButton}
-                  onChange={(v) => updateConfig({ ...config, mouse_button: v })}
-                />
-              </div>
+              <div className="onb-hotkey-label">Middle click</div>
+              <div className="onb-hotkey-detail">The safest default — rarely bound to anything else.</div>
             </div>
-          </div>
+          </label>
+          <label className={`onb-hotkey-row ${customPicked ? "selected" : ""}`}>
+            <input
+              type="radio"
+              name="mouseButton"
+              checked={customPicked}
+              onChange={() => setCustomPicked(true)}
+            />
+            <div className="onb-hotkey-meta">
+              <div className="onb-hotkey-label">Custom</div>
+              <div className="onb-hotkey-detail">
+                Record a side button instead, if your mouse has one and nothing else has claimed it.
+              </div>
+              {customPicked && (
+                <div className="onb-hotkey-custom">
+                  <MouseButtonRecorder
+                    value={mouseButton === "middle" ? null : mouseButton}
+                    onChange={(v) => updateConfig({ ...config, mouse_button: v })}
+                  />
+                </div>
+              )}
+            </div>
+          </label>
         </div>
 
         <div className="onb-test-pane">

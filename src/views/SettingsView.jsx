@@ -437,6 +437,7 @@ export default function SettingsView({
             {active === "hotkeys" && (
               <PaneHotkeys
                 config={config}
+                updateConfig={updateConfig}
                 recordingHotkeyFor={recordingHotkeyFor}
                 setRecordingHotkeyFor={setRecordingHotkeyFor}
                 recordingError={recordingError}
@@ -578,6 +579,7 @@ function PaneAccount({ config, updateConfig, hasKey, draftKey, setDraftKey, save
 
 function PaneHotkeys({
   config,
+  updateConfig,
   recordingHotkeyFor,
   setRecordingHotkeyFor,
   recordingError,
@@ -622,6 +624,15 @@ function PaneHotkeys({
       <p className="muted small settings-note">
         Transform shortcuts ({IS_MAC ? <><kbd>⌘1</kbd>…<kbd>⌘6</kbd></> : <><kbd>Alt+1</kbd>…<kbd>Alt+6</kbd></>}) for rewriting selected text live on the Transforms page.
       </p>
+      <Row
+        title="Mouse button"
+        hint="Which button triggers Mouse mode (the sidebar toggle) — click to start dictating, click again to stop."
+      >
+        <MouseButtonRecorder
+          value={config.mouse_button || "middle"}
+          onChange={(v) => updateConfig({ ...config, mouse_button: v })}
+        />
+      </Row>
     </>
   );
 }
@@ -802,15 +813,6 @@ function PaneStartup({ config, updateConfig, autostart, onAutostartChange, autos
         checked={!!config.hide_tray}
         onChange={(v) => onHideTrayChange?.(v)}
       />
-      <Row
-        title="Mouse button"
-        hint="Which button triggers Mouse mode (the sidebar toggle) — click to start dictating, click again to stop."
-      >
-        <MouseButtonRecorder
-          value={config.mouse_button || "middle"}
-          onChange={(v) => updateConfig({ ...config, mouse_button: v })}
-        />
-      </Row>
     </>
   );
 }

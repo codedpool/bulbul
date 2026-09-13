@@ -539,7 +539,7 @@ function App() {
               </label>
               <label
                 className="sidebar-toggle-row"
-                title="Click your configured mouse button to start dictating, click again to stop. Change which button in Settings ▸ Startup."
+                title="Click your configured mouse button to start dictating, click again to stop. Change which button in Settings ▸ Hotkeys."
               >
                 <span className="sidebar-toggle-label">Mouse mode</span>
                 <span className={`toggle ${config.mouse_mode ? "on" : ""}`}>
