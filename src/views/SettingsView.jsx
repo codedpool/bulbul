@@ -104,6 +104,12 @@ export default function SettingsView({
   onAutostartChange,
   autostartError,
   onHideTrayChange,
+  // Desktop only — App.jsx's Mode-B auto-update state. Undefined on the
+  // Android sheet's own SettingsView instance, which never passes these
+  // (checkUpdates already branches to "Open Play Store" there instead).
+  stagedUpdate,
+  installUpdate,
+  installing,
   // Android drill-down nav is lifted to App so the hardware-back handler can
   // step through it. null = the section list; a section id = its detail.
   section: mSection = null,
@@ -296,9 +302,14 @@ export default function SettingsView({
     }
     setUpdateState({ state: "checking", message: "" });
     try {
+      // A truthy result means check_for_updates has already downloaded and
+      // staged it (see desktop.rs) — App.jsx's own "update-staged" listener
+      // picks up stagedUpdate from here, which is what actually flips this
+      // pane's button to "Install & restart" (see PaneAbout's `ready`).
+      // Nothing to show locally in that case — reset back to idle rather
+      // than tracking a redundant "available" state nothing renders.
       const result = await invoke("check_for_updates");
-      if (result) setUpdateState({ state: "available", message: `v${result}` });
-      else setUpdateState({ state: "uptodate", message: "You're on the latest version." });
+      setUpdateState(result ? { state: "idle", message: "" } : { state: "uptodate", message: "You're on the latest version." });
     } catch (e) {
       setUpdateState({ state: "error", message: String(e) });
     }
@@ -479,6 +490,9 @@ export default function SettingsView({
                 checkUpdates={checkUpdates}
                 updateState={updateState}
                 onResetSetup={() => updateConfig({ ...config, onboarding_completed: false })}
+                stagedUpdate={stagedUpdate}
+                installUpdate={installUpdate}
+                installing={installing}
               />
             )}
           </main>
@@ -875,7 +889,7 @@ function PanePrivacy({ config, updateConfig }) {
   );
 }
 
-function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
+function PaneAbout({ checkUpdates, updateState, onResetSetup, stagedUpdate, installUpdate, installing }) {
   const [copied, setCopied] = useState(false);
   const copyEmail = async () => {
     try {
@@ -884,26 +898,42 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
       setTimeout(() => setCopied(false), 1600);
     } catch {}
   };
+  // Once an update is staged — by this same button (check_for_updates now
+  // downloads eagerly, not just reports) or by the background watcher
+  // finding one first — the button IS the install action, not a second
+  // "check again" step. stagedUpdate comes from App.jsx and updates live
+  // (the "update-staged" event), so this also reflects the watcher's own
+  // finds without the user ever pressing Check for updates.
+  const ready = !IS_ANDROID && !!stagedUpdate;
   return (
     <>
       <Row
         title="Updates"
-        hint={IS_ANDROID ? "Play Store keeps Bulbul up to date." : "Bulbul checks GitHub releases on a schedule."}
+        hint={
+          IS_ANDROID
+            ? "Play Store keeps Bulbul up to date."
+            : ready
+              ? "Downloaded and ready to go."
+              : "Bulbul checks GitHub releases on a schedule."
+        }
         stack
       >
         <div className="row">
-          <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
-            {IS_ANDROID
-              ? "Open Play Store"
-              : updateState.state === "checking"
-                ? "Checking…"
-                : "Check for updates"}
-          </button>
+          {ready ? (
+            <button onClick={installUpdate} disabled={installing}>
+              {installing ? "Installing…" : `Install v${stagedUpdate} & restart`}
+            </button>
+          ) : (
+            <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
+              {IS_ANDROID
+                ? "Open Play Store"
+                : updateState.state === "checking"
+                  ? "Checking…"
+                  : "Check for updates"}
+            </button>
+          )}
         </div>
-        {!IS_ANDROID && updateState.state === "available" && (
-          <p className="ok small">Update available: {updateState.message}</p>
-        )}
-        {!IS_ANDROID && updateState.state === "uptodate" && (
+        {!ready && !IS_ANDROID && updateState.state === "uptodate" && (
           <p className="muted small">{updateState.message}</p>
         )}
         {!IS_ANDROID && updateState.state === "error" && (
