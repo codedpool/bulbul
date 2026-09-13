@@ -188,6 +188,16 @@ pub struct Config {
     #[serde(default = "default_hide_tray")]
     pub hide_tray: bool,
 
+    /// When true, the dictation and polish hotkeys toggle instead of
+    /// requiring a hold: one tap starts, the next tap stops. Off by
+    /// default (hold-to-talk). Applied in hotkey::re_register, only to
+    /// the platform-native physical-key producers — never to the Linux
+    /// CLI/signal toggle escape hatch (cli_toggle_dictation), which
+    /// already has its own independent toggle state for GNOME Wayland
+    /// users whose compositor can't register the hotkey at all.
+    #[serde(default = "default_tap_to_talk")]
+    pub tap_to_talk: bool,
+
     #[serde(default = "default_language")]
     pub language: String,
 
@@ -302,6 +312,9 @@ fn default_display_name() -> String {
     String::new()
 }
 fn default_hide_tray() -> bool {
+    false
+}
+fn default_tap_to_talk() -> bool {
     false
 }
 fn default_language() -> String {
@@ -519,6 +532,7 @@ impl Default for Config {
             autostart: None,
             display_name: default_display_name(),
             hide_tray: default_hide_tray(),
+            tap_to_talk: default_tap_to_talk(),
             language: default_language(),
             style_enabled: default_style_enabled(),
             style_personal: default_style_personal(),

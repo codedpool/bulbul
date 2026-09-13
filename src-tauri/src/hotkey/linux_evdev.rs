@@ -218,13 +218,17 @@ fn reader_loop(
                     let cooled = last_fire[i]
                         .map_or(true, |t| t.elapsed().as_millis() >= FIRE_COOLDOWN_MS);
                     if cooled {
-                        let _ = tx.send(spec.pressed.clone());
+                        // "Tap to talk" translation (super::route_physical_event)
+                        // applies to dictation/polish; TransformTriggered passes
+                        // through unchanged either way, since slots are already
+                        // tap-to-trigger.
+                        super::route_physical_event(spec.pressed.clone(), &tx);
                         last_fire[i] = Some(Instant::now());
                         firing[i] = true;
                     }
                 } else if !now_held && firing[i] {
                     if let Some(ev) = &spec.released {
-                        let _ = tx.send(ev.clone());
+                        super::route_physical_event(ev.clone(), &tx);
                     }
                     firing[i] = false;
                 }

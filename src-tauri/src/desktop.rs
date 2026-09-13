@@ -741,7 +741,16 @@ fn save_config(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (prev_has_key, prev_hotkey, prev_pol, prev_theme, prev_mode, prev_telemetry, prev_style) = {
+    let (
+        prev_has_key,
+        prev_hotkey,
+        prev_pol,
+        prev_theme,
+        prev_mode,
+        prev_telemetry,
+        prev_style,
+        prev_tap_to_talk,
+    ) = {
         let cfg = state.config.lock();
         (
             cfg.has_api_key(),
@@ -751,12 +760,14 @@ fn save_config(
             cfg.mode.as_str().to_string(),
             cfg.telemetry_enabled,
             cfg.style_enabled,
+            cfg.tap_to_talk,
         )
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
     let next_has_key = new_cfg.has_api_key();
     let next_hotkey = new_cfg.hotkey.clone();
     let next_pol = new_cfg.polish_hotkey.clone();
+    let next_tap_to_talk = new_cfg.tap_to_talk;
     let next_theme = new_cfg.theme.clone();
     let next_mode = new_cfg.mode.as_str().to_string();
     let next_telemetry = new_cfg.telemetry_enabled;
@@ -795,6 +806,9 @@ fn save_config(
     if prev_theme != next_theme {
         // Broadcast to every window so the dashboard + scratchpad re-theme live.
         let _ = app.emit("theme-changed", next_theme);
+    }
+    if prev_tap_to_talk != next_tap_to_talk {
+        hotkey::set_tap_to_talk_enabled(next_tap_to_talk);
     }
     if prev_hotkey != next_hotkey || prev_pol != next_pol {
         {
@@ -2001,6 +2015,7 @@ pub fn run() {
     let hotkey_mutex = Arc::new(Mutex::new(initial_set));
     let (hotkey_tx, hotkey_rx) = hotkey::make_channel();
     let hotkey_rx_for_setup = Mutex::new(Some(hotkey_rx));
+    hotkey::set_tap_to_talk_enabled(initial_config.tap_to_talk);
 
     // Install the global low-level keyboard hook BEFORE any Tauri plugin
     // touches the shortcut subsystem. The hook is what makes modifier-only

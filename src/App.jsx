@@ -525,6 +525,20 @@ function App() {
             <>
               <label
                 className="sidebar-toggle-row"
+                title="Tap your hotkey once to start dictating, tap again to stop — instead of holding it down."
+              >
+                <span className="sidebar-toggle-label">Tap to talk</span>
+                <span className={`toggle ${config.tap_to_talk ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.tap_to_talk}
+                    onChange={(e) => updateConfig({ ...config, tap_to_talk: e.target.checked })}
+                  />
+                  <span className="toggle-thumb" />
+                </span>
+              </label>
+              <label
+                className="sidebar-toggle-row"
                 title="When on, the dashboard pops up at startup. When off, Bulbul boots silently to the tray — the pill still appears when you dictate."
               >
                 <span className="sidebar-toggle-label">Open at startup</span>
