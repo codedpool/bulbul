@@ -43,13 +43,6 @@ const RELEASE_POLL_TIMEOUT_SECS: u64 = 60;
 //   bool CGEventSourceKeyState(CGEventSourceStateID stateID, CGKeyCode key);
 extern "C" {
     fn CGEventSourceKeyState(state_id: CGEventSourceStateID, key: u16) -> bool;
-    // bool CGEventSourceButtonState(CGEventSourceStateID stateID, CGMouseButton button);
-    // CGMouseButton only names 0=left/1=right/2=center in the public
-    // headers, but the underlying type is a plain button index — 3/4 for
-    // the two side buttons work the same way "other mouse button"
-    // CGEvents number them. Same minimal extern-C shape as
-    // CGEventSourceKeyState above, not a new FFI surface.
-    fn CGEventSourceButtonState(state_id: CGEventSourceStateID, button: u32) -> bool;
 }
 
 // Mac virtual key codes for modifiers. L+R because the physical keyboard
@@ -251,57 +244,77 @@ pub fn spawn_release_poller(
     });
 }
 
-/// macOS button numbers for CGEventSourceButtonState: 0=left, 1=right,
-/// 2=center (middle), 3/4=the two "other" (side) buttons. Matches how
-/// AppKit/Quartz number extra mouse buttons generally.
-fn mac_button_number(btn: super::MouseButton) -> u32 {
-    match btn {
-        super::MouseButton::Middle => 2,
-        super::MouseButton::Back => 3,
-        super::MouseButton::Forward => 4,
+/// macOS button numbers as read from a CGEvent's MouseEventButtonNumber
+/// field: 0=left, 1=right, 2=center (middle), 3/4=the two "other" (side)
+/// buttons — matching how AppKit/Quartz number extra mouse buttons
+/// generally, verified against the core-graphics crate's own source
+/// (servo/core-foundation-rs) this session rather than assumed.
+fn mac_button_for_number(n: i64) -> Option<super::MouseButton> {
+    match n {
+        2 => Some(super::MouseButton::Middle),
+        3 => Some(super::MouseButton::Back),
+        4 => Some(super::MouseButton::Forward),
+        _ => None,
     }
 }
 
-fn is_button_down(button: u32) -> bool {
-    unsafe { CGEventSourceButtonState(CGEventSourceStateID::CombinedSessionState, button) }
-}
-
-/// "Mouse mode" watcher — polls whichever button is currently configured
-/// (hotkey::should_handle_mouse_click reads that live) every
-/// RELEASE_POLL_MS, and toggles dictation via hotkey::route_mouse_click
-/// on each up→down edge. Spawned once at boot, independent lifecycle
-/// from the modifier-chord watcher above — mouse mode has no per-hotkey
-/// state to re-parse on settings changes, just the shared on/off +
-/// button-choice atomics in hotkey::mod.
+/// "Mouse mode" — a CGEventTap watching OtherMouseDown (middle + side
+/// button presses), genuinely suppressing the configured button the same
+/// way Windows' WH_MOUSE_LL hook does: returning CallbackResult::Drop
+/// removes the event from the stream entirely, so nothing downstream
+/// (the focused app, the OS) ever sees it. Toggles dictation via
+/// hotkey::route_mouse_click on each down edge that matches the
+/// currently-configured button (hotkey::should_handle_mouse_click reads
+/// that live, so changing the button in Settings takes effect without
+/// re-installing the tap).
 ///
-/// Observe-only, like the Linux evdev mouse watcher: CGEventSourceButtonState
-/// only reads live button state, it doesn't intercept or suppress
-/// anything, so the configured button's normal effect elsewhere still
-/// happens too. Real suppression would need a CGEventTap — a
-/// significantly larger, unverified-on-this-machine FFI surface (Mach
-/// ports, run loops, a C callback ABI) that this file has never used
-/// anywhere; left for a pass with real Mac hardware/CI to build safely
-/// against instead of writing blind.
+/// Spawned once at boot on its own thread with its own run loop — the
+/// tap's callback only runs while that thread's run loop is actually
+/// pumping (CFRunLoop::run_current(), which blocks for the thread's
+/// lifetime). Independent from the modifier-chord watcher above; mouse
+/// mode has no per-hotkey state to re-parse on settings changes.
+///
+/// Known gap, accepted for this pass: if the OS ever force-disables the
+/// tap under load (rare — happens if a callback runs too long; ours just
+/// checks a couple of atomics and returns), there's no watchdog to
+/// re-enable it, unlike the Windows keyboard hook's 5s re-assert timer.
+/// Falls back to doing nothing (not to un-suppressing) if CGEventTap
+/// installation itself fails (e.g. Accessibility not yet granted) —
+/// logged, not silently swallowed.
 pub fn spawn_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
     thread::spawn(move || {
-        let mut was_down = [false; 3]; // indexed by MouseButton::as index below
-        tracing::info!("Mac mouse-mode watcher started (observe-only)");
-        loop {
-            thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
-            for (i, btn) in [
-                super::MouseButton::Middle,
-                super::MouseButton::Back,
-                super::MouseButton::Forward,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let down = is_button_down(mac_button_number(btn));
-                if down && !was_down[i] && super::should_handle_mouse_click(btn) {
-                    super::route_mouse_click(&tx);
+        use core_foundation::runloop::CFRunLoop;
+        use core_graphics::event::{
+            CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+            CallbackResult, EventField,
+        };
+
+        let result = CGEventTap::with_enabled(
+            CGEventTapLocation::Session,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::Default,
+            vec![CGEventType::OtherMouseDown],
+            move |_proxy, _event_type, event| {
+                let n = event.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
+                if let Some(btn) = mac_button_for_number(n) {
+                    if super::should_handle_mouse_click(btn) {
+                        super::route_mouse_click(&tx);
+                        return CallbackResult::Drop;
+                    }
                 }
-                was_down[i] = down;
-            }
+                CallbackResult::Keep
+            },
+            || {
+                tracing::info!("Mac mouse-mode CGEventTap installed");
+                CFRunLoop::run_current();
+            },
+        );
+        if result.is_err() {
+            tracing::error!(
+                "Mac mouse-mode: CGEventTap install failed — Accessibility permission likely \
+                 not granted yet. Mouse mode has no effect until Bulbul is re-launched after \
+                 granting it."
+            );
         }
     });
 }

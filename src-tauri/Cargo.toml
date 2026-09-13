@@ -117,8 +117,11 @@ objc2 = "0.6"
 # allocation outlives the async completion callback. Pinned to match
 # objc2 0.6's block2 alignment.
 block2 = "0.6"
-# CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs)
-# and live key-state polling in the hotkey path (hotkey/macos.rs).
+# CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs),
+# live key-state polling in the hotkey path (hotkey/macos.rs), and a
+# CGEventTap for genuinely suppressing the configured Mouse mode button
+# (same file) — the tap needs core-foundation's runloop module below to
+# pump its callback.
 core-graphics = "0.25"
 # AXUIElement bindings for the correction-memory watcher
 # (uia/macos.rs). Also pulls in core-foundation transitively, but we
