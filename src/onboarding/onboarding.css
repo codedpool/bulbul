@@ -1148,6 +1148,7 @@ html.platform-android .onb-actions {
 }
 
 .onb-actions-center { justify-content: center; }
+.onb-actions-right { display: flex; align-items: center; gap: 10px; }
 
 .onb-btn {
   font: inherit;

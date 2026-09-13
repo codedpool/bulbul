@@ -10,6 +10,8 @@ mod hotkey;
 mod inject;
 #[cfg(target_os = "windows")]
 mod keyboard_hook;
+#[cfg(target_os = "windows")]
+mod mouse_hook;
 mod model_config;
 #[cfg(target_os = "linux")]
 mod linux_env;
@@ -750,6 +752,8 @@ fn save_config(
         prev_telemetry,
         prev_style,
         prev_tap_to_talk,
+        prev_mouse_mode,
+        prev_mouse_button,
     ) = {
         let cfg = state.config.lock();
         (
@@ -761,6 +765,8 @@ fn save_config(
             cfg.telemetry_enabled,
             cfg.style_enabled,
             cfg.tap_to_talk,
+            cfg.mouse_mode,
+            cfg.mouse_button.clone(),
         )
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
@@ -768,6 +774,8 @@ fn save_config(
     let next_hotkey = new_cfg.hotkey.clone();
     let next_pol = new_cfg.polish_hotkey.clone();
     let next_tap_to_talk = new_cfg.tap_to_talk;
+    let next_mouse_mode = new_cfg.mouse_mode;
+    let next_mouse_button = new_cfg.mouse_button.clone();
     let next_theme = new_cfg.theme.clone();
     let next_mode = new_cfg.mode.as_str().to_string();
     let next_telemetry = new_cfg.telemetry_enabled;
@@ -809,6 +817,12 @@ fn save_config(
     }
     if prev_tap_to_talk != next_tap_to_talk {
         hotkey::set_tap_to_talk_enabled(next_tap_to_talk);
+    }
+    if prev_mouse_mode != next_mouse_mode {
+        hotkey::set_mouse_mode_enabled(next_mouse_mode);
+    }
+    if prev_mouse_button != next_mouse_button {
+        hotkey::set_mouse_button(hotkey::MouseButton::parse(&next_mouse_button));
     }
     if prev_hotkey != next_hotkey || prev_pol != next_pol {
         {
@@ -2016,6 +2030,8 @@ pub fn run() {
     let (hotkey_tx, hotkey_rx) = hotkey::make_channel();
     let hotkey_rx_for_setup = Mutex::new(Some(hotkey_rx));
     hotkey::set_tap_to_talk_enabled(initial_config.tap_to_talk);
+    hotkey::set_mouse_mode_enabled(initial_config.mouse_mode);
+    hotkey::set_mouse_button(hotkey::MouseButton::parse(&initial_config.mouse_button));
 
     // Install the global low-level keyboard hook BEFORE any Tauri plugin
     // touches the shortcut subsystem. The hook is what makes modifier-only
@@ -2026,6 +2042,17 @@ pub fn run() {
     // modifier-only chord; otherwise the hook stays dormant.
     #[cfg(target_os = "windows")]
     keyboard_hook::install(hotkey_tx.clone());
+    // Mouse mode: an independent LL hook, own lifecycle from the keyboard
+    // one — see mouse_hook.rs for why it's a separate file/thread rather
+    // than folded into the above.
+    #[cfg(target_os = "windows")]
+    mouse_hook::install(hotkey_tx.clone());
+    // Mouse mode on Mac: observe-only polling watcher (see
+    // hotkey::macos::spawn_mouse_mode_watcher for why it isn't a real
+    // CGEventTap yet). Spawned once at boot — mouse mode has no
+    // per-hotkey state to re-parse on settings changes.
+    #[cfg(target_os = "macos")]
+    hotkey::spawn_mac_mouse_mode_watcher(hotkey_tx.clone());
 
     // Pre-warm the cpal/WASAPI input stream during startup so the first
     // dictation doesn't pay the device-open cost (200–700ms on observed

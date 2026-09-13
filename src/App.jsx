@@ -539,6 +539,20 @@ function App() {
               </label>
               <label
                 className="sidebar-toggle-row"
+                title="Click your configured mouse button to start dictating, click again to stop. Change which button in Settings ▸ Startup."
+              >
+                <span className="sidebar-toggle-label">Mouse mode</span>
+                <span className={`toggle ${config.mouse_mode ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.mouse_mode}
+                    onChange={(e) => updateConfig({ ...config, mouse_mode: e.target.checked })}
+                  />
+                  <span className="toggle-thumb" />
+                </span>
+              </label>
+              <label
+                className="sidebar-toggle-row"
                 title="When on, the dashboard pops up at startup. When off, Bulbul boots silently to the tray — the pill still appears when you dictate."
               >
                 <span className="sidebar-toggle-label">Open at startup</span>
