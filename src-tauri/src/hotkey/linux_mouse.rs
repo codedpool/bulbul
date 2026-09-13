@@ -167,7 +167,18 @@ fn grabbed_reader_loop(
     let mut batch: Vec<InputEvent> = Vec::new();
     let mut swallowed_code: Option<u16> = None;
     loop {
-        let events = match device.fetch_events() {
+        // Binding the call's result to a place (`fetch_result`) before
+        // matching on it, rather than matching on `device.fetch_events()`
+        // directly, is load-bearing: a match's scrutinee is a temporary
+        // whose drop scope is the *whole* match (all arms), so
+        // `FetchEventsSynced`'s borrow of `device` would otherwise still
+        // be considered live inside the `Err` arm too, and calling
+        // `device.ungrab()` there (a second `&mut device`) wouldn't
+        // compile. Matching on the named local instead lets NLL see that
+        // this control path never actually constructed the borrowing
+        // `Ok` value, so the borrow has already ended by here.
+        let fetch_result = device.fetch_events();
+        let events = match fetch_result {
             Ok(e) => e,
             Err(e) => {
                 tracing::debug!("evdev mouse (grabbed) reader for {path:?} ending: {e}");
@@ -176,6 +187,14 @@ fn grabbed_reader_loop(
             }
         };
         if GENERATION.load(Ordering::SeqCst) != generation {
+            // `events` is a live value here (not yet consumed by the `for`
+            // loop below) with its own `Drop` impl, so the compiler must
+            // account for its destructor running — which still holds a
+            // borrow of `device` — before allowing another `&mut device`
+            // call. Dropping it explicitly ends that borrow on our terms
+            // instead of at the implicit end-of-scope this early return
+            // would otherwise trigger after `device.ungrab()`.
+            drop(events);
             let _ = device.ungrab();
             return;
         }
