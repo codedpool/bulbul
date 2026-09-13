@@ -758,6 +758,15 @@ pub fn recent_dictations(db: &Db, limit: u32, offset: u32) -> Result<Vec<Dictati
     Ok(rows)
 }
 
+pub fn delete_dictation(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock();
+    let affected = conn.execute("DELETE FROM dictations WHERE id = ?", params![id])?;
+    if affected == 0 {
+        return Err(anyhow::anyhow!("no dictation with id {id}"));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 pub struct HomeStats {
     pub total_words: i64,

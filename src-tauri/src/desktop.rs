@@ -42,6 +42,24 @@ const OVERLAY_WIDTH: f64 = 240.0;
 const OVERLAY_HEIGHT: f64 = 48.0;
 // Gap between the pill and the top of the taskbar / work area.
 const OVERLAY_BOTTOM_MARGIN: f64 = 4.0;
+// Gap from the left/right screen edge for the "left"/"right" side docks —
+// wider than OVERLAY_BOTTOM_MARGIN since a side inset needs to clear other
+// taskbar-anchored icons/widgets, not just sit slightly above the
+// taskbar's own top edge.
+const OVERLAY_SIDE_MARGIN: f64 = 16.0;
+// Side-dock ("vertical") window footprint. Unlike bottom mode — which
+// resizes live for the language dropdown (see set_overlay_height) — this
+// is a fixed bounding box sized to fit every internal state (idle
+// capsule, hover icon-stack, active expanded pill, open dropdown) via
+// flex layout inside it, so switching between those states never needs a
+// live backend resize; only switching anchor (bottom/left/right) does.
+// 220 was too tight: the language dropdown (needs ~44px clearance off
+// the docked edge + its own 160px width, see Overlay.css) had nowhere
+// left to go and got clipped against the window's own opposite edge —
+// windows never paint past their own bounds regardless of which screen
+// edge they're docked to. 260 leaves real margin on both sides.
+const OVERLAY_V_WIDTH: f64 = 260.0;
+const OVERLAY_V_HEIGHT: f64 = 300.0;
 
 pub struct AppState {
     config: Arc<Mutex<Config>>,
@@ -65,6 +83,15 @@ pub struct AppState {
     /// installer. When `Some`, an update is sitting on disk waiting to
     /// be applied — the user picks the moment.
     staged_update: Arc<Mutex<Option<StagedUpdate>>>,
+    /// While `Some((offset_x, offset_y))`, a drag-to-reposition gesture on
+    /// the overlay pill is in progress: the offset is the grab point
+    /// relative to the window's top-left at drag start (logical px), so
+    /// the window can be moved to follow the cursor without snapping its
+    /// origin under the pointer. `None` means no drag is active — this
+    /// doubles as the flag the hover-watcher polling loop checks every
+    /// tick to decide whether to drive the window itself (dragging) or
+    /// run its normal hover/click-through logic (not dragging).
+    overlay_drag: Arc<Mutex<Option<(f64, f64)>>>,
 }
 
 /// A downloaded-but-not-yet-installed update. Holds the Tauri `Update`
@@ -210,6 +237,13 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
 /// dictating. When `hide_tray` is off, the overlay stays visible at all
 /// times (idle just shows the small pill).
 fn apply_overlay_visibility_for_state(app: &AppHandle, state: &str) {
+    // Mirrors the current dictation state for the idle working-set
+    // trimmer (see `spawn_idle_working_set_trimmer`), which must never
+    // fire while a dictation is in flight. `emit_status` runs this on
+    // every single state transition, so this is as current as the
+    // dictation pipeline itself.
+    RECORDING_ACTIVE.store(state != "idle", std::sync::atomic::Ordering::Relaxed);
+
     let hide_tray = app.state::<AppState>().config.lock().hide_tray;
     let Some(overlay) = app.get_webview_window("overlay") else { return; };
     let should_show = !hide_tray || state != "idle";
@@ -217,15 +251,64 @@ fn apply_overlay_visibility_for_state(app: &AppHandle, state: &str) {
     if let Err(e) = result {
         tracing::warn!("overlay visibility toggle failed (state={state}): {e}");
     }
+    // Idle memory: the pill is visible most of the time (unless hide_tray
+    // is on) but only actually *doing* anything during listening/
+    // processing/injecting. Trim it the rest of the time; restore full
+    // performance the moment a dictation state starts.
+    set_webview_memory_level(&overlay, state == "idle");
     // X11 window managers re-place a window every time it's mapped, so the
     // position set at creation is thrown away on the next show and the pill
     // reappears wherever the WM likes (seen on Cinnamon: mid-screen, and
     // somewhere new after each hide/unhide). Re-assert it on every show —
     // cheap, and a no-op when it's already in the right spot.
     if should_show {
-        position_overlay_bottom_center(app);
+        position_overlay(app);
     }
 }
+
+/// Ask WebView2 to trim a window's memory footprint while it's hidden or
+/// idle (`low = true`), or restore full performance right before it needs
+/// to be responsive again (`low = false`). This is Microsoft's own
+/// officially documented API for exactly this — WebView2 Runtime
+/// ≥114.0.1823.32's `ICoreWebView2_19::SetMemoryUsageTargetLevel` (see
+/// https://learn.microsoft.com/en-us/dotnet/api/microsoft.web.webview2.core.corewebview2.memoryusagetargetlevel).
+/// Unlike destroying/recreating a window (real state loss, real reload
+/// cost) or lazily building one (previously caused a WebView white-screen
+/// hang — see the comment on `setup_scratchpad_window`), this leaves the
+/// WebView, its JS state, and any live listeners completely untouched:
+/// "Low" just tells the engine's own memory manager it can be more
+/// aggressive about trimming caches; scripts keep running. That also
+/// makes a missed or misordered call here safe by construction — the
+/// window still works normally, it just holds onto some reclaimable
+/// memory a little longer.
+///
+/// `with_webview` runs the closure on the main thread and is a no-op if
+/// the window is already gone; an older WebView2 Runtime without this API
+/// (or a version-mismatched COM cast) is likewise a silent no-op, not an
+/// error — see `WebViewExtWindows::set_memory_usage_level`'s own doc
+/// comment in wry, which this mirrors since Tauri doesn't expose the
+/// underlying `wry::WebView` itself, only `PlatformWebview`'s
+/// `controller()`/`environment()` accessors.
+#[cfg(target_os = "windows")]
+fn set_webview_memory_level(window: &tauri::WebviewWindow, low: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL, ICoreWebView2_19,
+    };
+    use windows_core::Interface;
+
+    let level = COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL(if low { 1 } else { 0 });
+    let _ = window.with_webview(move |pw| {
+        let controller = pw.controller();
+        unsafe {
+            let Ok(webview) = controller.CoreWebView2() else { return; };
+            let Ok(webview19) = webview.cast::<ICoreWebView2_19>() else { return; };
+            let _ = webview19.SetMemoryUsageTargetLevel(level);
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_webview_memory_level(_window: &tauri::WebviewWindow, _low: bool) {}
 
 /// Pull the overlay to the very top of the system z-order without taking
 /// focus. We do this via raw FFI to avoid a HWND type mismatch between
@@ -288,7 +371,61 @@ fn bring_overlay_to_top(window: &tauri::WebviewWindow) {
     let _ = window;
 }
 
-fn position_overlay_bottom_center(app: &AppHandle) {
+/// True for the two anchors that dock the pill to a screen edge with a
+/// vertical internal layout ("left"/"right"), false for "bottom-center"
+/// (or anything unrecognized, which falls back to bottom-center rather
+/// than leaving the pill off-screen — a stale value from a future
+/// version, a hand-edited config).
+fn is_vertical_anchor(anchor: &str) -> bool {
+    matches!(anchor, "left" | "right")
+}
+
+/// Target (x, y, width, height) for the overlay window given its anchor.
+/// "left"/"right" vertically center a narrow window against that screen
+/// edge; anything else bottom-centers the familiar horizontal pill.
+fn overlay_geometry(anchor: &str, logical_w: f64, logical_h: f64, anchor_bottom: f64) -> (f64, f64, f64, f64) {
+    match anchor {
+        "left" => {
+            let y = (logical_h - OVERLAY_V_HEIGHT) / 2.0;
+            (OVERLAY_SIDE_MARGIN, y, OVERLAY_V_WIDTH, OVERLAY_V_HEIGHT)
+        }
+        "right" => {
+            let y = (logical_h - OVERLAY_V_HEIGHT) / 2.0;
+            let x = logical_w - OVERLAY_V_WIDTH - OVERLAY_SIDE_MARGIN;
+            (x, y, OVERLAY_V_WIDTH, OVERLAY_V_HEIGHT)
+        }
+        _ => {
+            let x = (logical_w - OVERLAY_WIDTH) / 2.0;
+            let y = anchor_bottom - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
+            (x, y, OVERLAY_WIDTH, OVERLAY_HEIGHT)
+        }
+    }
+}
+
+/// Nearest of the three canonical dock points to a window whose current
+/// (logical) center sits at (cx, cy) — used both to preview the drop
+/// target live while dragging and to decide where a released drag
+/// actually snaps. Plain nearest-neighbor against each anchor's own
+/// resting center point, not a hand-tuned threshold grid, so "drag
+/// further right" monotonically favors "right" with no dead zones.
+fn nearest_overlay_zone(cx: f64, cy: f64, logical_w: f64, logical_h: f64) -> &'static str {
+    let candidates: [(&'static str, f64, f64); 3] = [
+        ("bottom-center", logical_w / 2.0, logical_h),
+        ("left", 0.0, logical_h / 2.0),
+        ("right", logical_w, logical_h / 2.0),
+    ];
+    candidates
+        .into_iter()
+        .min_by(|a, b| {
+            let da = (a.1 - cx).powi(2) + (a.2 - cy).powi(2);
+            let db = (b.1 - cx).powi(2) + (b.2 - cy).powi(2);
+            da.total_cmp(&db)
+        })
+        .map(|(name, _, _)| name)
+        .unwrap_or("bottom-center")
+}
+
+fn position_overlay(app: &AppHandle) {
     let Some(window) = app.get_webview_window("overlay") else {
         return;
     };
@@ -321,12 +458,20 @@ fn position_overlay_bottom_center(app: &AppHandle) {
     // monitor bottom.
     let anchor_bottom = work_area_bottom_logical(scale).unwrap_or(logical_h);
 
-    let x = (logical_w - OVERLAY_WIDTH) / 2.0;
-    let y = anchor_bottom - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
+    let anchor = app.state::<AppState>().config.lock().overlay_position.clone();
+    let (x, y, w, h) = overlay_geometry(&anchor, logical_w, logical_h, anchor_bottom);
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
     if let Err(e) = window.set_position(LogicalPosition::new(x, y)) {
         tracing::warn!("overlay: set_position({x}, {y}) failed: {e}");
         return;
     }
+    // Broadcast (not just to "overlay"): the dashboard and scratchpad each
+    // hold their own local snapshot of Config fetched once at mount, and
+    // any of them saving an unrelated setting later would otherwise spread
+    // that stale snapshot back over whatever the pill was just dragged to
+    // — the drag/Settings-picker path updates the backend correctly, but
+    // without this, a stale window's *next* save could silently undo it.
+    let _ = app.emit("overlay-position-changed", anchor.clone());
 
     // set_position returning Ok does NOT mean the pill actually moved: X11
     // window managers (Muffin/Cinnamon especially) run their own placement
@@ -376,6 +521,7 @@ fn spawn_hover_watcher(app: AppHandle) {
 
     thread::spawn(move || {
         let mut last_hovered = false;
+        let mut last_drag_zone: Option<&'static str> = None;
         loop {
             thread::sleep(Duration::from_millis(50));
             let Some(overlay) = app.get_webview_window("overlay") else {
@@ -389,12 +535,52 @@ fn spawn_hover_watcher(app: AppHandle) {
                 continue;
             }
 
+            // While a drag-to-reposition gesture is in progress (see
+            // start_overlay_drag/end_overlay_drag), this loop drives the
+            // window itself instead of its normal hover/click-through
+            // logic — reusing the exact same 50ms cursor poll rather than
+            // spinning up a second timer thread just for dragging.
+            let drag_offset = app.state::<AppState>().overlay_drag.lock().clone();
+            if let Some((offset_x, offset_y)) = drag_offset {
+                let Ok(scale) = overlay.scale_factor() else { continue; };
+                let new_x = p.x as f64 - offset_x * scale;
+                let new_y = p.y as f64 - offset_y * scale;
+                let _ = overlay.set_position(tauri::PhysicalPosition::new(new_x, new_y));
+
+                if let Ok(Some(monitor)) = overlay.primary_monitor() {
+                    let mscale = monitor.scale_factor();
+                    let msize = monitor.size();
+                    let logical_w = msize.width as f64 / mscale;
+                    let logical_h = msize.height as f64 / mscale;
+                    let cx = (new_x + size.width as f64 / 2.0) / mscale;
+                    let cy = (new_y + size.height as f64 / 2.0) / mscale;
+                    let zone = nearest_overlay_zone(cx, cy, logical_w, logical_h);
+                    if last_drag_zone != Some(zone) {
+                        last_drag_zone = Some(zone);
+                        let _ = app.emit_to("overlay", "overlay-drag-zone", zone);
+                    }
+                }
+                continue;
+            }
+            last_drag_zone = None;
+
             let x0 = pos.x;
             let y0 = pos.y;
             let w = size.width as i32;
             let h = size.height as i32;
-            let cx = x0 + w / 2;
-            let cy = y0 + h - 24; // pill sits near the bottom of the window
+            // The resting pill's on-screen hotspot depends on the current
+            // dock: bottom mode centers it horizontally near the window's
+            // bottom edge; side-dock mode (see Overlay.css's .vertical)
+            // instead centers it vertically and flushes it to whichever
+            // edge is anchored to the screen. Approximate, not pixel
+            // -exact — entry_w/entry_h below are generous enough that it
+            // doesn't need to be.
+            let anchor = app.state::<AppState>().config.lock().overlay_position.clone();
+            let (cx, cy) = match anchor.as_str() {
+                "left" => (x0 + 20, y0 + h / 2),
+                "right" => (x0 + w - 20, y0 + h / 2),
+                _ => (x0 + w / 2, y0 + h - 24), // bottom-center
+            };
 
             // Entry zone (small, near the dot): triggers expansion.
             let entry_w = 100;
@@ -610,7 +796,7 @@ fn work_area_bottom_logical(scale: f64) -> Option<f64> {
 /// MainThreadMarker::new() returns None when called off the main thread,
 /// in which case we fall back to "no work area known" and the caller
 /// uses the full monitor bottom (the overlay sits flush with the dock).
-/// position_overlay_bottom_center runs from window event handlers which
+/// position_overlay runs from window event handlers which
 /// are dispatched on the main thread, so the marker normally resolves.
 #[cfg(target_os = "macos")]
 fn work_area_bottom_logical(_scale: f64) -> Option<f64> {
@@ -754,6 +940,7 @@ fn save_config(
         prev_tap_to_talk,
         prev_mouse_mode,
         prev_mouse_button,
+        prev_overlay_position,
     ) = {
         let cfg = state.config.lock();
         (
@@ -767,6 +954,7 @@ fn save_config(
             cfg.tap_to_talk,
             cfg.mouse_mode,
             cfg.mouse_button.clone(),
+            cfg.overlay_position.clone(),
         )
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
@@ -776,6 +964,7 @@ fn save_config(
     let next_tap_to_talk = new_cfg.tap_to_talk;
     let next_mouse_mode = new_cfg.mouse_mode;
     let next_mouse_button = new_cfg.mouse_button.clone();
+    let next_overlay_position = new_cfg.overlay_position.clone();
     let next_theme = new_cfg.theme.clone();
     let next_mode = new_cfg.mode.as_str().to_string();
     let next_telemetry = new_cfg.telemetry_enabled;
@@ -823,6 +1012,9 @@ fn save_config(
     }
     if prev_mouse_button != next_mouse_button {
         hotkey::set_mouse_button(hotkey::MouseButton::parse(&next_mouse_button));
+    }
+    if prev_overlay_position != next_overlay_position {
+        position_overlay(&app);
     }
     if prev_hotkey != next_hotkey || prev_pol != next_pol {
         {
@@ -1027,6 +1219,11 @@ fn get_recent_dictations(
         }
     }
     Ok(rows)
+}
+
+#[tauri::command]
+fn delete_dictation(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    db::delete_dictation(&state.db, id).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -1389,6 +1586,7 @@ fn open_scratchpad(app: AppHandle) -> Result<(), String> {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+    set_webview_memory_level(&window, false);
     Ok(())
 }
 
@@ -1438,6 +1636,9 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // opaque + our custom titlebar; square corners. See the
     // `.platform-linux` note in App.css / ScratchpadWindow.css.
     let window = builder.build()?;
+    // Built hidden — trim immediately rather than waiting for the first
+    // hide, since most sessions never open the scratchpad at all.
+    set_webview_memory_level(&window, true);
 
     // Intercept the close button (X on Win/Linux, red traffic light on
     // macOS) so the window persists across opens. Cmd+Q / RunEvent::
@@ -1461,11 +1662,13 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
                             }
                         }
                         let _ = after.hide();
+                        set_webview_memory_level(&after, true);
                     });
                     return;
                 }
             }
             let _ = win_handle.hide();
+            set_webview_memory_level(&win_handle, true);
         }
     });
     disable_fullscreen_mac(&window);
@@ -1524,6 +1727,14 @@ fn disable_fullscreen_mac(_window: &tauri::WebviewWindow) {}
 /// Called from the frontend when the language dropdown opens or closes.
 #[tauri::command]
 fn set_overlay_height(height: f64, app: AppHandle) {
+    let anchor = app.state::<AppState>().config.lock().overlay_position.clone();
+    if is_vertical_anchor(&anchor) {
+        // Side-dock mode's window is a fixed OVERLAY_V_WIDTH x
+        // OVERLAY_V_HEIGHT bounding box (see overlay_geometry) that the
+        // dropdown positions itself inside of via CSS instead of growing
+        // the window — nothing to resize here.
+        return;
+    }
     let Some(window) = app.get_webview_window("overlay") else {
         return;
     };
@@ -1534,10 +1745,119 @@ fn set_overlay_height(height: f64, app: AppHandle) {
         let logical_w = size.width as f64 / scale;
         let logical_h = size.height as f64 / scale;
         let anchor_bottom = work_area_bottom_logical(scale).unwrap_or(logical_h);
+        // Bottom-center is the only anchor that reaches here (guarded
+        // above), so this always matches position_overlay's own X for it.
         let x = (logical_w - OVERLAY_WIDTH) / 2.0;
         let y = anchor_bottom - height - OVERLAY_BOTTOM_MARGIN;
         let _ = window.set_position(LogicalPosition::new(x, y));
     }
+}
+
+/// Current cursor position in logical (DPI-independent) coordinates,
+/// matching the units `overlay_geometry`/`nearest_overlay_zone` already
+/// work in. Windows' `GetCursorPos` returns physical pixels (divided by
+/// the window's own scale factor here); macOS's Quartz `CGEventGetLocation`
+/// already returns logical points, matching the same CGEvent-based
+/// approach `spawn_hover_watcher` uses for hover detection. Linux has no
+/// global cursor query on Wayland and isn't wired up here either — same
+/// gap as hover-expand.
+#[cfg(target_os = "windows")]
+fn global_cursor_pos_logical(window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut p = POINT::default();
+    if unsafe { GetCursorPos(&mut p) }.is_err() {
+        return None;
+    }
+    let scale = window.scale_factor().ok()?;
+    Some((p.x as f64 / scale, p.y as f64 / scale))
+}
+
+#[cfg(target_os = "macos")]
+fn global_cursor_pos_logical(_window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    use core_foundation::base::CFTypeRef;
+    use core_graphics::geometry::CGPoint;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventCreate(source: CFTypeRef) -> CFTypeRef;
+        fn CGEventGetLocation(event: CFTypeRef) -> CGPoint;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(cf: CFTypeRef);
+    }
+    let event = unsafe { CGEventCreate(std::ptr::null()) };
+    if event.is_null() {
+        return None;
+    }
+    let p = unsafe { CGEventGetLocation(event) };
+    unsafe { CFRelease(event) };
+    Some((p.x, p.y))
+}
+
+#[cfg(target_os = "linux")]
+fn global_cursor_pos_logical(_window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    None
+}
+
+/// Begin a drag-to-reposition gesture on the overlay pill. Called from
+/// `Overlay.jsx` on `pointerdown`; the actual window-following happens in
+/// `spawn_hover_watcher`'s existing 50ms cursor poll (see its
+/// `overlay_drag` check) rather than a separate loop, reusing the same
+/// per-platform cursor-position code hover-detection already needed.
+#[tauri::command]
+fn start_overlay_drag(state: tauri::State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("overlay")
+        .ok_or_else(|| "overlay window not found".to_string())?;
+    let (cx, cy) = global_cursor_pos_logical(&window)
+        .ok_or_else(|| "cursor position unavailable on this platform".to_string())?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let win_x = pos.x as f64 / scale;
+    let win_y = pos.y as f64 / scale;
+    *state.overlay_drag.lock() = Some((cx - win_x, cy - win_y));
+    Ok(())
+}
+
+/// End a drag-to-reposition gesture: stop the follow loop, snap the
+/// window to whichever of the three canonical dock points its current
+/// (dragged-to) center is nearest, and persist that as the new
+/// `overlay_position`. Called from `Overlay.jsx` on `pointerup` — bound
+/// globally (not just on the pill) so a drag that ends after the cursor
+/// has left the shrinking/moving pill still gets a release.
+#[tauri::command]
+fn end_overlay_drag(state: tauri::State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    *state.overlay_drag.lock() = None;
+    let window = app
+        .get_webview_window("overlay")
+        .ok_or_else(|| "overlay window not found".to_string())?;
+    let Ok(Some(monitor)) = window.primary_monitor() else {
+        // No sane monitor to classify against — leave the pill wherever
+        // the drag left it rather than guessing.
+        return Ok(());
+    };
+    let scale = monitor.scale_factor();
+    let msize = monitor.size();
+    let logical_w = msize.width as f64 / scale;
+    let logical_h = msize.height as f64 / scale;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let cx = (pos.x as f64 + size.width as f64 / 2.0) / scale;
+    let cy = (pos.y as f64 + size.height as f64 / 2.0) / scale;
+    let zone = nearest_overlay_zone(cx, cy, logical_w, logical_h);
+
+    {
+        let mut cfg = state.config.lock();
+        cfg.overlay_position = zone.to_string();
+        config::save(&cfg).map_err(|e| format!("{e:#}"))?;
+    }
+    // Re-run unconditionally, even if the zone didn't change from before
+    // the drag — the drag itself may have left the window somewhere
+    // between two zones, and this is what snaps it back to the exact
+    // canonical spot.
+    position_overlay(&app);
+    Ok(())
 }
 
 /// Self-healing autostart. The user's launch-at-login INTENT lives in
@@ -1615,6 +1935,13 @@ fn set_tray_visible(
         cfg.hide_tray = !visible;
         config::save(&cfg).map_err(|e| format!("{e:#}"))?;
     }
+    // Broadcast (not just to whichever window called this): the overlay's
+    // own hide button and the Settings toggle both land here, and each
+    // window holds its own local snapshot of Config fetched once at
+    // mount — without this, toggling from one place left the other
+    // silently stale until its next unrelated save. Mirrors
+    // position_overlay's "overlay-position-changed" broadcast.
+    let _ = app.emit("hide-tray-changed", !visible);
     if visible {
         if let Some(tray) = app.tray_by_id("bulbul-tray") {
             tray.set_visible(true).map_err(|e| format!("{e}"))?;
@@ -1636,11 +1963,13 @@ fn set_tray_visible(
     if !visible {
         if let Some(overlay) = app.get_webview_window("overlay") {
             let _ = overlay.hide();
+            set_webview_memory_level(&overlay, true);
         }
     } else if let Some(overlay) = app.get_webview_window("overlay") {
         // Restore the always-visible behaviour when revealing the tray
         // again — even in idle, the pill should be back on screen.
         let _ = overlay.show();
+        set_webview_memory_level(&overlay, false);
         // Re-assert the position: X11 window managers run their own
         // placement every time a window is mapped, so a plain show() drops
         // the pill wherever the WM likes (Cinnamon: top-left). Every show()
@@ -1648,7 +1977,7 @@ fn set_tray_visible(
         // wrong after a hide/unhide but snapped back to bottom-centre on the
         // next dictation, which does go through
         // apply_overlay_visibility_for_state.
-        position_overlay_bottom_center(&app);
+        position_overlay(&app);
     }
     Ok(())
 }
@@ -2087,6 +2416,7 @@ pub fn run() {
                 let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
+                set_webview_memory_level(&w, false);
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -2121,8 +2451,11 @@ pub fn run() {
             set_tray_visible,
             show_settings_window,
             set_overlay_height,
+            start_overlay_drag,
+            end_overlay_drag,
             get_home_stats,
             get_recent_dictations,
+            delete_dictation,
             get_insights_usage,
             get_voice_stats,
             refresh_voice_narrative,
@@ -2249,6 +2582,7 @@ pub fn run() {
                 db: db_handle,
                 regex_cache: Arc::new(db::RegexCache::new()),
                 staged_update: Arc::new(Mutex::new(None)),
+                overlay_drag: Arc::new(Mutex::new(None)),
             });
 
             // Warm the dictionary/snippet regex caches in the background so the
@@ -2309,6 +2643,9 @@ pub fn run() {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+                // Idle memory: matches whichever state the window actually
+                // starts in above (visible or hidden-until-first-open).
+                set_webview_memory_level(&window, !want_show);
                 let win_handle = window.clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
@@ -2336,11 +2673,13 @@ pub fn run() {
                                         }
                                     }
                                     let _ = after.hide();
+                                    set_webview_memory_level(&after, true);
                                 });
                                 return;
                             }
                         }
                         let _ = win_handle.hide();
+                        set_webview_memory_level(&win_handle, true);
                     }
                 });
             }
@@ -2354,6 +2693,7 @@ pub fn run() {
                 .expect("hotkey rx already consumed");
             spawn_orchestrator(handle.clone(), rx);
             spawn_hover_watcher(handle.clone());
+            spawn_idle_working_set_trimmer();
 
             // Mode-B auto-update: silently poll GitHub Releases on a
             // 6-hour cadence (10s grace after boot), download new
@@ -2556,7 +2896,10 @@ fn setup_overlay_window(app: &AppHandle) -> tauri::Result<()> {
     .focused(false)
     .build()?;
     let _ = overlay.set_ignore_cursor_events(true);
-    position_overlay_bottom_center(app);
+    position_overlay(app);
+    // Starts visible-but-idle (no dictation yet at boot) — trim right away
+    // instead of waiting for the first state transition.
+    set_webview_memory_level(&overlay, true);
     Ok(())
 }
 
@@ -2565,6 +2908,7 @@ fn show_settings(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        set_webview_memory_level(&window, false);
     }
 }
 
@@ -2631,6 +2975,58 @@ fn inpage_hotkey(pressed: bool, state: tauri::State<'_, AppState>) {
     );
     let _ = state.hotkey_tx.send(evt);
 }
+
+/// Mirrors whether a dictation is currently in flight (set from
+/// `apply_overlay_visibility_for_state`, which runs on every
+/// `emit_status` call). The only reader is the idle working-set trimmer
+/// below — it's a coarse gate, not a lock, but it's enough to rule out
+/// the one scenario worth ruling out: a trim's page eviction landing at
+/// the exact moment a hotkey fires and needing a soft-fault to bring a
+/// hot-path page back.
+static RECORDING_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Periodically ask Windows to trim `bulbul.exe`'s own working set —
+/// separate from the WebView2 windows (see `set_webview_memory_level`),
+/// this is the ~50MB backend process itself. `EmptyWorkingSet` doesn't
+/// free anything or evict working data; it just moves currently-unused
+/// physical pages to the standby list, and the very next touch soft-faults
+/// them back in (typically sub-millisecond — the pages are still in RAM,
+/// just no longer charged to this process's working set). That soft-fault
+/// cost is why this deliberately does NOT run on a tight loop: Microsoft's
+/// own guidance (and prior art in other trimming tools) is that calling it
+/// often enough to matter causes needless paging/perf overhead, and it's
+/// only worth doing when the process is actually going to sit idle a
+/// while. A long cadence (2 minutes after boot to let init settle, then
+/// every 20 minutes) stays well inside "used sparingly" while still
+/// reclaiming the same memory a genuinely idle process would eventually
+/// give back on its own — this just does it proactively instead of
+/// waiting on OS memory pressure.
+///
+/// Skips the trim entirely while `RECORDING_ACTIVE` is set, so a page
+/// evicted here can never be the reason a hotkey-triggered read stalls —
+/// the hook thread and orchestrator are otherwise untouched by this.
+#[cfg(target_os = "windows")]
+fn spawn_idle_working_set_trimmer() {
+    use std::sync::atomic::Ordering;
+    use windows::Win32::System::ProcessStatus::EmptyWorkingSet;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    thread::spawn(|| loop {
+        thread::sleep(Duration::from_secs(120));
+        if RECORDING_ACTIVE.load(Ordering::Relaxed) {
+            tracing::debug!("idle working-set trim: skipped, dictation in flight");
+        } else {
+            let handle = unsafe { GetCurrentProcess() };
+            if let Err(e) = unsafe { EmptyWorkingSet(handle) } {
+                tracing::debug!("EmptyWorkingSet failed: {e:#}");
+            }
+        }
+        thread::sleep(Duration::from_secs(20 * 60));
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn spawn_idle_working_set_trimmer() {}
 
 /// SIGUSR2 toggles dictation, SIGUSR1 toggles polish dictation — the
 /// signal-level equivalent of `--toggle-dictation` for users who prefer

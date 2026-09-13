@@ -788,7 +788,14 @@ body, html, #root {
   align-items: flex-start;
 }
 
-.dictation-copy {
+.dictation-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.dictation-copy,
+.dictation-delete {
   flex-shrink: 0;
   width: 30px;
   height: 30px;
@@ -806,7 +813,8 @@ body, html, #root {
     border-color 120ms ease, background 120ms ease;
 }
 
-.dictation-row:hover .dictation-copy {
+.dictation-row:hover .dictation-copy,
+.dictation-row:hover .dictation-delete {
   opacity: 1;
 }
 
@@ -823,6 +831,12 @@ body, html, #root {
   color: #2f8c84;
   background: rgba(94, 200, 192, 0.12);
   border-color: rgba(94, 200, 192, 0.35);
+}
+
+.dictation-delete:hover {
+  background: rgba(212, 107, 107, 0.12);
+  color: #d46b6b;
+  border-color: rgba(212, 107, 107, 0.35);
 }
 
 .dictation-row:first-child {

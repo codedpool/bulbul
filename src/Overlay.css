@@ -14,6 +14,17 @@ html, body, #root {
 }
 
 .overlay {
+  /* border-box is load-bearing in vertical mode: .overlay.vertical adds
+     8px+8px of horizontal padding, and content-box (the default) would
+     stack that on top of the already-100%-wide content box, rendering
+     the element 16px wider than the window itself. Anything flex-end
+     aligned (the dock-right pill) then hangs 16px past the window's
+     real right edge and gets clipped there — the window can't paint
+     outside its own bounds regardless of which edge it's docked to.
+     dock-left looked fine only because the same overflow spilled off
+     the side nothing was anchored to. */
+  box-sizing: border-box;
+  position: relative;
   width: 100%;
   height: 100%;
   display: flex;
@@ -28,6 +39,34 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Side-dock mode: the window itself is a fixed OVERLAY_V_WIDTH x
+   OVERLAY_V_HEIGHT box (see desktop.rs's overlay_geometry) vertically
+   centered against the left/right screen edge. Content hugs whichever
+   edge the window is anchored to and is vertically centered within it —
+   the row/column swap (vs. bottom mode's column/flex-end) is the only
+   layout difference; every pill/sat/label rule below still applies. */
+.overlay.vertical {
+  flex-direction: row;
+  padding-bottom: 0;
+  padding-left: 8px;
+  padding-right: 8px;
+  gap: 8px;
+}
+.overlay.vertical.dock-right { justify-content: flex-end; }
+.overlay.vertical.dock-left { justify-content: flex-start; }
+
+/* Satellite buttons (language, pill, scratchpad) lay out along the row
+   axis in bottom mode, but a horizontal strip reads wrong hanging off a
+   vertical dock — it should expand along the same axis the dock itself
+   runs on. .overlay.vertical's own row/column above governs .overlay's
+   *own* children (the dropdown, pill-row); this governs pill-row's
+   children instead, since flex-direction never inherits. Harmless at
+   rest (pill-row only holds the pill then), it only matters once
+   hovering shows the satellite buttons too. */
+.overlay.vertical .pill-row {
+  flex-direction: column;
 }
 
 .pill {
@@ -73,6 +112,75 @@ html, body, #root {
 .hovered.expanded .pill {
   width: 40px;
   padding: 0;
+}
+
+/* Vertical dock, at rest: the exact same idle capsule as bottom mode
+   with width/height swapped (40x9 -> 9x40) — same border, same
+   border-radius:999px (so it's still a fully-rounded capsule, not a
+   circle), same background, just the long axis turned vertical. The
+   :not(.expanded) guard is load-bearing: without it this also matched
+   the hovered/active pill (any element with both .vertical and
+   .expanded), fighting the widen-back-out rules below with higher
+   specificity and rendering as an off-shape, partly-clipped circle
+   instead of the intended rotated capsule. */
+.overlay.vertical:not(.expanded) .pill {
+  width: 9px;
+  height: 40px;
+}
+
+/* Every active (non-idle) state on a vertical dock grows the same way,
+   sized down from bottom mode's own 96x26 expanded box rather than a
+   straight transpose (26x96 read as too big/bulky in practice) — a
+   slimmer ~2:1 growth off the 9x40 resting capsule instead, so
+   "expanded" still means the same footprint everywhere, just smaller.
+   :not(.pill-idle) scopes this to actual dictation states, leaving the
+   brief "just hovering, nothing recording" preview (.hovered.expanded
+   .pill below) alone — that one stays a small icon-only box, not a
+   tall one, since nothing is actually happening yet. Overlay.jsx drops
+   the pill-label for every state in vertical mode (a native title
+   tooltip carries the text instead — see the pill's title prop), so
+   content stacks in a single centered column with nothing beside the
+   icon to make room for. */
+.overlay.vertical.expanded .pill:not(.pill-idle) {
+  width: 18px;
+  min-width: 0;
+  max-width: none;
+  height: 70px;
+  padding: 8px 0;
+  flex-direction: column;
+}
+
+/* The listening waveform is the exact same bars component and
+   animation bottom mode uses — not resized, not redesigned — just
+   rotated 90° to match the dock, the same "identical shape, rotated"
+   rule the resting capsule follows. transform doesn't affect layout,
+   only paint, so .pill-icon's centering still applies unchanged. */
+.overlay.vertical .pill-listening .bars {
+  transform: rotate(90deg);
+}
+
+/* Cursor affordance for the drag gesture — only the idle pill is
+   draggable (Overlay.jsx guards the actual gesture the same way). */
+.pill-idle { cursor: grab; }
+.overlay.dragging .pill-idle { cursor: grabbing; }
+
+/* Live "release here" preview while dragging: replaces the icon with a
+   short zone name (see ZONE_LABEL in Overlay.jsx) and highlights the
+   pill so the target is obvious without a separate full-screen overlay. */
+.pill.drag-hint {
+  width: auto;
+  min-width: 60px;
+  height: 26px;
+  padding: 0 12px;
+  background: rgba(94, 200, 192, 0.18);
+  border-color: #5ec8c0;
+  box-shadow: 0 8px 24px rgba(94, 200, 192, 0.35);
+}
+.drag-label {
+  opacity: 1;
+  animation: none;
+  color: #5ec8c0;
+  font-weight: 600;
 }
 
 .sat {
@@ -260,6 +368,42 @@ html, body, #root {
 .lang-dropdown::-webkit-scrollbar { width: 6px; }
 .lang-dropdown::-webkit-scrollbar-track { background: transparent; }
 .lang-dropdown::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+
+/* Bottom mode relies on document order + .overlay's column/flex-end to
+   put the dropdown above the pill-row, growing the window taller to fit
+   (set_overlay_height). Vertical mode's window is a fixed box (see
+   overlay_geometry), so the dropdown is taken out of flow instead and
+   placed beside the icon stack, toward whichever side isn't the docked
+   edge — same list, same styling, just positioned rather than stacked.
+   Narrower than the shared 200px (.lang-dropdown's base rule) because
+   the window itself is only OVERLAY_V_WIDTH (260px) wide: at the base
+   width, `right: 50px` (docked-edge offset, clearing the pill/icon area)
+   plus 200px of dropdown added up to more than the window is wide, so
+   the dropdown's far edge rendered past the window's own opposite edge
+   and got clipped there — windows don't paint anything outside their
+   own bounds, however the WM/OS happens to place them, on any of the
+   three dock edges. 160px + a 44px offset leaves a comfortable margin
+   on both sides regardless of which edge it's docked to. */
+/* top uses calc against the dropdown's own fixed border-box height
+   (200 content + 8 padding + 2 border = 210) instead of the usual
+   top:50%+translateY(-50%) centering trick: the entrance animation
+   below (dropdown-in) sets its own `transform` in its `to` keyframe,
+   and a CSS animation's transform value always wins over a plain
+   declared one regardless of specificity — so translateY(-50%) got
+   silently replaced by the animation's translateY(0) the instant it
+   finished, leaving the dropdown starting at 50% down the window
+   instead of centered there, overflowing off the bottom edge by
+   however far short of window-height/2 that top-only offset fell.
+   Baking the offset into `top` sidesteps the collision entirely; the
+   animation's own small slide-and-fade transform still layers on top
+   of this base position exactly as before. */
+.overlay.vertical .lang-dropdown {
+  position: absolute;
+  top: calc(50% - 105px);
+  width: 160px;
+}
+.overlay.vertical.dock-right .lang-dropdown { right: 44px; }
+.overlay.vertical.dock-left .lang-dropdown { left: 44px; }
 
 .lang-option {
   padding: 7px 14px;

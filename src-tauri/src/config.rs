@@ -213,6 +213,23 @@ pub struct Config {
     #[serde(default = "default_mouse_button")]
     pub mouse_button: String,
 
+    /// Where the overlay pill docks: "bottom-center" (the default,
+    /// horizontal pill) | "left" | "right" (vertically centered against
+    /// that screen edge, rotated capsule + stacked satellite buttons —
+    /// see Overlay.jsx/Overlay.css).
+    /// Written either by the Settings ▸ General picker or by dragging the
+    /// pill itself and releasing near an edge (desktop.rs's
+    /// start_overlay_drag/end_overlay_drag), both going through the same
+    /// save_config path. Top-edge anchors aren't offered — bottom mode's
+    /// dropdown/resize logic (desktop.rs's `set_overlay_height`) assumes
+    /// growing upward from a fixed bottom edge, which a top anchor would
+    /// need to invert, plus a mirrored frontend layout. Anything
+    /// unrecognized falls back to bottom-center (desktop::overlay_geometry
+    /// and ::nearest_overlay_zone both default there), so a stale/invalid
+    /// value never strands the pill off-screen.
+    #[serde(default = "default_overlay_position")]
+    pub overlay_position: String,
+
     #[serde(default = "default_language")]
     pub language: String,
 
@@ -337,6 +354,9 @@ fn default_mouse_mode() -> bool {
 }
 fn default_mouse_button() -> String {
     "middle".to_string()
+}
+fn default_overlay_position() -> String {
+    "bottom-center".to_string()
 }
 fn default_language() -> String {
     "auto".to_string()
@@ -556,6 +576,7 @@ impl Default for Config {
             tap_to_talk: default_tap_to_talk(),
             mouse_mode: default_mouse_mode(),
             mouse_button: default_mouse_button(),
+            overlay_position: default_overlay_position(),
             language: default_language(),
             style_enabled: default_style_enabled(),
             style_personal: default_style_personal(),
