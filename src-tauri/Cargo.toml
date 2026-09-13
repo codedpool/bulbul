@@ -92,7 +92,23 @@ features = [
     "Win32_System_Threading",
     "Win32_System_Com",
     "Win32_Storage_FileSystem",
+    "Win32_System_ProcessStatus",
 ]
+
+# WebView2's own memory-usage-target-level API (idle-memory optimization,
+# see desktop.rs's set_webview_memory_level) needs the ICoreWebView2_19 COM
+# interface. Pinned to the same versions wry 0.55 itself depends on
+# (wry's Cargo.toml: webview2-com "0.38", windows-core "0.61") so Cargo
+# resolves the exact instances already in the tree instead of pulling a
+# second copy — these are separate crate instances from the `windows`
+# 0.58 dependency above (used by our own hooks), which is fine: COM
+# interface identity is GUID-based, not tied to a specific windows-rs
+# major version.
+[target.'cfg(windows)'.dependencies.webview2-com]
+version = "0.38"
+
+[target.'cfg(windows)'.dependencies.windows-core]
+version = "0.61"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # CGEvent-driven keystroke synthesis for inject/macos.rs. Replaces the

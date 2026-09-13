@@ -36,6 +36,16 @@ const LANGUAGES = [
 const COMPACT_HEIGHT = 48;
 const DROPDOWN_HEIGHT = 260;
 
+// Values match config.rs's `overlay_position` / desktop.rs's
+// nearest_overlay_zone exactly — "left"/"right" dock to a screen edge with
+// a vertical layout, anything else (the default "bottom-center") is the
+// original bottom-anchored horizontal pill.
+function isVerticalAnchor(pos) {
+  return pos === "left" || pos === "right";
+}
+
+const ZONE_LABEL = { "bottom-center": "Bottom", left: "Left", right: "Right" };
+
 export default function Overlay() {
   const [status, setStatus] = useState({ state: "idle", message: null });
   const [hovered, setHovered] = useState(false);
@@ -49,12 +59,28 @@ export default function Overlay() {
   // apps silently fail this same way; we surface a brief amber pill
   // instead so users can self-diagnose.
   const [transientReject, setTransientReject] = useState(null);
+  // Which edge the pill is currently docked to — drives the resting
+  // capsule's rotated (9x40 vs 40x9) sizing in Overlay.css. Kept in sync
+  // with the backend (the source of truth, since dragging and the
+  // Settings picker both write it there) via the overlay-position-changed
+  // event, not written locally.
+  const [dockAnchor, setDockAnchor] = useState("bottom-center");
+  // Drag-to-reposition state (see start_overlay_drag/end_overlay_drag in
+  // desktop.rs). `dragZone` mirrors whichever of the three dock points is
+  // currently nearest, live, for the "release here" hint.
+  const [dragging, setDragging] = useState(false);
+  const [dragZone, setDragZone] = useState(null);
 
   useEffect(() => {
     document.body.style.background = "transparent";
     document.documentElement.style.background = "transparent";
 
-    invoke("get_config").then((cfg) => setLang(cfg.language || "auto")).catch(() => {});
+    invoke("get_config")
+      .then((cfg) => {
+        setLang(cfg.language || "auto");
+        setDockAnchor(cfg.overlay_position || "bottom-center");
+      })
+      .catch(() => {});
 
     const un1 = listen("bulbul-status", (e) => {
       const payload = e.payload || { state: "idle", message: null };
@@ -75,7 +101,14 @@ export default function Overlay() {
         } catch {}
       }
     });
-    return () => { un1.then((f) => f()); un2.then((f) => f()); };
+    const un3 = listen("overlay-position-changed", (e) => setDockAnchor(e.payload));
+    const un4 = listen("overlay-drag-zone", (e) => setDragZone(e.payload));
+    return () => {
+      un1.then((f) => f());
+      un2.then((f) => f());
+      un3.then((f) => f());
+      un4.then((f) => f());
+    };
   }, []);
 
   // Auto-clear the transient rejection pill after a brief dwell. 2.2s
@@ -100,6 +133,26 @@ export default function Overlay() {
     }
   }, [hovered, effectiveState]);
 
+  // Close on a click anywhere else in the overlay — the hover-exit check
+  // above only fires once the cursor actually leaves the window, so a
+  // click on empty space or another satellite button while the dropdown
+  // is open did nothing. Excludes the toggle button itself: its own
+  // onClick already flips langOpen, and this handler firing first (on
+  // pointerdown, before the button's click event) would otherwise close
+  // it and let the button's toggle immediately reopen it.
+  useEffect(() => {
+    if (!langOpen) return;
+    function handlePointerDown(e) {
+      const dropdown = document.querySelector(".lang-dropdown");
+      const btn = document.querySelector(".lang-btn");
+      if (dropdown && !dropdown.contains(e.target) && !(btn && btn.contains(e.target))) {
+        setLangOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [langOpen]);
+
   // Resize the overlay window when the dropdown opens or closes.
   useEffect(() => {
     invoke("set_overlay_height", { height: langOpen ? DROPDOWN_HEIGHT : COMPACT_HEIGHT })
@@ -116,11 +169,35 @@ export default function Overlay() {
     }
   }
 
+  const vertical = isVerticalAnchor(dockAnchor);
   const showSatellites = hovered && effectiveState === "idle";
   const expanded = showSatellites || effectiveState !== "idle";
 
+  // Drag-to-reposition: press on the resting pill (not while a dictation
+  // is actually in flight — that shouldn't be interruptible by an
+  // accidental drag) starts the gesture; the Rust-side hover-watcher does
+  // the actual window-following (see start_overlay_drag/end_overlay_drag
+  // in desktop.rs). Pointer capture keeps move/up events targeting this
+  // element even once the window has moved out from under the cursor
+  // between polling ticks.
+  function onPillPointerDown(e) {
+    if (effectiveState !== "idle" || e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragging(true);
+    invoke("start_overlay_drag").catch(() => setDragging(false));
+  }
+  function onPillPointerUp(e) {
+    if (!dragging) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setDragging(false);
+    setDragZone(null);
+    invoke("end_overlay_drag").catch(() => {});
+  }
+
   return (
-    <div className={`overlay ${expanded ? "expanded" : "collapsed"} ${hovered ? "hovered" : ""}`}>
+    <div
+      className={`overlay ${expanded ? "expanded" : "collapsed"} ${hovered ? "hovered" : ""} ${vertical ? "vertical" : ""} dock-${dockAnchor} ${dragging ? "dragging" : ""}`}
+    >
       {langOpen && (
         <div className="lang-dropdown" role="listbox">
           {LANGUAGES.map((l) => (
@@ -149,14 +226,37 @@ export default function Overlay() {
           </button>
         )}
 
-        <div className={`pill pill-${effectiveState}`}>
-          <span className="pill-icon">{renderIcon(effectiveState, hovered)}</span>
-          {expanded && effectiveState !== "idle" && (
-            <span className="pill-label">
-              {effectiveState === "rate_limited"
-                ? (effectiveMessage || "Rate limited…")
-                : label(effectiveState)}
-            </span>
+        <div
+          className={`pill pill-${effectiveState} ${dragging ? "drag-hint" : ""}`}
+          onPointerDown={onPillPointerDown}
+          onPointerUp={onPillPointerUp}
+          // Vertical dock never shows the label text (see below) — a tall,
+          // narrow pill has no room for a sentence without either
+          // overflowing or being rotated unreadably small. The native
+          // title tooltip keeps that text reachable (hover to read it)
+          // instead of silently dropping it, which matters for the
+          // states that carry real information (why a take was
+          // rejected, how long a rate-limit backoff is), not just a
+          // decorative state name.
+          title={
+            vertical && expanded && effectiveState !== "idle"
+              ? (effectiveState === "rate_limited" ? (effectiveMessage || "Rate limited…") : label(effectiveState))
+              : undefined
+          }
+        >
+          {dragging ? (
+            <span className="pill-label drag-label">{ZONE_LABEL[dragZone] || "…"}</span>
+          ) : (
+            <>
+              <span className="pill-icon">{renderIcon(effectiveState, hovered)}</span>
+              {expanded && effectiveState !== "idle" && !vertical && (
+                <span className="pill-label">
+                  {effectiveState === "rate_limited"
+                    ? (effectiveMessage || "Rate limited…")
+                    : label(effectiveState)}
+                </span>
+              )}
+            </>
           )}
         </div>
 
@@ -169,8 +269,34 @@ export default function Overlay() {
             <NoteIcon />
           </button>
         )}
+
+        {showSatellites && (
+          <button
+            className="sat hide-btn"
+            title="Hide pill (Settings > General > Hide tray icon to bring it back)"
+            // Same command, same config field the Settings toggle uses —
+            // there's no separate "pill hidden" flag to keep in sync,
+            // this just flips hide_tray directly. set_tray_visible(false)
+            // already hides the overlay itself immediately (not just the
+            // tray icon), so no extra call is needed here.
+            onClick={() => invoke("set_tray_visible", { visible: false }).catch(() => {})}
+          >
+            <EyeOffIcon />
+          </button>
+        )}
       </div>
     </div>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <line x1="2" x2="22" y1="2" y2="22" />
+    </svg>
   );
 }
 

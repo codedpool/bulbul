@@ -189,6 +189,22 @@ function App() {
         setSettingsOpen(true);
     });
     invoke("get_autostart").then(setAutostart).catch(() => {});
+    // Dragging the overlay pill (or the Settings picker, from another
+    // window) updates overlay_position on the backend directly — patch
+    // just that field into our own local snapshot rather than leaving it
+    // stale, so this window's *next* unrelated save (spreading `...config`)
+    // can't silently drag the pill back to wherever it was when we mounted.
+    const unOverlayPos = listen("overlay-position-changed", (e) => {
+      setConfig((prev) => (prev ? { ...prev, overlay_position: e.payload } : prev));
+    });
+    // Same staleness problem, different field: the overlay's own hide
+    // button calls set_tray_visible directly, which this window never
+    // otherwise hears about — without this, the sidebar/Settings toggle
+    // would keep showing the old state until some unrelated save
+    // overwrote it back from a stale snapshot.
+    const unHideTray = listen("hide-tray-changed", (e) => {
+      setConfig((prev) => (prev ? { ...prev, hide_tray: e.payload } : prev));
+    });
     // Mode-B auto-update (desktop only): the Rust watcher emits this event
     // after it downloads a new installer. If the user reopens the app
     // between checks, the version is still in the slot — fetch it on
@@ -212,6 +228,8 @@ function App() {
     return () => {
       un.then((f) => f());
       unStaged.then((f) => f());
+      unOverlayPos.then((f) => f());
+      unHideTray.then((f) => f());
       window.removeEventListener("keydown", onKey);
     };
   }, []);

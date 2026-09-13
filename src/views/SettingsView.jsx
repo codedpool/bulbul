@@ -22,6 +22,20 @@ const THEMES = [
   { value: "system", label: "System" },
 ];
 
+// Desktop only — the overlay pill is a WebView2/WebKit window positioned by
+// the Rust backend (see desktop.rs's position_overlay); Android's "Overlay"
+// section is a different, native floating bubble the user already drags
+// anywhere. Same three dock points the pill itself snaps to when you drag
+// it directly (see Overlay.jsx) — this is the non-drag way to reach them.
+// A top anchor isn't offered: it would need the language-dropdown's
+// grow-upward direction (and the pill's own bottom-justified layout) to
+// flip too, not just a coordinate.
+const OVERLAY_POSITIONS = [
+  { value: "left", label: "Left" },
+  { value: "bottom-center", label: "Bottom" },
+  { value: "right", label: "Right" },
+];
+
 // Cleanup model is intentionally NOT a user picker (like the STT model, it's
 // config-only). The groq.rs fallback chain — qwen → gpt-oss-20b → gpt-oss-120b
 // → raw — manages it; `chat_model` stays a config.json field with a qwen
@@ -485,6 +499,7 @@ const MODE_OPTIONS = MODES.map((m) => ({ code: m.value, label: m.label }));
 function PaneGeneral({ config, updateConfig }) {
   const activeMode = MODES.find((m) => m.value === config.mode) || MODES[1];
   const activeTheme = config.theme || "light";
+  const activePosition = config.overlay_position || "bottom-center";
   return (
     <>
       <Row title="Cleanup mode" hint={activeMode.hint}>
@@ -525,6 +540,22 @@ function PaneGeneral({ config, updateConfig }) {
           ))}
         </div>
       </Row>
+      {!IS_ANDROID && (
+        <Row title="Pill position" hint="Where the dictation pill sits along the bottom of the screen.">
+          <div className="segmented">
+            {OVERLAY_POSITIONS.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                className={`segmented-btn ${activePosition === p.value ? "selected" : ""}`}
+                onClick={() => updateConfig({ ...config, overlay_position: p.value })}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </Row>
+      )}
     </>
   );
 }
