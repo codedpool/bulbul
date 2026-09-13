@@ -1591,10 +1591,9 @@ fn set_tray_visible(
         if let Some(tray) = app.tray_by_id("bulbul-tray") {
             tray.set_visible(true).map_err(|e| format!("{e}"))?;
         } else {
-            // The tray wasn't built at startup because hide_tray was on.
-            // Build it now (visible). Creating it at runtime — after the
-            // shell and message loop have settled — sidesteps the startup
-            // add-then-remove race entirely.
+            // Defensive fallback — the tray is now always built at startup
+            // (see setup()), so this shouldn't normally be reached. Kept in
+            // case that ever changes: build it now, visible.
             let has_key = { app.state::<AppState>().config.lock().has_api_key() };
             setup_tray(&app, has_key).map_err(|e| format!("{e}"))?;
         }
@@ -2230,16 +2229,21 @@ pub fn run() {
                 hotkey_tx.clone(),
             );
 
-            // Only build the tray when it should be visible. If hide_tray
-            // is on we deliberately do NOT create it here: Tauri 2's builder
-            // adds the icon visible (Windows NIM_ADD) and a set_visible(false)
-            // issued before the shell has registered the icon fails, which is
-            // why a hidden tray used to reappear on restart. Not creating it
-            // avoids that race entirely; it's built lazily in set_tray_visible
-            // when the user unhides.
+            // Always build the tray, even when hide_tray is on. Windows
+            // identifies our icon to Explorer by (hwnd, uID) only — the
+            // underlying tray-icon crate never sets NIF_GUID — so Explorer's
+            // own notification-area cache (NotifyIconSettings) is keyed off
+            // whatever it last saw for that identity. Skipping registration
+            // entirely for a whole session (the previous approach) means we
+            // never give Explorer a fresh signal either way, so a real OS
+            // restart can redraw a stale icon straight from that cache —
+            // which a dev-build relaunch never reproduces, since that never
+            // restarts explorer.exe. Building it fresh every boot keeps
+            // Explorer's cache in sync with what this process actually wants.
+            setup_tray(&handle, has_key_on_boot)?;
             let hide_tray_on_boot = handle.state::<AppState>().config.lock().hide_tray;
-            if !hide_tray_on_boot {
-                setup_tray(&handle, has_key_on_boot)?;
+            if hide_tray_on_boot {
+                hide_tray_after_grace(&handle);
             }
             setup_overlay_window(&handle)?;
             setup_scratchpad_window(&handle)?;
@@ -2447,15 +2451,34 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    // setup_tray is only ever called when the tray SHOULD be visible — at
-    // startup when hide_tray is off, or from set_tray_visible when the user
-    // unhides. We never build it while hidden: Tauri 2's builder has no
-    // .visible(), so build() adds the icon visible (Windows NIM_ADD), and a
-    // set_visible(false) issued before the shell registers the icon fails —
-    // which is why a hidden tray used to reappear on restart. Not creating
-    // it at all avoids that race by construction.
+    // Tauri 2's builder has no .visible() — build() always adds the icon
+    // visible (Windows NIM_ADD). Callers that want it hidden apply that
+    // afterwards (see hide_tray_after_grace) rather than skipping this
+    // build entirely, so Explorer's own icon cache gets a real registration
+    // every session regardless of hide_tray.
     let _ = tray;
     Ok(())
+}
+
+/// Hides a just-built tray after a short grace period instead of
+/// synchronously in the same call as build(). On a genuine OS restart (as
+/// opposed to a plain process relaunch) explorer.exe's notification-area
+/// host isn't always ready the instant an autostart app launches —
+/// Shell_NotifyIcon(NIM_ADD) can silently fail, and the underlying tray-icon
+/// crate re-registers automatically once Explorer's "TaskbarCreated"
+/// broadcast arrives, always visible, with no hook for us to re-apply a
+/// hidden state at that point. Hiding immediately after build() used to race
+/// that same not-ready-yet window and fail outright ("Error removing system
+/// tray icon"). Giving the initial add a short window to actually land
+/// before hiding sidesteps both failure modes.
+fn hide_tray_after_grace(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(tray) = app.tray_by_id("bulbul-tray") {
+            let _ = tray.set_visible(false);
+        }
+    });
 }
 
 fn setup_overlay_window(app: &AppHandle) -> tauri::Result<()> {
