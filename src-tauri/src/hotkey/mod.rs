@@ -166,22 +166,20 @@ fn toggle_forward(
 // "Tap to talk" above, which only governs the keyboard hotkey. This is
 // the user's separate choice to dictate via a click at all.
 //
-// Platform reality, by design (confirmed before building):
+// All three platforms genuinely suppress the configured button's normal
+// effect (browser back/forward, X11 primary-paste, etc.) while Mouse
+// mode is on — not just react to it:
 //   - Windows: `mouse_hook.rs`'s WH_MOUSE_LL hook sits inline in the
-//     delivery path, so the configured button's normal effect (browser
-//     back/forward, etc.) is genuinely suppressed while Mouse mode is on.
-//   - Linux: `linux_mouse.rs` reads /dev/input directly (evdev), the same
-//     observe-only mechanism `linux_evdev.rs` already uses for the
-//     keyboard hotkey. It runs in PARALLEL with whatever else reads the
-//     same device (the compositor via libinput) — it can't suppress
-//     anything. The click still does its normal thing in the focused
-//     app at the same time Bulbul reacts to it. True suppression would
-//     need exclusive device access (EVIOCGRAB) plus re-injecting every
-//     OTHER click via uinput — out of scope for this pass.
-//   - macOS: the modifier-chord watcher in `macos.rs` only polls key
-//     state (CGEventSourceKeyState) and can't suppress anything either;
-//     the mouse-mode poller mirrors that (CGEventSourceButtonState),
-//     same observe-only trade-off as Linux.
+//     delivery path.
+//   - Linux: `linux_mouse.rs` exclusively grabs the mouse device
+//     (EVIOCGRAB) and re-emits everything except the configured button
+//     through a virtual mouse (evdev::uinput) that mirrors the real
+//     one's capabilities — falls back to observing-without-suppressing
+//     if the grab or the virtual mirror can't be built, rather than
+//     ever leaving a device grabbed with nothing forwarding its events.
+//   - macOS: `macos.rs` uses a real CGEventTap (not just polling live key
+//     state, which can't suppress anything) — returning
+//     CallbackResult::Drop removes the event from the stream entirely.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MouseButton {
     Middle,
