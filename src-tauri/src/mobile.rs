@@ -1192,6 +1192,87 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
     }
 }
 
+/// Real transcription for the onboarding "Try it yourself" rehearsal
+/// (StepDictateTest in OnboardingWizard.jsx) — not hardcoded, not a
+/// mock: the same Groq Whisper endpoint and model fallback order the
+/// real floating bubble uses (mirrors GroqClient.kt's STT_MODELS). The
+/// webview captures the audio itself via the Web Audio API and encodes
+/// a real WAV file client-side (there's no way to reach Kotlin's
+/// AudioRecord from here), so this just needs to upload exactly what
+/// AudioRecorder.kt would have produced. The wizard has no target app
+/// to inject into, so the transcript is returned to JS to render in its
+/// own preview field instead. Kept inline rather than routed through
+/// groq.rs for the same reason validate_api_key above is: the mobile
+/// build skips pulling in the whole desktop groq module.
+#[tauri::command]
+async fn transcribe_dictate_sample(
+    app: tauri::AppHandle,
+    wav_bytes: Vec<u8>,
+) -> Result<String, String> {
+    let cfg = read_config(&app).unwrap_or_default();
+    let cfg = mobile_config_defaults(cfg);
+    let key = cfg.groq_api_key.trim().to_string();
+    if key.is_empty() {
+        return Err("No Groq API key saved yet.".to_string());
+    }
+    if wav_bytes.len() < 200 {
+        return Err("No audio captured — try holding a little longer.".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client init failed: {e}"))?;
+
+    let lang = cfg.language.trim();
+    let lang = if !lang.is_empty() && lang != "auto" {
+        Some(lang.to_string())
+    } else {
+        None
+    };
+
+    #[derive(serde::Deserialize)]
+    struct TranscriptionResponse {
+        text: String,
+    }
+
+    // Same primary-then-fallback order as GroqClient.kt's STT_MODELS, so a
+    // decommissioned/rate-limited turbo model doesn't dead-end the rehearsal.
+    for model in ["whisper-large-v3-turbo", "whisper-large-v3"] {
+        let part = match reqwest::multipart::Part::bytes(wav_bytes.clone())
+            .file_name("audio.wav")
+            .mime_str("audio/wav")
+        {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let mut form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("model", model)
+            .text("response_format", "json");
+        if let Some(l) = &lang {
+            form = form.text("language", l.clone());
+        }
+        let resp = match client
+            .post("https://api.groq.com/openai/v1/audio/transcriptions")
+            .bearer_auth(&key)
+            .multipart(form)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let body = resp.text().await.unwrap_or_default();
+        if let Ok(parsed) = serde_json::from_str::<TranscriptionResponse>(&body) {
+            return Ok(parsed.text.trim().to_string());
+        }
+    }
+    Err("Transcription failed — check your connection and try again.".to_string())
+}
+
 // ---------- Overlay / scratchpad windows (desktop-only concepts) ----------
 
 #[tauri::command]
@@ -1274,6 +1355,7 @@ pub fn run() {
             delete_note,
             // Settings
             validate_api_key,
+            transcribe_dictate_sample,
             get_overlay_snoozed_until,
             resume_overlay,
             // Overlay / scratchpad windows

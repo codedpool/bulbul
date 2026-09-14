@@ -332,7 +332,9 @@ function App() {
         <OnboardingWizard
           config={config}
           updateConfig={updateConfig}
-          onComplete={() => setConfig({ ...config, onboarding_completed: true })}
+          onComplete={() =>
+            updateConfig({ ...config, onboarding_completed: true, onboarding_ever_completed: true })
+          }
         />
         <TooltipProvider />
       </>

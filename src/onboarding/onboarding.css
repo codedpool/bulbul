@@ -11,6 +11,41 @@
   flex-direction: column;
   font-family: "DM Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
   font-optical-sizing: auto;
+  /* The WebView's default touch handling otherwise lets the whole shell
+     be dragged/panned like a web page (on top of the viewport meta tag's
+     own zoom lock in index.html) — this app-like fixed layout should
+     never move under a drag the way a page can. Vertical scroll still
+     works because .onb-page explicitly opts back in below. */
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+/* Android's onboarding illustrations (mic/overlay/accessibility/hero/
+   groq/language) were generated specifically for the light theme —
+   SetupActivity.kt already forces light for its own four native screens
+   for exactly this reason (a dark screen around light-generated art
+   reads as broken, not intentional; see its own comment). This is the
+   same journey continuing in React, so it gets the same treatment:
+   force every token the wizard actually uses to its light-theme value,
+   regardless of the app's theme setting or the OS's dark preference.
+   Values copied from theme.css's :root[data-theme="light"] block.
+   Desktop/Mac are untouched — their wizard renders no images at all on
+   these steps, so there's nothing for dark mode to clash with there. */
+html.platform-android .onb-shell {
+  --bg: #eef0f3;
+  --surface: #ffffff;
+  --field: #eef0f3;
+  --fill: #f1f3f6;
+  --fill-active: #e0e4ea;
+  --border: #d4d8e0;
+  --border-strong: #9aa6b3;
+  --text: #181b21;
+  --text-heading: #14171c;
+  --text-2: #2a2e36;
+  --text-3: #363b44;
+  --text-muted: #5a6371;
+  --text-faint: #7d8693;
+  --shadow: rgba(20, 30, 55, 0.16);
 }
 
 /* macOS: round the wizard's outer shell (the window itself is
@@ -54,9 +89,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--text);
   flex: 1;
 }
 
@@ -64,6 +96,26 @@
   width: 24px;
   height: 24px;
   border-radius: 7px;
+}
+
+/* Same wordmark treatment as the dashboard's sidebar (.brand-text) and
+   its Android header (.m-brand-text) — Playfair italic lowercase, not
+   the wizard's own DM Sans body font. This is the one place in the
+   wizard that has to match the rest of the app exactly, since it's the
+   literal brand mark. */
+.onb-brand-text {
+  font-family: "Playfair Display", Georgia, "Cambria", serif;
+  font-style: italic;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  text-transform: lowercase;
+  color: var(--text-heading, var(--text));
+  line-height: 1.25;
+}
+
+html.platform-android .onb-brand-text {
+  font-size: 20px;
 }
 
 .onb-progress {
@@ -121,6 +173,11 @@
   display: flex;
   justify-content: center;
   animation: onbFade 260ms ease;
+  /* .onb-shell locks touch-action to none so the shell itself can't be
+     dragged/panned; this opts vertical scroll back in for the one
+     container that's actually meant to scroll. No pan-x — horizontal
+     drag stays fully locked. */
+  touch-action: pan-y;
 }
 
 @keyframes onbFade {
@@ -281,6 +338,36 @@
   font-size: 12.5px;
   line-height: 1.55;
   color: var(--text-muted);
+}
+
+/* Android's name screen (StepName) needs this same content to share the
+   screen with a text input and both action buttons, all within one
+   viewport — tighter padding/gaps/type than desktop's card-heavy
+   version, same 3-column-collapses-to-1 structure. */
+.onb-value-grid-compact {
+  gap: 10px;
+  margin-top: 4px;
+}
+.onb-value-grid-compact .onb-value {
+  padding: 14px 16px;
+  gap: 4px;
+  box-shadow: none;
+}
+.onb-value-grid-compact .onb-value-title {
+  font-size: 14px;
+}
+.onb-value-grid-compact .onb-value p {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+/* Bigger, more generous input to match the "big button" scale used
+   throughout this Android journey — the desktop-sized 14px/10px version
+   read as small and left the screen feeling sparse. */
+html.platform-android .onb-name-input {
+  padding: 16px 18px;
+  font-size: 16px;
+  border-radius: 12px;
 }
 
 /* ─────────── API key step ─────────── */
@@ -501,15 +588,19 @@ html.platform-android .onb-theme-seg {
   min-width: 0;
 }
 
-/* Phone: the side-by-side player + caption is too tight — stack them and let
-   the player span the card width. */
-html.platform-android .onb-video-block {
-  flex-direction: column;
-  align-items: stretch;
-}
+/* Phone: keep the compact side-by-side layout (NOT stacked full-width —
+   that made the player alone taller than a phone screen has room for,
+   forcing a scroll to reach Continue). A fixed small thumbnail width
+   left it visibly shorter than its own caption+description text,
+   leaving blank space above/below it inside the card — stretching it to
+   match the row's actual height (driven by the text side) instead, with
+   its width following from the aspect-ratio, fills that gap without
+   reopening the "player taller than the screen" problem: the row's
+   height is already whatever the caption text needs, never taller. */
 html.platform-android .onb-video-frame {
-  width: 100%;
-  max-width: 100%;
+  width: auto;
+  max-width: 46%;
+  align-self: stretch;
 }
 
 /* ─────────── Android wizard layout ─────────── */
@@ -528,14 +619,478 @@ html.platform-android .onb-top {
    with a comfortable, symmetric mobile margin. */
 html.platform-android .onb-page {
   padding: 18px 18px 0;
+  /* No scroll, period — not "try to size things so it happens not to
+     need one." .onb-page-inner is bounded to exactly this area's height
+     below, and .onb-step-body (the actual scrollable-looking content —
+     image, fields, text) clips silently if it's taller than that, while
+     .onb-actions stays outside the clip so Continue is always visible
+     regardless. This is what lets an image be its full natural size
+     ("off the viewport size" is fine) without either shrinking it or
+     letting the page scroll. */
+  overflow: hidden;
 }
 html.platform-android .onb-page-inner {
-  gap: 16px;
+  /* Tighter than desktop's 14px on purpose: Android screens stack more
+     sections (banner + headline + field + status + privacy text + theme
+     picker + video) than desktop ever does on one step. */
+  gap: 10px;
+  /* Fill exactly the space .onb-page has, no more — this is what makes
+     "bounded, not scrollable" possible. Without this, a tall child just
+     grows .onb-page-inner past the viewport and .onb-page's own overflow
+     (now hidden) would clip the actions row right along with it. */
+  height: 100%;
+}
+/* Everything in a step EXCEPT its final .onb-actions row — the part that
+   may legitimately be taller than the screen (a full-bleed image) and
+   should clip silently rather than push the buttons down or scroll.
+   Within it, only the image is allowed to shrink/clip (flex-shrink:1 is
+   the default) — real functional content (a field, a selectable list)
+   is pinned to flex-shrink:0 below so it can never be the thing that
+   silently disappears; the image absorbs the squeeze instead, since
+   losing part of a decorative illustration is a fair trade and losing
+   part of a language list is not. */
+html.platform-android .onb-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+/* The groq/language hero image already renders at a sane natural height
+   (landscape source art, width:100% / height:auto) — it just needs to be
+   IMMUNE to the shrink pass, never squeezed shorter than that natural
+   size, so it can never lose its bottom or side edge to overflow:hidden. */
+html.platform-android .onb-step-body .onb-hero-frame {
+  flex-shrink: 0;
+  overflow: hidden;
+}
+/* The four recap images (mic/overlay/accessibility/hero-recap) are a
+   different shape problem: portrait source canvases with the real
+   illustration only in the middle third and large blank margins baked
+   into the file. The frame fills whatever room is actually available
+   (flex:1) and the image crops to fill it completely (object-fit:cover,
+   see .onb-recap-image below) — the generous, device-actual space this
+   gives means the crop consumes that blank margin first, never the
+   illustration itself. */
+html.platform-android .onb-step-body .onb-recap-frame {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+/* Language screen only: the headline moved OUT of the image (see
+   onb-step-head-android below) because language.png has no blank margin
+   to write over safely — it's dense chip artwork edge to edge, so any
+   overlay text would need a heavy scrim to stay legible. With the text
+   given its own room above instead, the image itself is trimmed a bit
+   shorter to compensate ("adjust" — there's a full language list below
+   it competing for the same screen) and never crops, since there's no
+   longer any text relying on a specific part of it staying visible. */
+html.platform-android .onb-step-body .onb-hero-frame-plain {
+  max-height: 22vh;
+}
+html.platform-android .onb-step-body .onb-hero-frame-plain .onb-hero-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+html.platform-android .onb-step-head-android {
+  gap: 2px;
+  margin-bottom: 2px;
+}
+html.platform-android .onb-step-body .onb-key-row,
+html.platform-android .onb-step-body .onb-key-status,
+html.platform-android .onb-step-body .onb-groq-privacy,
+html.platform-android .onb-step-body .onb-theme-block,
+html.platform-android .onb-step-body .onb-video-block,
+html.platform-android .onb-step-body .onb-step-head-android,
+html.platform-android .onb-step-body .onb-lang-list {
+  flex-shrink: 0;
+}
+html.platform-android .onb-video-block {
+  padding: 8px 10px;
+  align-items: stretch;
+}
+/* Last item in the card, so any leftover room in the step (the sum of
+   everything above it rarely exactly fills the available height) was
+   sitting as dead space below the video instead of being used by it.
+   flex-grow claims that leftover space for the block itself — the frame
+   (align-self:stretch, aspect-ratio-driven width) and the caption
+   column both grow into the extra height instead of leaving a gap. */
+html.platform-android .onb-step-body .onb-video-block {
+  flex-grow: 1;
+}
+html.platform-android .onb-video-side {
+  justify-content: center;
+}
+html.platform-android .onb-groq-privacy {
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 /* Action row buttons breathe and reach a proper tap size. */
 html.platform-android .onb-actions .onb-btn {
   min-height: 44px;
+}
+
+/* Big, Wispr-style CTAs for the redesigned Android onboarding: one
+   dominant full-width primary pill per screen, back reduced to a quiet
+   text-only affordance rather than a competing button. */
+html.platform-android .onb-actions {
+  gap: 14px;
+  /* .onb-step-body uses flex:1 (flex-basis:0), so by the flex-shrink
+     algorithm it contributes nothing to the shrink calculation and,
+     without this, .onb-actions — having a real flex-basis — would be
+     the one asked to give up space when content overflows. That's
+     backwards: the footer must never shrink or clip; .onb-step-body
+     (and its own internal overflow:hidden) is what's supposed to
+     absorb the squeeze. */
+  flex-shrink: 0;
+}
+html.platform-android .onb-actions .onb-btn.primary {
+  flex: 1;
+  padding: 16px 24px;
+  font-size: 16px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+html.platform-android .onb-actions .onb-btn.ghost {
+  flex: 0 0 auto;
+  padding: 16px 16px;
+  border-radius: 999px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+html.platform-android .onb-actions-center .onb-btn.primary {
+  flex: none;
+  width: 100%;
+}
+
+/* Shared "text written over the image" treatment (Android) — full-bleed:
+   the frame fills 100% of whatever space is actually available (its
+   parent's flex box), and the image is cropped via object-fit:cover to
+   fill that space completely, edge to edge, top to bottom. No letterbox,
+   no pillarbox, no dead canvas.
+   .onb-page-inner-bleed drops the wizard's max-width cap, which would
+   otherwise fight the frame's own edge-to-edge negative margin. */
+.onb-page-inner-bleed {
+  max-width: none;
+}
+.onb-hero-frame,
+.onb-recap-frame {
+  position: relative;
+  width: calc(100% + 36px);
+  margin: 0 -18px;
+}
+/* groq/language art is already dense edge-to-edge (no blank margins to
+   crop away) and lives alongside a lot of other functional content on
+   those two screens, so it keeps its natural width:100%/height:auto
+   size rather than being forced into a cropped box. */
+.onb-hero-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+/* The four recap illustrations (mic/overlay/accessibility/hero-recap)
+   were generated on a tall canvas with real content sitting in the
+   vertical middle third and large blank margins above/below baked into
+   the file. cover crops those margins away first — the frame (sized by
+   flex:1 to fill the whole available screen region) is comfortably
+   taller than the image needs, so the center-anchored crop consumes the
+   blank buffer on both edges before it would ever reach the actual
+   illustration. */
+.onb-recap-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+/* Legibility for text sitting directly on cropped, potentially busy
+   artwork: a scrim that fades from the exact app background color (not
+   an invented tint — this is the same #eef0f3 the source illustrations
+   were generated against and the native Kotlin screens use, so it reads
+   as the page's own chrome extending over the image, not a pasted box)
+   down to fully transparent, over a tall, gentle stretch so the fade
+   itself is the only visible thing — no hard edge anywhere. Sized well
+   past the text so the gradient has room to actually finish fading
+   before it would otherwise need to stop abruptly. */
+.onb-hero-overlay,
+.onb-recap-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  text-align: center;
+  padding: 24px 28px 64px;
+  background: linear-gradient(
+    to bottom,
+    var(--bg) 0%,
+    var(--bg) 38%,
+    transparent 100%
+  );
+}
+.onb-hero-overlay h2,
+.onb-recap-overlay h2 {
+  margin: 0 0 4px;
+}
+.onb-hero-overlay .onb-sub,
+.onb-recap-overlay .onb-sub {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* ─────────── Overlay size/opacity adjuster (Android) ─────────── */
+.onb-pill-preview-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 0;
+}
+
+/* Matches the REAL Android floating bubble's own drawing code
+   (BubbleView.onDraw in BulbulForegroundService.kt) exactly, not an
+   approximation: a black rounded-SQUARE tile — corner radius is 26% of
+   the tile's own width (TILE_CORNER_FRACTION), not a circle — with the
+   gold bird bitmap centered at 56% of the tile (BIRD_TILE_FRACTION).
+   Opacity is applied to the whole tile via the same alpha the real
+   bubble uses, not just the icon. */
+.onb-pill-demo {
+  border-radius: 26%;
+  background: #000000;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: width 120ms ease, height 120ms ease, opacity 120ms ease;
+  flex-shrink: 0;
+}
+
+.onb-pill-demo img {
+  width: 56%;
+  height: 56%;
+  object-fit: contain;
+}
+
+.onb-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.onb-slider-label {
+  width: 64px;
+  flex-shrink: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onb-slider-row input[type="range"] {
+  flex: 1;
+  accent-color: #5ec8c0;
+}
+
+.onb-slider-val {
+  width: 44px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─────────── Dictate-test preview (Android) ─────────── */
+.onb-dictate-demo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 0 10px;
+  width: 100%;
+}
+
+/* Matches the REAL Android bubble exactly (BubbleView in
+   BulbulForegroundService.kt): a black rounded-square tile (26% corner
+   radius) with the gold bird bitmap always visible at 56% — the real
+   bubble never swaps the icon for a waveform. The only thing that
+   changes while recording is a pulsing RED ring around the tile
+   (COLOR_RECORDING = #EF4444), not a teal glow — this preview reuses
+   that same color so it's not just decorative but actually true to
+   what the real bubble does. Now an actual <button> the user presses
+   and holds (see StepDictateTest) rather than a static div, so it needs
+   its own reset — no native button chrome, and touch-action:none stops
+   the browser from treating a press-hold as a scroll gesture. */
+.onb-dictate-pill {
+  width: 64px;
+  height: 64px;
+  border-radius: 26%;
+  background: #000000;
+  border: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  transition: box-shadow 200ms ease, transform 120ms ease;
+  cursor: pointer;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.onb-dictate-pill img {
+  width: 56%;
+  height: 56%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.onb-dictate-pill.state-listening {
+  animation: onb-record-pulse 1100ms ease-in-out infinite;
+  transform: scale(1.06);
+}
+
+@keyframes onb-record-pulse {
+  0% { box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35), 0 0 0 0 rgba(239, 68, 68, 0.9); }
+  100% { box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35), 0 0 0 5px rgba(239, 68, 68, 0); }
+}
+
+/* Brief "cleaning it up" beat between release and the resolved text —
+   a calm teal pulse, distinct from the red recording ring. */
+.onb-dictate-pill.state-processing {
+  animation: onb-process-pulse 550ms ease-in-out;
+}
+
+@keyframes onb-process-pulse {
+  0% { box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35), 0 0 0 0 rgba(94, 200, 192, 0.6); }
+  100% { box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35), 0 0 0 6px rgba(94, 200, 192, 0); }
+}
+
+.onb-dictate-pill.state-empty,
+.onb-dictate-pill.state-error {
+  animation: onb-hold-shake 380ms ease-out;
+}
+
+.onb-dictate-pill.state-done {
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+.onb-dictate-prompt {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
+  min-height: 20px;
+  transition: color 160ms ease;
+}
+.onb-dictate-prompt.state-listening { color: #d64545; }
+.onb-dictate-prompt.state-empty,
+.onb-dictate-prompt.state-error { color: #c98a1d; }
+.onb-dictate-prompt.state-done { color: var(--text); }
+
+/* Icon+label chip — the actual "do this" cue, since the prose above it
+   is exactly the kind of onboarding text people skip past. Drops away
+   the moment the user has found the gesture once. */
+.onb-dictate-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(94, 200, 192, 0.14);
+  border: 1px solid rgba(94, 200, 192, 0.4);
+  color: #1f8c82;
+  font-size: 13px;
+  font-weight: 700;
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+.onb-dictate-hint-hidden {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+
+.onb-dictate-pill-wrap {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+
+/* Two soft rings expanding outward from the pill on a loop — the same
+   "long-press me" visual language as a tutorial tap hint, without
+   needing a new hand/finger illustration. */
+.onb-dictate-invite {
+  position: absolute;
+  inset: 0;
+  border-radius: 26%;
+  pointer-events: none;
+}
+.onb-dictate-invite::before,
+.onb-dictate-invite::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 26%;
+  border: 2px solid rgba(94, 200, 192, 0.55);
+  animation: onb-invite-ring 1800ms ease-out infinite;
+}
+.onb-dictate-invite::after {
+  animation-delay: 600ms;
+}
+@keyframes onb-invite-ring {
+  0% { transform: scale(1); opacity: 0.85; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* Where the "transcript" actually lands — a plain text-field look so it
+   reads immediately as "this is what a real app's input box would show",
+   not just another line of onboarding copy. */
+.onb-dictate-field {
+  width: 100%;
+  max-width: 360px;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--field);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  transition: border-color 200ms ease;
+}
+.onb-dictate-field.state-listening {
+  border-color: rgba(214, 69, 69, 0.5);
+}
+.onb-dictate-field.state-done {
+  border-color: rgba(94, 200, 192, 0.6);
+}
+.onb-dictate-field.state-empty,
+.onb-dictate-field.state-error {
+  border-color: rgba(201, 138, 29, 0.55);
+}
+.onb-dictate-field-text {
+  font-size: 14.5px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+.onb-dictate-field-text.filled {
+  color: var(--text);
+  font-style: normal;
+  font-weight: 500;
+}
+.onb-dictate-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 16px;
+  margin-left: 2px;
+  background: #5ec8c0;
+  animation: onb-cursor-blink 1s step-end infinite;
+}
+@keyframes onb-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 /* ─────────── Hotkey step ─────────── */
@@ -1133,6 +1688,14 @@ html.platform-android .onb-actions .onb-btn {
   bottom: 0;
   background: var(--bg);
   margin: 8px -48px 0;
+  /* sticky only pins once there's enough content to scroll — when a step's
+     content is SHORTER than the viewport (increasingly common now that
+     several screens got compressed), sticky alone leaves this row sitting
+     wherever the content ends, with a dead gap below it down to the real
+     bottom of the screen. margin-top:auto (the .onb-page-inner column
+     flex context pushes its last child to fill remaining space) fixes
+     that for the short case; sticky still covers the tall/overflow case. */
+  margin-top: auto;
   padding: 14px 48px 18px;
   z-index: 5;
 }

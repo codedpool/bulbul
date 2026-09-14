@@ -196,8 +196,17 @@ class BulbulAccessibilityService : AccessibilityService() {
     /// Password/PIN fields are the exception: the bubble goes (and stays)
     /// down while one is focused, so we never draw over a credential
     /// prompt and never invite dictating a secret out loud.
+    ///
+    /// Onboarding is a second exception: the React wizard's own text
+    /// fields (starting with "What should I call you?") can bring up the
+    /// IME before a Groq key has ever been saved. Without this check the
+    /// bubble appeared right there — non-functional (nothing to
+    /// transcribe with) and, worse, its own overlay window could sit on
+    /// top of the very field the user was trying to type into. Stays down
+    /// until the wizard's own "Done" screen calls complete_onboarding.
     private fun shouldShowBubble(): Boolean {
-        return isImeVisible() && !passwordFocused && !BulbulConfig.isSnoozed(this)
+        return isImeVisible() && !passwordFocused && !BulbulConfig.isSnoozed(this) &&
+            BulbulConfig.onboardingCompleted(this)
     }
 
     /// Called by the foreground service when the user snoozes: forget that
