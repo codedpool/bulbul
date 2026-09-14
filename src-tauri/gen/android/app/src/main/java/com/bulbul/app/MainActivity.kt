@@ -54,7 +54,7 @@ class MainActivity : TauriActivity() {
     // dismissible in-app banner (see showPermissionBanner) rather than
     // force-reopening SetupActivity, so the user is never trapped but also
     // never left on a silently non-functional app.
-    if (!hasAllPermissions()) {
+    if (!hasAllPermissions() || !SetupActivity.heroSeenStatic(this)) {
       startActivity(Intent(this, SetupActivity::class.java))
     }
   }

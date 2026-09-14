@@ -80,6 +80,12 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // TEMPORARY local-test suffix: installs this build as its own
+            // separate app (xyz.bulbultypes.app.dev) alongside whatever
+            // production/Play copy is already on the device, instead of
+            // requiring an uninstall first. Remove before an actual
+            // release/CI build — this must never ship as the real package.
+            applicationIdSuffix = ".dev"
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

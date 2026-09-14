@@ -81,6 +81,16 @@ object BulbulConfig {
     fun apiKey(context: Context): String =
         read(context)?.optString("groq_api_key", "").orEmpty()
 
+    /// Whether the React wizard has finished the CURRENT onboarding pass
+    /// (false again during a deliberate "Re-run setup wizard" replay).
+    /// Gates the floating bubble in BulbulAccessibilityService — without
+    /// this, the bubble was appearing over the wizard's own text fields
+    /// (e.g. the name screen) before a Groq key even existed, where
+    /// tapping it could only fail, and its own overlay window could sit
+    /// on top of the field the user was trying to type into.
+    fun onboardingCompleted(context: Context): Boolean =
+        read(context)?.optBoolean("onboarding_completed", false) ?: false
+
     /// Opt-in telemetry gate (Settings ▸ Privacy / onboarding toggle).
     /// Defaults true to match the desktop Config default.
     fun telemetryEnabled(context: Context): Boolean =

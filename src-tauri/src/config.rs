@@ -262,8 +262,25 @@ pub struct Config {
 
     /// True once the user has finished (or explicitly skipped) the
     /// first-run wizard. Defaults to false so fresh installs see it.
+    /// "Re-run setup wizard" (Settings ▸ About) flips this back to false
+    /// to replay it — see onboarding_ever_completed below for how the
+    /// Android wizard tells a genuine first run from a replay.
     #[serde(default)]
     pub onboarding_completed: bool,
+
+    /// True the first time onboarding_completed is ever set true, and
+    /// NEVER reset by a later replay (unlike onboarding_completed
+    /// itself). Android's native SetupActivity only ever runs once, on
+    /// a real first run, to request actual system permissions — a
+    /// "Re-run setup wizard" replay can't re-trigger it (nor should it,
+    /// since the permissions are already granted). The React wizard
+    /// uses this flag to tell the two cases apart: a real first run
+    /// picks up right where the native walker left off, while a replay
+    /// shows the full journey from its own "hero" recap of what the
+    /// native walker already did, so re-running never skips or
+    /// misorders a screen. See OnboardingWizard.jsx's STEP_SEQUENCE.
+    #[serde(default)]
+    pub onboarding_ever_completed: bool,
 
     /// Anonymous usage telemetry. On by default for fresh installs so the
     /// solo-dev signal isn't permanently zero, but always toggleable from
@@ -588,6 +605,7 @@ impl Default for Config {
             learn_corrections: default_learn_corrections(),
             theme: default_theme(),
             onboarding_completed: false,
+            onboarding_ever_completed: false,
             telemetry_enabled: default_telemetry_enabled(),
             overlay_opacity: default_overlay_opacity(),
             overlay_size: default_overlay_size(),

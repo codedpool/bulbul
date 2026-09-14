@@ -7,6 +7,12 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
+import onboardGroq from "../assets/onboard-groq.png";
+import onboardLanguage from "../assets/onboard-language.png";
+import onboardHero from "../assets/onboard-hero.png";
+import onboardMic from "../assets/onboard-mic.png";
+import onboardOverlay from "../assets/onboard-overlay.png";
+import onboardAccessibility from "../assets/onboard-accessibility.png";
 import { applyTheme } from "../theme.js";
 import { IS_ANDROID, IS_LINUX, IS_MAC, IS_WINDOWS, META_KEY_NAME } from "../platform.js";
 import { useInPageChordFallback } from "../inPageHotkey.js";
@@ -106,21 +112,105 @@ const SAMPLE_LINE = "Hi Bulbul, um, this is, uh, my first test, and like, it loo
 // Mac inserts a one-time Permissions step between Welcome and the API
 // key entry. Non-Mac platforms skip it (Windows has no permission gate;
 // Linux X11 needs none, Linux Wayland prompts via portal on first use).
-// Android has no global hotkey (dictation is the floating bubble) and its
-// system permissions are granted through the native setup screen, so the
-// wizard is just the essentials: welcome, key, language, done.
-const STEP_SEQUENCE = IS_ANDROID
-  ? ["welcome", "apiKey", "language", "done"]
-  : IS_MAC
-  ? ["welcome", "permissions", "apiKey", "language", "hotkey", "mouseMode", "done"]
-  : ["welcome", "apiKey", "language", "hotkey", "mouseMode", "done"];
+//
+// Android's marketing "welcome" beat and its three system permissions are
+// normally handled by the native SetupActivity walker BEFORE this wizard
+// ever mounts (see SetupActivity.kt) — but StepWelcome also quietly
+// collected the user's display name, which is real functionality (signs
+// Compose drafts, greets on the home page), not decoration, so it needs
+// its own step now that the native hero owns the marketing beat: "name"
+// replaces "welcome" here, not just drops it. Also adds the two steps
+// that follow in the redesigned journey: tuning the floating bubble's
+// size/opacity, and a quick dictate-test preview.
+//
+// REPLAY is the exception: "Re-run setup wizard" (Settings ▸ About) only
+// flips onboarding_completed back to false — it can't re-trigger the
+// native walker (permissions are already granted, and there'd be no real
+// system dialog to show), so without this branch a replay would jump
+// straight to "name", skipping the four screens the native walker owns
+// and making the whole thing feel like two separate half-flows stitched
+// together (that's the actual bug report this fixed: "always starts on
+// apiKey", "the name step is skipped"). onboarding_ever_completed
+// (config.rs) is set once, on the first-ever completion, and never reset
+// by a replay — so it's what tells a genuine first run from a replay.
+// On a replay, this wizard shows its OWN illustrated recap of the four
+// native screens first (StepRecap, reusing the same generated art), so
+// the full ten-screen journey plays as one continuous flow with no seam,
+// even though only the very first run ever touches native code at all.
+function androidStepSequence(config) {
+  if (!IS_ANDROID) return null;
+  const isReplay = !!config.onboarding_ever_completed;
+  const recap = isReplay
+    ? ["heroRecap", "micRecap", "overlayRecap", "accessibilityRecap"]
+    : [];
+  return [...recap, "name", "apiKey", "language", "overlayAdjuster", "dictateTest", "done"];
+}
 
 export default function OnboardingWizard({ config, updateConfig, onComplete }) {
+  const androidSequence = androidStepSequence(config);
+  const STEP_SEQUENCE = androidSequence
+    ?? (IS_MAC
+      ? ["welcome", "permissions", "apiKey", "language", "hotkey", "mouseMode", "done"]
+      : ["welcome", "apiKey", "language", "hotkey", "mouseMode", "done"]);
+
+  // A first run shows 4 screens natively before this wizard ever mounts,
+  // so its progress bar continues that same 10-screen count rather than
+  // restarting at "1 of 6" (must match TOTAL_ONBOARDING_STEPS in
+  // SetupActivity.kt). A replay shows all 10 screens itself — including
+  // its own recap of the native four — so it needs no offset at all.
+  const isAndroidReplay = IS_ANDROID && !!config.onboarding_ever_completed;
+  const GLOBAL_STEP_OFFSET = IS_ANDROID && !isAndroidReplay ? 4 : 0;
+  const GLOBAL_TOTAL_STEPS = IS_ANDROID ? 10 : null;
+
   const [step, setStep] = useState(0);
-  const totalSteps = STEP_SEQUENCE.length;
+  const totalSteps = GLOBAL_TOTAL_STEPS ?? STEP_SEQUENCE.length;
   const currentStepName = STEP_SEQUENCE[step];
   const goNext = () => setStep((s) => Math.min(s + 1, STEP_SEQUENCE.length - 1));
   const goBack = () => setStep((s) => Math.max(s - 1, 0));
+
+  // Android hardware/gesture back for the wizard's own step navigation.
+  // Without this the wizard never pushes any history, so a system Back
+  // press has nothing of ITS OWN to act on — it either no-ops or falls
+  // through to the WebView's default, neither of which steps the wizard
+  // backward one screen the way the in-app "← Back" link does. This
+  // mirrors the exact push-on-advance / go(-n)-on-retreat / guarded-pop
+  // pattern App.jsx uses for the Settings overlay, just scoped to this
+  // component's own step count via its own refs — the two never run at
+  // the same time (this wizard replaces the whole app UI while
+  // onboarding_completed is false, so Settings isn't mounted), so sharing
+  // the same window.history stack is safe: each effect only reacts to
+  // changes in ITS OWN tracked depth.
+  const stepDepthRef = useRef(0);
+  const ignoreWizardPopRef = useRef(false);
+
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const prev = stepDepthRef.current;
+    if (step > prev) {
+      for (let i = prev; i < step; i++) window.history.pushState({ onbStep: i + 1 }, "");
+    } else if (step < prev) {
+      ignoreWizardPopRef.current = true;
+      window.history.go(-(prev - step));
+    }
+    stepDepthRef.current = step;
+  }, [step]);
+
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const onPop = () => {
+      if (ignoreWizardPopRef.current) {
+        ignoreWizardPopRef.current = false;
+        return;
+      }
+      // Browser already consumed one history entry; pre-decrement so the
+      // depth-sync effect above sees a balanced stack and doesn't re-push
+      // (same reasoning as App.jsx's identical guard).
+      stepDepthRef.current = Math.max(0, stepDepthRef.current - 1);
+      setStep((s) => Math.max(0, s - 1));
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   const themePref = config.theme || "light";
   const resolvedTheme =
@@ -182,22 +272,38 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
       <header className="onb-top">
         <div className="onb-brand">
           <img src={bulbulMark} alt="" className="onb-brand-mark" aria-hidden />
-          <span>bulbul</span>
+          <span className="onb-brand-text">bulbul</span>
         </div>
-        <div className="onb-progress" aria-label={`Step ${step + 1} of ${totalSteps}`}>
-          {Array.from({ length: totalSteps }, (_, i) => (
-            <span key={i} className={`onb-dot ${i === step ? "active" : i < step ? "done" : ""}`} />
-          ))}
+        <div
+          className="onb-progress"
+          aria-label={`Step ${step + 1 + GLOBAL_STEP_OFFSET} of ${totalSteps}`}
+        >
+          {Array.from({ length: totalSteps }, (_, i) => {
+            // The first GLOBAL_STEP_OFFSET slots represent screens the
+            // native walker already showed before this wizard mounted —
+            // always "done", since there's no way back into them from here.
+            const globalIndex = i - GLOBAL_STEP_OFFSET;
+            const state =
+              globalIndex < 0 || globalIndex < step ? "done" : globalIndex === step ? "active" : "";
+            return <span key={i} className={`onb-dot ${state}`} />;
+          })}
         </div>
         <div className="onb-top-right">
-          <button
-            className="onb-tb-btn"
-            onClick={toggleTheme}
-            aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
-          </button>
+          {/* Android's onboarding art is light-theme-only (see the
+              .onb-shell CSS override), so a toggle that visibly does
+              nothing would just read as broken — dropped here, not just
+              hidden. Desktop/Mac never show these images and keep the
+              toggle as before. */}
+          {!IS_ANDROID && (
+            <button
+              className="onb-tb-btn"
+              onClick={toggleTheme}
+              aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
+            </button>
+          )}
           {!IS_ANDROID && !IS_MAC && (
             <>
               <button
@@ -237,6 +343,43 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
         {currentStepName === "permissions" && (
           <StepPermissions onBack={goBack} onNext={goNext} />
         )}
+        {currentStepName === "heroRecap" && (
+          <StepRecap
+            image={onboardHero}
+            title="Bulbul is faster than typing"
+            onNext={goNext}
+          />
+        )}
+        {currentStepName === "micRecap" && (
+          <StepRecap
+            image={onboardMic}
+            title="Microphone"
+            blurb="Already allowed — this is what that screen looked like."
+            onBack={goBack}
+            onNext={goNext}
+          />
+        )}
+        {currentStepName === "overlayRecap" && (
+          <StepRecap
+            image={onboardOverlay}
+            title="Display over other apps"
+            blurb="Already allowed — lets the floating bubble appear above your keyboard in any app."
+            onBack={goBack}
+            onNext={goNext}
+          />
+        )}
+        {currentStepName === "accessibilityRecap" && (
+          <StepRecap
+            image={onboardAccessibility}
+            title="Accessibility"
+            blurb="Already turned on — lets Bulbul paste cleaned-up transcripts into any text field."
+            onBack={goBack}
+            onNext={goNext}
+          />
+        )}
+        {currentStepName === "name" && (
+          <StepName config={config} updateConfig={updateConfig} onBack={goBack} onNext={goNext} />
+        )}
         {currentStepName === "apiKey" && (
           <StepApiKey
             config={config}
@@ -268,6 +411,17 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
             onBack={goBack}
             onNext={goNext}
           />
+        )}
+        {currentStepName === "overlayAdjuster" && (
+          <StepOverlayAdjuster
+            config={config}
+            updateConfig={updateConfig}
+            onBack={goBack}
+            onNext={goNext}
+          />
+        )}
+        {currentStepName === "dictateTest" && (
+          <StepDictateTest onBack={goBack} onNext={goNext} />
         )}
         {currentStepName === "done" && (
           <StepDone
@@ -348,6 +502,105 @@ function StepWelcome({ config, updateConfig, onNext }) {
 
       <div className="onb-actions onb-actions-center">
         <button className="onb-btn primary" onClick={commitAndNext}>Get started →</button>
+      </div>
+    </div>
+  );
+}
+
+// Android only: the native hero screen (SetupActivity.kt) took over
+// StepWelcome's headline beat, but StepWelcome also carried the three
+// value-prop facts (own-key privacy, open source, quick setup) AND the
+// user's display name — real content, not decoration — so both come
+// along here rather than being dropped. Always has Back (goBack no-ops
+// harmlessly on a genuine first run, where this is step 0 — same
+// footer treatment as every other screen rather than a special case).
+function StepName({ config, updateConfig, onBack, onNext }) {
+  const [name, setName] = useState(config?.display_name || "");
+
+  function commitAndNext() {
+    const trimmed = name.trim();
+    if (trimmed !== (config?.display_name || "")) {
+      updateConfig({ ...config, display_name: trimmed });
+    }
+    onNext();
+  }
+
+  return (
+    <div className="onb-page-inner">
+      <header className="onb-step-head">
+        <h2>What should I call you?</h2>
+        <p className="onb-sub">Optional, stays on your device.</p>
+      </header>
+
+      <div className="onb-value-grid onb-value-grid-compact">
+        <div className="onb-value">
+          <div className="onb-value-title">Your key, your audio</div>
+          <p>Bulbul talks to Groq using your own API key. Nothing is logged on our servers — there are no servers.</p>
+        </div>
+        <div className="onb-value">
+          <div className="onb-value-title">Free and open source</div>
+          <p>Local app, no subscription, no surprises. Yours to fork.</p>
+        </div>
+        <div className="onb-value">
+          <div className="onb-value-title">Two minutes to set up</div>
+          <p>API key, language, done. You'll be dictating before your coffee's cold.</p>
+        </div>
+      </div>
+
+      <div className="onb-name-block">
+        <input
+          id="onb-name-input"
+          type="text"
+          className="onb-name-input"
+          placeholder="First name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitAndNext();
+            }
+          }}
+          spellCheck={false}
+          autoComplete="off"
+          maxLength={48}
+          autoFocus
+        />
+        <p className="muted small onb-name-hint">
+          Used to sign your Compose drafts and greet you on the home page. Never sent anywhere.
+        </p>
+      </div>
+
+      <div className="onb-actions">
+        <button className="onb-btn ghost" onClick={onBack}>← Back</button>
+        <button className="onb-btn primary" onClick={commitAndNext}>Continue →</button>
+      </div>
+    </div>
+  );
+}
+
+// Android replay only: after a real first run, the native SetupActivity
+// never runs again (permissions are already granted — there'd be no real
+// system dialog to show), but "Re-run setup wizard" still wants the full
+// journey to feel like one continuous flow. This shows the same four
+// native illustrations again, entirely inside React, with a single
+// Continue since there's nothing left to actually grant. See
+// androidStepSequence above and onboarding_ever_completed in config.rs.
+function StepRecap({ image, title, blurb, onBack, onNext }) {
+  return (
+    <div className="onb-page-inner onb-page-inner-bleed">
+      <div className="onb-step-body">
+        <div className="onb-recap-frame">
+          <img src={image} alt="" className="onb-recap-image" />
+          <div className="onb-recap-overlay">
+            <h2>{title}</h2>
+            {blurb && <p className="onb-sub">{blurb}</p>}
+          </div>
+        </div>
+      </div>
+      <div className={onBack ? "onb-actions" : "onb-actions onb-actions-center"}>
+        {onBack && <button className="onb-btn ghost" onClick={onBack}>← Back</button>}
+        <button className="onb-btn primary" onClick={onNext}>Continue →</button>
       </div>
     </div>
   );
@@ -632,14 +885,27 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
     "Verify";
 
   return (
-    <div className="onb-page-inner">
-      <header className="onb-step-head">
-        <h2>Paste your Groq API key</h2>
-        <p className="onb-sub">
-          Bulbul uses Groq to transcribe and clean up what you say. You need a free key
-          from <a href="#" onClick={(e) => { e.preventDefault(); openUrl("https://console.groq.com/keys"); }}>console.groq.com/keys</a>.
-        </p>
-      </header>
+    <div className={`onb-page-inner${IS_ANDROID ? " onb-page-inner-bleed" : ""}`}>
+      <div className="onb-step-body">
+      {IS_ANDROID ? (
+        <div className="onb-hero-frame">
+          <img src={onboardGroq} alt="" className="onb-hero-image" aria-hidden />
+          <div className="onb-hero-overlay">
+            <h2>Paste your Groq API key</h2>
+            <p className="onb-sub">
+              Need a free key? <a href="#" onClick={(e) => { e.preventDefault(); openUrl("https://console.groq.com/keys"); }}>console.groq.com/keys</a>
+            </p>
+          </div>
+        </div>
+      ) : (
+        <header className="onb-step-head">
+          <h2>Paste your Groq API key</h2>
+          <p className="onb-sub">
+            Bulbul uses Groq to transcribe and clean up what you say. You need a free key
+            from <a href="#" onClick={(e) => { e.preventDefault(); openUrl("https://console.groq.com/keys"); }}>console.groq.com/keys</a>.
+          </p>
+        </header>
+      )}
 
       <div className="onb-key-row">
         <div className={`onb-key-input-wrap ${keyState === "valid" ? "ok" : keyState === "invalid" ? "bad" : ""}`}>
@@ -707,7 +973,13 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
               type="button"
               className={`segmented-btn ${(config.theme || "light") === t.value ? "selected" : ""}`}
               onClick={() => {
-                applyTheme(t.value);
+                // Saved for the main app once setup finishes, but not
+                // applied live here — the wizard itself is locked to
+                // light on Android (see the .onb-shell CSS override),
+                // so previewing dark mid-wizard would just clash with
+                // the light-generated illustrations on the surrounding
+                // screens.
+                if (!IS_ANDROID) applyTheme(t.value);
                 updateConfig({ ...config, theme: t.value });
               }}
             >
@@ -739,6 +1011,7 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
             Open on YouTube →
           </button>
         </div>
+      </div>
       </div>
 
       <div className="onb-actions">
@@ -842,13 +1115,26 @@ function StepLanguage({ config, updateConfig, onBack, onNext }) {
   }
 
   return (
-    <div className="onb-page-inner">
-      <header className="onb-step-head">
-        <h2>What language do you dictate in?</h2>
-        <p className="onb-sub">
-          Pick the one you use most. Mixing English in is fine — Bulbul handles that for any choice.
-        </p>
-      </header>
+    <div className={`onb-page-inner${IS_ANDROID ? " onb-page-inner-bleed" : ""}`}>
+      <div className="onb-step-body">
+      {IS_ANDROID ? (
+        <>
+          <header className="onb-step-head onb-step-head-android">
+            <h2>What language do you dictate in?</h2>
+            <p className="onb-sub">Mixing English in is fine — Bulbul handles that either way.</p>
+          </header>
+          <div className="onb-hero-frame onb-hero-frame-plain">
+            <img src={onboardLanguage} alt="" className="onb-hero-image" aria-hidden />
+          </div>
+        </>
+      ) : (
+        <header className="onb-step-head">
+          <h2>What language do you dictate in?</h2>
+          <p className="onb-sub">
+            Pick the one you use most. Mixing English in is fine — Bulbul handles that for any choice.
+          </p>
+        </header>
+      )}
 
       <div className="onb-lang-list">
         <LangRow
@@ -887,6 +1173,7 @@ function StepLanguage({ config, updateConfig, onBack, onNext }) {
           detail="English-leaning. Avoid if you dictate in Hindi — it occasionally outputs Urdu/Arabic script for the same audio."
           suggested={detected.bucket === "auto"}
         />
+      </div>
       </div>
 
       <div className="onb-actions">
@@ -987,6 +1274,312 @@ function LangRow({ checked, onClick, label, detail, suggested, children }) {
         {children}
       </div>
     </label>
+  );
+}
+
+// Android only: live-tunes the same config.overlay_size / overlay_opacity
+// fields Settings → Overlay uses (see PaneOverlay in SettingsView.jsx) —
+// dragging here previews the actual floating bubble's look immediately,
+// via the exact same config keys the running app reads, not a separate
+// wizard-only draft. Deliberately no illustration here (see
+// onboarding-motion-plan.md) — the live preview pill *is* the explanation.
+function StepOverlayAdjuster({ config, updateConfig, onBack, onNext }) {
+  const opacityPct = Math.round((config.overlay_opacity ?? 0.65) * 100);
+  const size = config.overlay_size ?? 52;
+
+  return (
+    <div className="onb-page-inner">
+      <header className="onb-step-head">
+        <h2>Make the bubble yours</h2>
+        <p className="onb-sub">
+          Drag to see it change live — you can always adjust this later in Settings → Overlay.
+        </p>
+      </header>
+
+      <div className="onb-pill-preview-wrap">
+        <div
+          className="onb-pill-demo"
+          style={{ width: `${size}px`, height: `${size}px`, opacity: opacityPct / 100 }}
+        >
+          <img src={bulbulMark} alt="" />
+        </div>
+      </div>
+
+      <div className="onb-slider-row">
+        <label className="onb-slider-label">Opacity</label>
+        <input
+          type="range"
+          min="30"
+          max="100"
+          step="5"
+          value={opacityPct}
+          onChange={(e) =>
+            updateConfig({ ...config, overlay_opacity: Number(e.target.value) / 100 })
+          }
+          aria-label="Bubble opacity"
+        />
+        <span className="onb-slider-val">{opacityPct}%</span>
+      </div>
+      <div className="onb-slider-row">
+        <label className="onb-slider-label">Size</label>
+        <input
+          type="range"
+          min="44"
+          max="96"
+          step="4"
+          value={size}
+          onChange={(e) => updateConfig({ ...config, overlay_size: Number(e.target.value) })}
+          aria-label="Bubble size"
+        />
+        <span className="onb-slider-val">{size}px</span>
+      </div>
+
+      <div className="onb-actions">
+        <button className="onb-btn ghost" onClick={onBack}>← Back</button>
+        <button className="onb-btn primary" onClick={onNext}>Continue →</button>
+      </div>
+    </div>
+  );
+}
+
+// Encodes captured mic audio into a real WAV file (44-byte header + PCM16
+// mono data) entirely client-side — Groq's Whisper endpoint (and the
+// transcribe_dictate_sample command below) expects genuine WAV bytes, and
+// the browser's own MediaRecorder only produces compressed formats, so
+// this is built by hand from the raw Float32 samples the Web Audio API
+// hands over in startListening below.
+function encodeWav(float32Chunks, sampleRate) {
+  let length = 0;
+  for (const c of float32Chunks) length += c.length;
+  const pcm = new Int16Array(length);
+  let o = 0;
+  for (const c of float32Chunks) {
+    for (let i = 0; i < c.length; i++) {
+      const s = Math.max(-1, Math.min(1, c[i]));
+      pcm[o++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+  }
+  const dataSize = pcm.length * 2;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buf);
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+  new Int16Array(buf, 44).set(pcm);
+  return new Uint8Array(buf);
+}
+
+const DICTATE_PROMPTS = {
+  idle: "Tap the bubble below to try it.",
+  listening: "Listening — tap again when you're done.",
+  processing: "Cleaning it up…",
+  done: "That's exactly what you said — the real bubble works the same way.",
+  empty: "Didn't catch anything — go ahead and try again.",
+  error: "Something went wrong — tap to try again.",
+};
+
+// Android only: a rehearsal of dictating that follows the REAL bubble's
+// own mechanism, not an approximation of it — same gesture (a single tap
+// starts recording, a second tap stops it; see onBubbleTap in
+// BulbulForegroundService.kt, the bubble's default interaction) and real
+// transcription (the webview captures actual mic audio via the Web Audio
+// API, encodes it to WAV itself, and ships it to Groq Whisper through the
+// same endpoint + model fallback chain GroqClient.kt uses — nothing here
+// is a canned string, whatever was said is exactly what comes back). The
+// one real difference: the result renders in this screen's own field
+// instead of being injected into another app, since nothing else is
+// focused during setup.
+function StepDictateTest({ onBack, onNext }) {
+  const [phase, setPhase] = useState("idle"); // idle | listening | processing | done | empty | error
+  const [resultText, setResultText] = useState("");
+  const [errorText, setErrorText] = useState("");
+  const audioCtxRef = useRef(null);
+  const streamRef = useRef(null);
+  const processorRef = useRef(null);
+  const sourceRef = useRef(null);
+  const gainRef = useRef(null);
+  const chunksRef = useRef([]);
+  const timersRef = useRef([]);
+
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach(clearTimeout);
+      teardownAudio();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function schedule(fn, ms) {
+    timersRef.current.push(setTimeout(fn, ms));
+  }
+
+  function teardownAudio() {
+    try { processorRef.current?.disconnect(); } catch {}
+    try { sourceRef.current?.disconnect(); } catch {}
+    try { gainRef.current?.disconnect(); } catch {}
+    try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+    try { audioCtxRef.current?.close(); } catch {}
+    processorRef.current = null;
+    sourceRef.current = null;
+    gainRef.current = null;
+    streamRef.current = null;
+    audioCtxRef.current = null;
+  }
+
+  async function startListening() {
+    setErrorText("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const source = ctx.createMediaStreamSource(stream);
+      // A ScriptProcessorNode only fires while it's part of a live graph
+      // reaching the destination — routed through a zero-gain node so the
+      // mic is never actually played back through the speaker.
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      chunksRef.current = [];
+      processor.onaudioprocess = (e) => {
+        chunksRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      };
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(ctx.destination);
+
+      streamRef.current = stream;
+      audioCtxRef.current = ctx;
+      sourceRef.current = source;
+      processorRef.current = processor;
+      gainRef.current = silentGain;
+      setPhase("listening");
+    } catch {
+      setErrorText("Couldn't access the microphone.");
+      setPhase("error");
+      schedule(() => setPhase("idle"), 2200);
+    }
+  }
+
+  async function stopAndTranscribe() {
+    const ctx = audioCtxRef.current;
+    const sampleRate = ctx?.sampleRate || 48000;
+    const chunks = chunksRef.current;
+    chunksRef.current = [];
+    teardownAudio();
+
+    if (chunks.length === 0) {
+      setPhase("idle");
+      return;
+    }
+    setPhase("processing");
+    try {
+      const wav = encodeWav(chunks, sampleRate);
+      const text = await invoke("transcribe_dictate_sample", { wavBytes: Array.from(wav) });
+      if (!text || !text.trim()) {
+        setPhase("empty");
+        schedule(() => setPhase("idle"), 1800);
+        return;
+      }
+      setResultText(text.trim());
+      setPhase("done");
+    } catch (err) {
+      setErrorText(typeof err === "string" ? err : "Transcription failed.");
+      setPhase("error");
+      schedule(() => setPhase("idle"), 2400);
+    }
+  }
+
+  function handleTap() {
+    if (phase === "listening") {
+      stopAndTranscribe();
+    } else if (phase !== "processing") {
+      setResultText("");
+      startListening();
+    }
+  }
+
+  const showHint = phase === "idle";
+  const fieldText =
+    phase === "done" ? resultText :
+    phase === "processing" ? "Cleaning it up…" :
+    phase === "listening" ? "Listening…" :
+    phase === "empty" ? "Didn't catch any speech — try again." :
+    phase === "error" ? errorText :
+    "Dictated text lands here, like in any app";
+
+  return (
+    <div className="onb-page-inner">
+      <header className="onb-step-head">
+        <h2>Try it yourself</h2>
+        <p className="onb-sub">A real rehearsal — the exact same gesture and transcription as the real bubble.</p>
+      </header>
+
+      <div className="onb-dictate-demo">
+        {/* Text alone gets skipped, so the "tap to start" instruction also
+            has to exist as something glance-able: a small icon+label chip
+            plus a pulsing ring around the target itself. Both drop away
+            once the gesture has actually been discovered. */}
+        <div className={`onb-dictate-hint ${showHint ? "" : "onb-dictate-hint-hidden"}`}>
+          <TouchIcon />
+          <span>Tap to start</span>
+        </div>
+
+        <div className="onb-dictate-pill-wrap">
+          {showHint && <span className="onb-dictate-invite" aria-hidden />}
+          <button
+            type="button"
+            className={`onb-dictate-pill state-${phase}`}
+            onClick={handleTap}
+            aria-label={phase === "listening" ? "Tap to stop and transcribe" : "Tap to start dictating"}
+          >
+            <img src={bulbulMark} alt="" />
+          </button>
+        </div>
+
+        <p className={`onb-dictate-prompt state-${phase}`}>{DICTATE_PROMPTS[phase]}</p>
+
+        {/* Where the text actually lands — mirrors the real thing: Bulbul
+            doesn't show its own transcript anywhere, it types straight
+            into whatever field you were already in. */}
+        <div className={`onb-dictate-field state-${phase}`}>
+          <span className={`onb-dictate-field-text${phase === "done" ? " filled" : ""}`}>
+            {fieldText}
+          </span>
+          {phase === "done" && <span className="onb-dictate-cursor" aria-hidden />}
+        </div>
+      </div>
+
+      <div className="onb-actions">
+        <button className="onb-btn ghost" onClick={onBack}>← Back</button>
+        <button className="onb-btn primary" onClick={onNext}>Continue →</button>
+      </div>
+    </div>
+  );
+}
+
+// Simple "tap" glyph — a fingertip with a soft ripple arcing off it —
+// rather than a literal hand illustration, so it reads clearly at this
+// small a size without needing a new image asset.
+function TouchIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden>
+      <circle cx="8" cy="10.5" r="2.6" fill="currentColor" />
+      <path d="M3.4 6.2a5.2 5.2 0 0 1 9.2 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.65" />
+      <path d="M1.4 4.1a7.6 7.6 0 0 1 13.2 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.35" />
+    </svg>
   );
 }
 
