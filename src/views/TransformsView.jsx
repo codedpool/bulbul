@@ -147,7 +147,7 @@ export default function TransformsView() {
           )
         }
         samples={TRANSFORMS_HERO_SAMPLES}
-        image={IS_ANDROID ? featureTransformsImg : undefined}
+        image={featureTransformsImg}
       />
 
       {/* Superseded by the FeatureHero banner photo above — kept here,

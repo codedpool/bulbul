@@ -4,7 +4,6 @@
 import { useState } from "react";
 import Combobox from "../components/Combobox.jsx";
 import FeatureHero from "../components/FeatureHero.jsx";
-import { IS_ANDROID } from "../platform.js";
 import featureStyleImg from "../assets/feature-style.png";
 
 const APP_CATEGORY_OPTIONS = [
@@ -113,7 +112,7 @@ export default function StyleView({ config, updateConfig }) {
         dismissKey="bulbul.style.hero.dismissed"
         title={<>One voice, <em>many tones.</em></>}
         blurb="Bulbul detects the app you're dictating into and adjusts the tone to match — formal in email, casual in chat."
-        image={IS_ANDROID ? featureStyleImg : undefined}
+        image={featureStyleImg}
       />
 
       <div className="style-tabs">
