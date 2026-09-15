@@ -96,6 +96,23 @@ export default function TransformsView() {
     await load();
   }
 
+  // Android, editing: replace the whole page with a full-screen editor
+  // instead of the inline card desktop uses. The inline card sits between
+  // the hero and the grid in normal page flow — on a phone, with the
+  // keyboard open, there isn't enough visible height left to reach the
+  // System prompt field or the Save button, and long prompts scroll inside
+  // a cramped box instead of the page itself. A dedicated full-screen view
+  // (same master/detail pattern as Scratchpad's editor) gives the prompt
+  // real room and lets normal page scroll — not a nested scroll box — carry
+  // the focused field into view above the keyboard.
+  if (IS_ANDROID && editing) {
+    return (
+      <div className="page transforms-page">
+        <TransformEditor initial={editing} onSave={saveTransform} onCancel={() => setEditing(null)} />
+      </div>
+    );
+  }
+
   return (
     <div className="page transforms-page">
       <header className="page-header dictionary-header">
@@ -366,8 +383,8 @@ function TransformEditor({ initial, onSave, onCancel }) {
     if (e.key === "Escape") { e.preventDefault(); onCancel(); }
   }
 
-  return (
-    <div className="transform-editor">
+  const fields = (
+    <>
       <div className="snippet-form-row">
         <label>Name</label>
         <input
@@ -376,7 +393,7 @@ function TransformEditor({ initial, onSave, onCancel }) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={onKey}
-          autoFocus
+          autoFocus={!IS_ANDROID}
           spellCheck={false}
         />
       </div>
@@ -394,11 +411,12 @@ function TransformEditor({ initial, onSave, onCancel }) {
       <div className="snippet-form-row">
         <label>System prompt</label>
         <textarea
+          className={IS_ANDROID ? "m-transform-prompt" : undefined}
           placeholder="Tell the LLM how to rewrite the user's text. Be specific. End with 'Return ONLY the rewritten text.'"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={onKey}
-          rows={8}
+          rows={IS_ANDROID ? undefined : 8}
         />
       </div>
       {!IS_ANDROID && (
@@ -407,6 +425,37 @@ function TransformEditor({ initial, onSave, onCancel }) {
           <HotkeyRecorder value={hotkey} onChange={setHotkey} />
         </div>
       )}
+    </>
+  );
+
+  if (IS_ANDROID) {
+    return (
+      <div className="m-transform-editor-view">
+        <div className="m-scratch-editor-head">
+          <button className="m-icon-btn" onClick={onCancel} aria-label="Cancel">
+            <BackArrowIcon />
+          </button>
+          <span className="m-transform-editor-title">
+            {initial.id ? "Edit transform" : "New transform"}
+          </span>
+        </div>
+        <div className="m-transform-editor-body">
+          {fields}
+          {error && <p className="err">{error}</p>}
+        </div>
+        <div className="dict-form-actions m-transform-editor-actions">
+          <button onClick={onCancel}>Cancel</button>
+          <button className="primary" onClick={submit} disabled={!name.trim() || !prompt.trim()}>
+            {initial.id ? "Save" : "Create"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="transform-editor">
+      {fields}
       <div className="dict-form-actions">
         <span className="muted small">Tip: <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to save</span>
         <div className="spacer" />
@@ -581,6 +630,15 @@ function TrashIcon() {
       <path d="M3 6h18" />
       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
       <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
+function BackArrowIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
     </svg>
   );
 }

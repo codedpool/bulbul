@@ -3871,9 +3871,12 @@ html.platform-android .m-tabbar {
   border-top: 1px solid var(--fill);
   padding: 6px 8px;
   /* env(safe-area-inset-bottom) is as unreliable on this WebView as
-     inset-top (see .m-appbar) — 8px alone left a 3-button nav bar
-     overlapping the tab bar. Generous fixed floor, same pattern as top. */
-  padding-bottom: max(44px, calc(env(safe-area-inset-bottom) + 20px));
+     inset-top (see .m-appbar) — RustWebView does no inset handling of its
+     own, so a flat guessed floor was used here, which meant a wasted gap
+     on gesture nav and an overlapping 3-button bar on some devices where
+     it reserves more than the guess. --android-nav-inset is the real
+     per-device value, pushed in by MainActivity.onWebViewCreate. */
+  padding-bottom: calc(var(--android-nav-inset, 24px) + 12px);
 }
 html.platform-android .m-tab {
   flex: 1;
@@ -3946,9 +3949,8 @@ html.platform-android .m-sheet {
   border-radius: 18px 18px 0 0;
   border-top: 1px solid var(--border);
   padding: 8px 14px;
-  /* Same unreliable-inset floor as the tab bar (see .m-tabbar) — 14px
-     wasn't enough to clear a 3-button nav bar. */
-  padding-bottom: max(44px, calc(env(safe-area-inset-bottom) + 20px));
+  /* Real inset, same as .m-tabbar. */
+  padding-bottom: calc(var(--android-nav-inset, 24px) + 12px);
   animation: m-sheet-up 180ms ease-out;
 }
 @keyframes m-sheet-up {
@@ -4044,16 +4046,16 @@ html.platform-android .m-settings-head-spacer { width: 52px; }
 html.platform-android .m-settings-scroll {
   flex: 1;
   overflow-y: auto;
-  /* Same unreliable-inset floor as .m-tabbar — the last row could sit
-     under a 3-button nav bar otherwise. */
-  padding: 4px 16px max(44px, calc(env(safe-area-inset-bottom) + 20px));
+  /* Real inset, same as .m-tabbar — the last row could sit under a
+     3-button nav bar otherwise. */
+  padding: 4px 16px calc(var(--android-nav-inset, 24px) + 12px);
 }
 /* Drill-down list: one tappable row per section. */
 html.platform-android .m-settings-list {
   flex: 1;
   overflow-y: auto;
-  /* Same unreliable-inset floor as .m-tabbar. */
-  padding: 8px 12px max(44px, calc(env(safe-area-inset-bottom) + 20px));
+  /* Real inset, same as .m-tabbar. */
+  padding: 8px 12px calc(var(--android-nav-inset, 24px) + 12px);
 }
 html.platform-android .m-settings-row {
   display: flex;
@@ -4466,6 +4468,39 @@ html.platform-android .m-scratch-title {
 }
 html.platform-android .m-scratch-body { min-height: 52vh; width: 100%; }
 html.platform-android .m-scratch-err { font-size: 12px; }
+
+/* Transform editor: full-screen view instead of desktop's inline card —
+   same master/detail pattern as the scratchpad editor (reuses
+   .m-scratch-editor-head), so the keyboard has room to open without
+   burying the prompt field or the Save button. */
+html.platform-android .m-transform-editor-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  gap: 12px;
+}
+html.platform-android .m-transform-editor-title {
+  flex: 1;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+html.platform-android .m-transform-editor-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+html.platform-android .m-transform-prompt {
+  min-height: 40vh;
+  width: 100%;
+}
+html.platform-android .m-transform-editor-actions {
+  padding-bottom: calc(var(--android-nav-inset, 24px) + 12px);
+}
 
 /* Dictation row copy/delete: desktop reveals these on :hover, which never
    fires on touch — they'd render but stay invisible/untappable on Android
