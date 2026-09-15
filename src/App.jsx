@@ -281,8 +281,20 @@ function App() {
   }
 
   async function updateConfig(next) {
-    await invoke("save_config", { newCfg: next });
+    // Optimistic, same idiom as toggleAutostart below: reflect the change
+    // immediately and revert on failure. Previously this awaited the disk
+    // round-trip before touching state at all, which reads as laggy on
+    // Android where every settings write is a full file-as-IPC round-trip
+    // (e.g. every tap on the Style page).
+    const prev = config;
     setConfig(next);
+    try {
+      await invoke("save_config", { newCfg: next });
+    } catch (e) {
+      setConfig(prev);
+      console.error("save_config failed:", e);
+      throw e;
+    }
   }
 
   async function toggleAutostart(next) {

@@ -402,7 +402,7 @@ pub fn style_modifier(style: &str) -> Option<&'static str> {
             "Style: casual. Use natural capitalization and standard punctuation. Conversational tone, contractions allowed.",
         ),
         "very_casual" => Some(
-            "Style: very casual. Skip sentence-start capitalization where natural. Minimize punctuation (no full stops, fewer commas). Keep it brief and informal — like a quick text.",
+            "Style: very casual. This OVERRIDES the capitalization/punctuation instruction above: skip sentence-start capitalization where natural, and minimize punctuation (no full stops, fewer commas). Keep it brief and informal — like a quick text.",
         ),
         _ => None,
     }
@@ -708,8 +708,11 @@ fn is_supported_chat_model(model: &str) -> bool {
 }
 
 /// One-shot fixups for configs written by earlier builds. Runs on every
-/// load; each rule must be a no-op once applied.
-fn migrate(cfg: Config) -> Config {
+/// load; each rule must be a no-op once applied. pub(crate) so mobile.rs's
+/// `read_config` can apply the same in-memory chat_model self-heal desktop
+/// gets here and the Kotlin bubble gets via BulbulConfig.chatModel() — the
+/// dashboard's Insights/Transforms Groq calls were the one path missing it.
+pub(crate) fn migrate(cfg: Config) -> Config {
     #[allow(unused_mut)]
     let mut cfg = cfg;
     // Linux builds before the port fix shipped the Windows default

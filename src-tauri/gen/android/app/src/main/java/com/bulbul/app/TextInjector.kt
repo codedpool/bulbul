@@ -108,7 +108,13 @@ object TextInjector {
             }
             var ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
             if (!ok) ok = pasteInto(svc, node, text)
-            if (!ok) Log.w(TAG, "SET_TEXT and PASTE both failed")
+            if (!ok) {
+                Log.w(TAG, "SET_TEXT and PASTE both failed")
+            } else {
+                // Fire-and-forget: watch this field for a hand-edit so
+                // Insights/Dictionary can learn from it. See CorrectionWatcher.
+                CorrectionWatcher.watch(svc, combined, BulbulAccessibilityService.targetPackage)
+            }
             ok
         } finally {
             node.recycle()

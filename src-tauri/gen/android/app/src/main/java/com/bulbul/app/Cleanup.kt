@@ -154,7 +154,7 @@ object Cleanup {
     private fun styleModifier(style: String?): String? = when (style) {
         "formal" -> "Style: formal. Use proper capitalization and full punctuation. Use complete sentences, avoid contractions and slang."
         "casual" -> "Style: casual. Use natural capitalization and standard punctuation. Conversational tone, contractions allowed."
-        "very_casual" -> "Style: very casual. Skip sentence-start capitalization where natural. Minimize punctuation (no full stops, fewer commas). Keep it brief and informal — like a quick text."
+        "very_casual" -> "Style: very casual. This OVERRIDES the capitalization/punctuation instruction above: skip sentence-start capitalization where natural, and minimize punctuation (no full stops, fewer commas). Keep it brief and informal — like a quick text."
         else -> null
     }
 
