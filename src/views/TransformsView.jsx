@@ -7,6 +7,7 @@ import FeatureHero from "../components/FeatureHero.jsx";
 import HowToCard from "../components/HowToCard.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { IS_MAC, IS_ANDROID, META_KEY_NAME } from "../platform.js";
+import featureTransformsImg from "../assets/feature-transforms.png";
 
 const TRANSFORMS_HERO_SAMPLES = [
   { trigger: "Polish", expansion: "Fix grammar, tighten flow, keep meaning." },
@@ -129,8 +130,12 @@ export default function TransformsView() {
           )
         }
         samples={TRANSFORMS_HERO_SAMPLES}
+        image={IS_ANDROID ? featureTransformsImg : undefined}
       />
 
+      {/* Superseded by the FeatureHero banner photo above — kept here,
+          not deleted, in case the image treatment doesn't cover this
+          ground well enough and the explicit steps need to come back.
       {IS_ANDROID && (
         <HowToCard title="How transforms work" storageKey="bulbul.transforms.howto">
           <ol className="howto-steps">
@@ -146,6 +151,7 @@ export default function TransformsView() {
           </p>
         </HowToCard>
       )}
+      */}
 
       <BindingFailureBanner
         slotStatuses={slotStatuses}

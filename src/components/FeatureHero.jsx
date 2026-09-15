@@ -18,8 +18,16 @@ import { useState } from "react";
  *                    button that calls `onSampleClick(sample)`. Lets a
  *                    page (e.g. Snippets) wire the examples into "open
  *                    the add-new form pre-filled with this row".
+ * `image`         — optional imported banner photo. When present, the
+ *                    card renders it as a full-bleed background instead
+ *                    of the plain gradient, with title/blurb/samples
+ *                    switching to a light-on-photo color set (forced,
+ *                    not theme-dependent — the banner is a warm photo
+ *                    regardless of light/dark mode) plus a scrim so text
+ *                    stays legible over whatever part of the photo it
+ *                    lands on.
  */
-export default function FeatureHero({ title, samples, blurb, dismissKey, onSampleClick }) {
+export default function FeatureHero({ title, samples, blurb, dismissKey, onSampleClick, image }) {
   const [visible, setVisible] = useState(() => {
     try { return localStorage.getItem(dismissKey) !== "1"; }
     catch { return true; }
@@ -33,7 +41,15 @@ export default function FeatureHero({ title, samples, blurb, dismissKey, onSampl
   }
 
   return (
-    <div className="feature-hero">
+    <div
+      className={`feature-hero${image ? " feature-hero-photo" : ""}`}
+      // The scrim gradients that guarantee text legibility live in CSS
+      // (.feature-hero-photo's background-image), stacked on top of this
+      // photo — passed through as a custom property rather than a plain
+      // inline backgroundImage so the inline style doesn't just replace
+      // the stylesheet's own background-image and silently drop the scrim.
+      style={image ? { "--feature-hero-image": `url(${image})` } : undefined}
+    >
       <button
         className="feature-hero-close"
         onClick={dismiss}

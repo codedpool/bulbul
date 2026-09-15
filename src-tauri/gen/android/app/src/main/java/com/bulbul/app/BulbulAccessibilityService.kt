@@ -12,10 +12,14 @@
 //      foreground service can ask it to inject without needing its
 //      own accessibility context.
 //
-// We deliberately do NOT subscribe to text-changed events — they fire
-// on every keystroke in every app and burn battery for no benefit.
-// Focus + window-state + windows-changed are enough to know the
-// bubble-visible state at any moment.
+// text-changed events are NOT in the static config (see
+// accessibility_service_config.xml) — always-on, they'd fire on every
+// keystroke in every app and burn battery for no benefit; focus +
+// window-state + windows-changed are enough to know the bubble-visible
+// state at any moment. CorrectionWatcher turns them on dynamically
+// (applyTextWatch/setTextWatchActive) for just its own ~12s
+// post-injection window, so the cost is paid only right after a
+// dictation, never continuously.
 
 package com.bulbul.app
 
@@ -116,6 +120,42 @@ class BulbulAccessibilityService : AccessibilityService() {
                 }
                 reevaluateBubble()
             }
+            // Only delivered while CorrectionWatcher has turned it on (see
+            // applyTextWatch below) — NOT part of the static config, so this
+            // costs nothing the rest of the time. Forwarded so a correction
+            // that's typed and immediately submitted still gets caught: the
+            // edit fires its own event before the submit's clear does,
+            // where an 800ms poll could land on either side and miss it.
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                try {
+                    CorrectionWatcher.onTextChanged(event.packageName?.toString(), event.source)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "forwarding text-changed event failed", t)
+                } finally {
+                    event.source?.recycle()
+                }
+            }
+        }
+    }
+
+    /// Adds/removes TYPE_VIEW_TEXT_CHANGED from the live event mask.
+    /// Deliberately NOT in accessibility_service_config.xml (see the header
+    /// comment above) — an always-on subscription fires on every keystroke
+    /// in every app. CorrectionWatcher calls this to bracket just its own
+    /// ~12s post-injection window, so the cost is paid only right after a
+    /// dictation, not continuously. setServiceInfo is safe to call outside
+    /// the static config; it's the documented way to change the live mask.
+    private fun applyTextWatch(active: Boolean) {
+        try {
+            val info = serviceInfo ?: return
+            info.eventTypes = if (active) {
+                info.eventTypes or AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
+            } else {
+                info.eventTypes and AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED.inv()
+            }
+            serviceInfo = info
+        } catch (t: Throwable) {
+            Log.w(TAG, "toggling text-change watch failed", t)
         }
     }
 
@@ -242,6 +282,13 @@ class BulbulAccessibilityService : AccessibilityService() {
         /// Live instance, so the foreground service can notify us of a snooze.
         @Volatile
         private var instance: BulbulAccessibilityService? = null
+
+        /// CorrectionWatcher → a11y service hook: bracket the live
+        /// TYPE_VIEW_TEXT_CHANGED subscription around a single watch's
+        /// lifetime. See applyTextWatch.
+        fun setTextWatchActive(active: Boolean) {
+            instance?.applyTextWatch(active)
+        }
 
         /// Foreground service → a11y service hook: reset our bubble state when
         /// the user snoozes, so it re-shows cleanly once the snooze expires.

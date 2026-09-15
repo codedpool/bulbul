@@ -8,6 +8,7 @@ import FeatureHero from "../components/FeatureHero.jsx";
 import HowToCard from "../components/HowToCard.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { OS_NOUN, IS_ANDROID } from "../platform.js";
+import featureHomeImg from "../assets/feature-home.png";
 
 const PAGE_SIZE = 50;
 
@@ -98,8 +99,12 @@ export default function HomeView({ displayName }) {
             ? "Tap the floating bubble in any app, talk, and Bulbul types the cleaned-up text right where your cursor is."
             : `Hold your hotkey anywhere on ${OS_NOUN}, talk, release. Bulbul transcribes, cleans up, and pastes the result right at your cursor.`
         }
+        image={IS_ANDROID ? featureHomeImg : undefined}
       />
 
+      {/* Superseded by the FeatureHero banner photo above — kept here,
+          not deleted, in case the image treatment doesn't cover this
+          ground well enough and the explicit steps need to come back.
       {IS_ANDROID && (
         <HowToCard title="How to dictate" storageKey="bulbul.home.howto">
           <ol className="howto-steps">
@@ -112,6 +117,7 @@ export default function HomeView({ displayName }) {
           </p>
         </HowToCard>
       )}
+      */}
 
       <section className="stat-cards">
         <StatCard
@@ -222,17 +228,15 @@ function DictationRow({ d, onRequestDelete }) {
         >
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
-        {!IS_ANDROID && (
-          <button
-            type="button"
-            className="dictation-delete"
-            onClick={() => onRequestDelete(d.id)}
-            aria-label="Delete"
-            title="Delete this dictation"
-          >
-            <TrashIcon />
-          </button>
-        )}
+        <button
+          type="button"
+          className="dictation-delete"
+          onClick={() => onRequestDelete(d.id)}
+          aria-label="Delete"
+          title="Delete this dictation"
+        >
+          <TrashIcon />
+        </button>
       </div>
     </div>
   );

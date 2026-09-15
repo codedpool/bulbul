@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { IS_ANDROID } from "../platform.js";
+import FeatureHero from "../components/FeatureHero.jsx";
+import featureInsightsImg from "../assets/feature-insights.png";
 
 export default function InsightsView() {
   const [tab, setTab] = useState("usage");
@@ -16,27 +18,35 @@ export default function InsightsView() {
         <p className="muted small">
           See how you actually use Bulbul — pace, fixes, where you spend your words, and what your dictation voice looks like over time.
         </p>
-        <div className="tabs">
-          <button
-            className={`tab ${tab === "usage" ? "active" : ""}`}
-            onClick={() => setTab("usage")}
-          >
-            Your Usage
-          </button>
-          <button
-            className={`tab ${tab === "voice" ? "active" : ""}`}
-            onClick={() => setTab("voice")}
-          >
-            Your Voice
-          </button>
-          <button
-            className={`tab ${tab === "corrections" ? "active" : ""}`}
-            onClick={() => setTab("corrections")}
-          >
-            Corrections
-          </button>
-        </div>
       </header>
+
+      <FeatureHero
+        dismissKey="bulbul.insights.hero.dismissed"
+        title={<>Your dictation habit, <em>mapped over time.</em></>}
+        blurb="Streaks, word counts, and how your voice changes app to app — all from dictations you've already made."
+        image={IS_ANDROID ? featureInsightsImg : undefined}
+      />
+
+      <div className="tabs">
+        <button
+          className={`tab ${tab === "usage" ? "active" : ""}`}
+          onClick={() => setTab("usage")}
+        >
+          Your Usage
+        </button>
+        <button
+          className={`tab ${tab === "voice" ? "active" : ""}`}
+          onClick={() => setTab("voice")}
+        >
+          Your Voice
+        </button>
+        <button
+          className={`tab ${tab === "corrections" ? "active" : ""}`}
+          onClick={() => setTab("corrections")}
+        >
+          Corrections
+        </button>
+      </div>
 
       {tab === "usage" && <UsageTab />}
       {tab === "voice" && <VoiceTab />}
