@@ -79,8 +79,11 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 - **Bullet-list detection**: enumerate items aloud, get a markdown bullet list out.
 - **Dictionary**: word substitutions (e.g. "groq" → "Groq") that fire after cleanup.
 - **Snippets**: triggers that expand (e.g. "my email" → real email address).
-- **Transforms**: per-text rewrites — Polish, Make Formal, Translate, Bulletize, or your own custom prompts. Bind to `Alt+1` through `Alt+9`.
-- **Insights**: dictation history, voice profile, peak times, most-used words.
+- **Transforms**: per-text rewrites — Polish, Make Formal, Translate, Bulletize, or your own custom prompts. Bind to `Alt+1` through `Alt+9` by default, or record your own custom combo per transform.
+- **Tap to talk**: an alternative to holding the hotkey — one press starts recording, the next stops it.
+- **Mouse mode**: bind a mouse button (middle-click by default) to start and stop dictation, independent of any keyboard hotkey.
+- **Pill position** *(desktop)*: pin the floating overlay to the bottom-left, bottom-center, or bottom-right of the screen.
+- **Insights**: dictation history, voice profile, peak times, most-used words, and the corrections you make by hand after dictating — Bulbul learns from them and suggests Dictionary entries.
 - **Scratchpad**: a standalone notes window with transforms applied to selections.
 - **Auto-update**: signed releases. The app silently downloads new versions in the background and applies on next quit.
 
@@ -158,7 +161,7 @@ Enable **USB debugging** on the phone and connect it; run `adb devices` to confi
 After installing:
 
 - A floating **bubble** rides above your keyboard — **hold or tap it** to dictate into any app.
-- Grant **Microphone**, **Display over other apps** (the overlay bubble), and Bulbul's **Accessibility service** so it can type into other apps — the app walks you through these on first run. With methods 2 and 3 (sideloaded), Android may block Accessibility until you open **App info → ⋮ → Allow restricted settings**; the ADB method avoids this.
+- A guided first-run setup walks you through granting **Microphone**, **Display over other apps** (the overlay bubble), and Bulbul's **Accessibility service**, with a live preview of each and a "try dictating" rehearsal before you land on the dashboard. With methods 2 and 3 (sideloaded), Android may block Accessibility until you open **App info → ⋮ → Allow restricted settings**; the ADB method avoids this.
 - The transcript is injected straight into the focused text field — no clipboard round-trip, no paste toast.
 
 ---
@@ -209,8 +212,6 @@ If you forked Bulbul and ship your own builds, generate your own key with `npx t
 
 ## Roadmap
 
-- [ ] **Click-to-talk overlay** — mouse-driven entry point (X / waveform / ✓) alongside the hotkey
-- [ ] **Editable transform-slot hotkeys** — rebind the `Alt`/`⌘`+`1..9` transform slots
 - [ ] **Per-app dictionary scoping** — substitutions that only fire in certain apps
 - [ ] **Wayland app-detection** — per-app style on GNOME/wlroots (X11 already works)
 
