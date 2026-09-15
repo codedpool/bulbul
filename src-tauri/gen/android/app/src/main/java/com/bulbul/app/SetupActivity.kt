@@ -140,14 +140,6 @@ class SetupActivity : Activity() {
                 onAction = ::openAccessibilitySettings,
                 isGranted = ::accessibilityGranted,
                 imageRes = R.drawable.onboard_accessibility,
-                // The "restricted settings" block this card explains only
-                // ever hits sideloaded installs — a real Play install never
-                // trips it — so only show it when we're NOT running under
-                // Play. Otherwise Play users see irrelevant sideload
-                // troubleshooting on a build that will never need it.
-                extra = if (!installedViaPlayStore()) {
-                    { buildRestrictedHelpCard() }
-                } else null,
             ),
         )
     }
@@ -225,24 +217,6 @@ class SetupActivity : Activity() {
     }
 
     // ---------------- Permission state ----------------
-
-    /// Whether Bulbul was installed via the Play Store, vs. a sideloaded
-    /// APK (GitHub direct download, adb install, etc.). Used to hide
-    /// sideload-only troubleshooting (buildRestrictedHelpCard) from Play
-    /// users, for whom it's never relevant.
-    private fun installedViaPlayStore(): Boolean {
-        val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                packageManager.getInstallSourceInfo(packageName).installingPackageName
-            } catch (t: Throwable) {
-                null
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.getInstallerPackageName(packageName)
-        }
-        return installer == "com.android.vending"
-    }
 
     private fun micGranted(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
@@ -643,46 +617,6 @@ class SetupActivity : Activity() {
                     }.start()
                 }, 500)
             }.start()
-    }
-
-    /// Accent-tinted note explaining the Android 13+ "restricted settings"
-    /// block on the Accessibility toggle for sideloaded installs, and the
-    /// two ways past it. Brief and step-numbered so a stuck user can act
-    /// without leaving the screen to search for an answer.
-    private fun buildRestrictedHelpCard(): View {
-        val tint = 0xFFECF6F4.toInt()
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = GradientDrawable().apply {
-                setColor(tint)
-                cornerRadius = dp(14).toFloat()
-                setStroke(dp(1), accentColor)
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(16) }
-        }
-        card.addView(TextView(this).apply {
-            text = "Accessibility greyed out or \"restricted\"?"
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(headingColor)
-            setPadding(0, 0, 0, dp(6))
-        })
-        card.addView(TextView(this).apply {
-            text = "Android blocks Accessibility for sideloaded apps.\n\n" +
-                "Easiest way: install Bulbul with \"Split APKs Installer\" from the Play Store (you'll watch one short ad) — then you can allow every permission with no blocks.\n\n" +
-                "Or do it once manually:\n" +
-                "1.  Open App info → tap ⋮ (top-right) → Allow restricted settings.\n" +
-                "2.  Come back here and tap \"Open Accessibility settings\" again.\n" +
-                "3.  Allow Bulbul, then return to this screen."
-            textSize = 13f
-            setTextColor(bodyColor)
-            setLineSpacing(dp(2).toFloat(), 1f)
-        })
-        return card
     }
 
     // ---------------- Grant actions ----------------
