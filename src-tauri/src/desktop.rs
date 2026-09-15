@@ -623,6 +623,7 @@ fn spawn_hover_watcher(app: AppHandle) {
 
     thread::spawn(move || {
         let mut last_hovered = false;
+        let mut last_drag_zone: Option<&'static str> = None;
         loop {
             thread::sleep(Duration::from_millis(50));
             let Some(overlay) = app.get_webview_window("overlay") else {
@@ -651,6 +652,39 @@ fn spawn_hover_watcher(app: AppHandle) {
             let y0 = pos.y as f64 / scale;
             let w = size.width as f64 / scale;
             let h = size.height as f64 / scale;
+
+            // While a drag-to-reposition gesture is in progress (see
+            // start_overlay_drag/end_overlay_drag), this loop drives the
+            // window itself instead of its normal hover/click-through
+            // logic — mirrors the Windows implementation above, reusing
+            // this same 50ms CGEvent poll. This block was missing entirely
+            // until a real Mac test (2026-09-15) found dragging silently
+            // did nothing: start_overlay_drag/end_overlay_drag are both
+            // already platform-generic, but nothing on macOS ever read
+            // `overlay_drag` to actually move the window mid-gesture.
+            let drag_offset = app.state::<AppState>().overlay_drag.lock().clone();
+            if let Some((offset_x, offset_y)) = drag_offset {
+                let new_x = cursor_x - offset_x;
+                let new_y = cursor_y - offset_y;
+                let _ = overlay.set_position(tauri::LogicalPosition::new(new_x, new_y));
+
+                if let Ok(Some(monitor)) = overlay.primary_monitor() {
+                    let mscale = monitor.scale_factor();
+                    let msize = monitor.size();
+                    let logical_mw = msize.width as f64 / mscale;
+                    let logical_mh = msize.height as f64 / mscale;
+                    let cx = new_x + w / 2.0;
+                    let cy = new_y + h / 2.0;
+                    let zone = nearest_overlay_zone(cx, cy, logical_mw, logical_mh);
+                    if last_drag_zone != Some(zone) {
+                        last_drag_zone = Some(zone);
+                        let _ = app.emit_to("overlay", "overlay-drag-zone", zone);
+                    }
+                }
+                continue;
+            }
+            last_drag_zone = None;
+
             let cx = x0 + w / 2.0;
             let cy = y0 + h - 24.0;
 

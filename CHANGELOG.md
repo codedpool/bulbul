@@ -43,6 +43,7 @@ A stability and Android-polish release, plus a permanent fix for how Bulbul keep
 - **Cleaner Android taps** — removed the gray highlight box that flashed on every tap, most visible on the bottom navigation, replacing it with a proper pressed state.
 - **Onboarding and the dashboard no longer sit under the 3-button navigation bar** on Android devices that use it instead of gestures.
 - **Bulbul now shows up under the right category** in Android's app drawer and Settings, instead of "Others."
+- **Android's "Check for updates" now opens the Play Store** instead of checking GitHub releases.
 - **"Hide tray icon" actually stays hidden** across a restart on Windows.
 - **The overlay pill is lighter on system resources while idle** — it no longer keeps redrawing itself continuously, and is restyled as a slimmer, quieter capsule.
 
