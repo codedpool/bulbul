@@ -99,7 +99,7 @@ export default function HomeView({ displayName }) {
             ? "Tap the floating bubble in any app, talk, and Bulbul types the cleaned-up text right where your cursor is."
             : `Hold your hotkey anywhere on ${OS_NOUN}, talk, release. Bulbul transcribes, cleans up, and pastes the result right at your cursor.`
         }
-        image={IS_ANDROID ? featureHomeImg : undefined}
+        image={featureHomeImg}
       />
 
       {/* Superseded by the FeatureHero banner photo above — kept here,

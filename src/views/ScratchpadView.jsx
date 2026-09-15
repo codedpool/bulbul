@@ -452,7 +452,7 @@ export default function ScratchpadView() {
         dismissKey="bulbul.scratchpad.hero.dismissed"
         title={<>Quick thoughts you <em>don't want to lose.</em></>}
         blurb="Dictate or type freely. Notes auto-save as you go — no save buttons, no folders, just a place for the things that would otherwise live in your head."
-        image={IS_ANDROID ? featureScratchpadImg : undefined}
+        image={featureScratchpadImg}
       />
 
       <div className="scratchpad-layout">

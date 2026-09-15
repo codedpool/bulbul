@@ -24,7 +24,7 @@ export default function InsightsView() {
         dismissKey="bulbul.insights.hero.dismissed"
         title={<>Your dictation habit, <em>mapped over time.</em></>}
         blurb="Streaks, word counts, and how your voice changes app to app — all from dictations you've already made."
-        image={IS_ANDROID ? featureInsightsImg : undefined}
+        image={featureInsightsImg}
       />
 
       <div className="tabs">
