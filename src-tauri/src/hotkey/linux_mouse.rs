@@ -28,9 +28,10 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
+use std::time::Duration;
 
 use evdev::uinput::{VirtualDevice, VirtualDeviceBuilder};
 use evdev::{Device, EventType, InputEvent, KeyCode};
@@ -38,6 +39,11 @@ use evdev::{Device, EventType, InputEvent, KeyCode};
 use super::{HotkeyEvent, MouseButton};
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+// Grace period before the FIRST grab attempt each process lifetime (see
+// `register` below). Not reapplied on later re-registrations.
+const FIRST_GRAB_GRACE: Duration = Duration::from_secs(3);
+static FIRST_REGISTER: AtomicBool = AtomicBool::new(true);
 
 // Some mice report BTN_SIDE/BTN_EXTRA for the two side buttons, others
 // report BTN_BACK/BTN_FORWARD for the same physical buttons — kernel/
@@ -101,7 +107,40 @@ fn build_virtual_mirror(device: &Device) -> std::io::Result<VirtualDevice> {
 /// Start watching every readable mouse. Replaces any previous
 /// registration. Non-fatal if nothing's readable yet — the caller
 /// already checked `available()`.
+///
+/// The very first call each process lifetime is deferred by
+/// `FIRST_GRAB_GRACE` instead of grabbing immediately: this fires from
+/// `setup()` on every launch, including an autostart-at-login one, and an
+/// immediate `EVIOCGRAB` there can race the compositor/session manager
+/// still enumerating input devices — the physical mouse gets grabbed but
+/// the virtual mirror that's supposed to replace it never gets attached,
+/// leaving the cursor dead until Bulbul is killed (confirmed live: a user
+/// restart hung with a dead mouse but a responsive keyboard on every
+/// distro tested, right after a fresh install — autostart + Mouse mode
+/// both default on). Later re-registrations (e.g. toggling Mouse mode in
+/// Settings, mid-session) stay immediate — the session is long since
+/// settled by then, and a delay there would just feel unresponsive.
 pub fn register(tx: Sender<HotkeyEvent>) {
+    if FIRST_REGISTER.swap(false, Ordering::SeqCst) {
+        let seen_generation = GENERATION.load(Ordering::SeqCst);
+        thread::Builder::new()
+            .name("bulbul-mouse-mode-grace".into())
+            .spawn(move || {
+                thread::sleep(FIRST_GRAB_GRACE);
+                // Skip if superseded meanwhile (stop() or another
+                // register() call already moved the generation on —
+                // e.g. the user flipped Mouse mode off during the wait).
+                if GENERATION.load(Ordering::SeqCst) == seen_generation {
+                    register_now(tx);
+                }
+            })
+            .ok();
+        return;
+    }
+    register_now(tx);
+}
+
+fn register_now(tx: Sender<HotkeyEvent>) {
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let devices = mice();
     if devices.is_empty() {
