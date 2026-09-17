@@ -277,6 +277,23 @@ pub fn spawn_mac_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
     macos::spawn_mouse_mode_watcher(tx);
 }
 
+/// Whether Mouse mode's platform hook is actually live, so the UI can say
+/// so instead of showing an on-looking toggle that does nothing. Only
+/// macOS can answer false: its event tap needs a permission the rest of
+/// the app never asks for, and without it the tap simply won't install
+/// (see `macos::spawn_mouse_mode_watcher`). Windows' and Linux's hooks
+/// need no permission of their own, so they're reported live.
+pub fn mouse_mode_tap_ok() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::mouse_tap_installed()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 /// Parsed hotkey: required modifier state + non-modifier key.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ParsedHotkey {

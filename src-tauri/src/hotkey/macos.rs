@@ -35,6 +35,22 @@ const RELEASE_POLL_MS: u64 = 25;
 const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 80;
 /// Safety net for the release poller. Mirrors the Windows ceiling.
 const RELEASE_POLL_TIMEOUT_SECS: u64 = 60;
+/// How long to wait before re-attempting a failed mouse-mode event tap.
+/// `CGEventTapCreate` is a cheap syscall, so polling this slowly costs
+/// nothing and buys recovery without a relaunch (see
+/// `spawn_mouse_mode_watcher`).
+const MOUSE_TAP_RETRY: Duration = Duration::from_secs(5);
+
+/// Whether the mouse-mode event tap is currently installed. False means
+/// Mouse mode is silently inert — the Settings UI reads this (via
+/// `super::mouse_mode_tap_ok`) so a missing macOS permission surfaces
+/// instead of looking like a broken feature.
+static MOUSE_TAP_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// True once the mouse-mode event tap has been installed successfully.
+pub fn mouse_tap_installed() -> bool {
+    MOUSE_TAP_INSTALLED.load(Ordering::SeqCst)
+}
 
 // CGEventSourceKeyState isn't bound by core-graphics' Rust crate. Same
 // declaration as in inject/macos.rs; duplicated rather than shared since
@@ -278,9 +294,17 @@ fn mac_button_for_number(n: i64) -> Option<super::MouseButton> {
 /// tap under load (rare — happens if a callback runs too long; ours just
 /// checks a couple of atomics and returns), there's no watchdog to
 /// re-enable it, unlike the Windows keyboard hook's 5s re-assert timer.
-/// Falls back to doing nothing (not to un-suppressing) if CGEventTap
-/// installation itself fails (e.g. Accessibility not yet granted) —
-/// logged, not silently swallowed.
+///
+/// **Retries rather than giving up.** `CGEventTapCreate` returns null
+/// when the process isn't permitted to tap events, which is the one
+/// macOS permission Mouse mode needs and nothing else in the app does
+/// (the keyboard paths poll `CGEventSourceKeyState` and the overlay
+/// polls `CGEventGetLocation`; neither is permission-gated). Retrying
+/// the tap itself — rather than polling `AXIsProcessTrusted`, which
+/// macOS caches at launch and can report false for a process's whole
+/// lifetime even after the user grants the permission — tests the real
+/// capability, so Mouse mode starts working as soon as the grant lands
+/// without needing a relaunch.
 pub fn spawn_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
     thread::spawn(move || {
         use core_foundation::runloop::CFRunLoop;
@@ -289,32 +313,46 @@ pub fn spawn_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
             CallbackResult, EventField,
         };
 
-        let result = CGEventTap::with_enabled(
-            CGEventTapLocation::Session,
-            CGEventTapPlacement::HeadInsertEventTap,
-            CGEventTapOptions::Default,
-            vec![CGEventType::OtherMouseDown],
-            move |_proxy, _event_type, event| {
-                let n = event.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
-                if let Some(btn) = mac_button_for_number(n) {
-                    if super::should_handle_mouse_click(btn) {
-                        super::route_mouse_click(&tx);
-                        return CallbackResult::Drop;
+        let mut reported = false;
+        loop {
+            let tx = tx.clone();
+            let result = CGEventTap::with_enabled(
+                CGEventTapLocation::Session,
+                CGEventTapPlacement::HeadInsertEventTap,
+                CGEventTapOptions::Default,
+                vec![CGEventType::OtherMouseDown],
+                move |_proxy, _event_type, event| {
+                    let n = event.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
+                    if let Some(btn) = mac_button_for_number(n) {
+                        if super::should_handle_mouse_click(btn) {
+                            super::route_mouse_click(&tx);
+                            return CallbackResult::Drop;
+                        }
                     }
-                }
-                CallbackResult::Keep
-            },
-            || {
-                tracing::info!("Mac mouse-mode CGEventTap installed");
-                CFRunLoop::run_current();
-            },
-        );
-        if result.is_err() {
-            tracing::error!(
-                "Mac mouse-mode: CGEventTap install failed — Accessibility permission likely \
-                 not granted yet. Mouse mode has no effect until Bulbul is re-launched after \
-                 granting it."
+                    CallbackResult::Keep
+                },
+                || {
+                    tracing::info!("Mac mouse-mode CGEventTap installed");
+                    MOUSE_TAP_INSTALLED.store(true, Ordering::SeqCst);
+                    // Blocks for this thread's lifetime while the tap is live.
+                    CFRunLoop::run_current();
+                },
             );
+            // The tap is torn down when `with_enabled` returns either way, so
+            // whichever branch we're in, Mouse mode is inert until we succeed
+            // on a later pass.
+            MOUSE_TAP_INSTALLED.store(false, Ordering::SeqCst);
+            if result.is_err() && !reported {
+                reported = true;
+                tracing::error!(
+                    "Mac mouse-mode: CGEventTap install failed — macOS is refusing to let Bulbul \
+                     tap mouse events. Grant Bulbul permission under System Settings > Privacy & \
+                     Security (Accessibility, and Input Monitoring if listed), then it will pick \
+                     itself up within a few seconds; no relaunch needed. Every other feature is \
+                     unaffected — this permission is only used by Mouse mode. Retrying quietly."
+                );
+            }
+            thread::sleep(MOUSE_TAP_RETRY);
         }
     });
 }
