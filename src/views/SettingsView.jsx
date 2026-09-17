@@ -638,6 +638,31 @@ function PaneHotkeys({
     clearRecordingError?.();
     setRecordingHotkeyFor(null);
   };
+  // macOS only: Mouse mode's event tap needs a system permission nothing
+  // else in Bulbul asks for (the hotkeys poll key state, the overlay polls
+  // the cursor — neither is gated). Without it the tap never installs and
+  // Mouse mode is silently inert while its toggle still reads "on". Poll
+  // on roughly the same cadence the backend retries the tap, so this
+  // clears itself once the grant lands instead of going stale until
+  // Settings is reopened.
+  const [mouseModeOk, setMouseModeOk] = useState(true);
+  useEffect(() => {
+    if (!IS_MAC) return;
+    let active = true;
+    const check = () => {
+      invoke("mouse_mode_available")
+        .then((ok) => {
+          if (active) setMouseModeOk(ok);
+        })
+        .catch(() => {});
+    };
+    check();
+    const id = setInterval(check, 4000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
   return (
     <>
       <Row
@@ -669,14 +694,41 @@ function PaneHotkeys({
       <p className="muted small settings-note">
         Transform shortcuts ({IS_MAC ? <><kbd>⌘1</kbd>…<kbd>⌘6</kbd></> : <><kbd>Alt+1</kbd>…<kbd>Alt+6</kbd></>}) for rewriting selected text live on the Transforms page.
       </p>
+      {/* `stack` for the same reason the two hotkey rows above use it: this
+          control can grow a validation message under the button, and the
+          side-by-side layout gives the control column `flex-shrink: 0` while
+          the title/hint column is `flex: 1; min-width: 0`. An unconstrained
+          error string then wins the width fight outright and crushes the hint
+          down toward zero, wrapping it one word per line. Stacked, there's no
+          competition — hint and control each get the full row. */}
       <Row
         title="Mouse button"
         hint="Which button triggers Mouse mode (the sidebar toggle) — click to start dictating, click again to stop."
+        stack
       >
         <MouseButtonRecorder
           value={config.mouse_button || "middle"}
           onChange={(v) => updateConfig({ ...config, mouse_button: v })}
         />
+        {!mouseModeOk && config.mouse_mode && (
+          <p className="err small" role="alert">
+            macOS is blocking Mouse mode — it needs permission to watch mouse
+            clicks.{" "}
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => {
+                invoke("open_mac_settings_pane", { pane: "accessibility" }).catch(() =>
+                  invoke("open_mac_settings_pane", { pane: "privacy" }).catch(() => {}),
+                );
+              }}
+            >
+              Open System Settings
+            </button>{" "}
+            and add Bulbul under Accessibility (and Input Monitoring, if listed).
+            It starts working within a few seconds — no restart needed.
+          </p>
+        )}
       </Row>
     </>
   );

@@ -685,8 +685,23 @@ fn spawn_hover_watcher(app: AppHandle) {
             }
             last_drag_zone = None;
 
-            let cx = x0 + w / 2.0;
-            let cy = y0 + h - 24.0;
+            // The resting pill's hotspot depends on the current dock, and
+            // these numbers must match the Windows watcher above exactly:
+            // bottom mode centers the pill horizontally near the window's
+            // bottom edge, side-dock mode centers it vertically and flushes it
+            // to whichever edge is anchored to the screen. This branch was
+            // missing here until a real Mac test (2026-09-18) found left/right
+            // docks never expanding on hover — the bottom-center formula put
+            // the hotspot in the empty bottom-middle of the 260x300 side-dock
+            // window, nowhere near the 9x40 pill flushed to its edge. Second
+            // time these two watchers have drifted (the drag-follow block
+            // above was the first) — keep them in lockstep.
+            let anchor = app.state::<AppState>().config.lock().overlay_position.clone();
+            let (cx, cy) = match anchor.as_str() {
+                "left" => (x0 + 20.0, y0 + h / 2.0),
+                "right" => (x0 + w - 20.0, y0 + h / 2.0),
+                _ => (x0 + w / 2.0, y0 + h - 24.0),
+            };
 
             let entry_w = 100.0;
             let entry_h = 40.0;
@@ -2168,6 +2183,15 @@ fn prime_accessibility_mac() -> Result<(), String> {
     Ok(())
 }
 
+/// Whether Mouse mode's platform hook is actually live. Settings polls
+/// this so a macOS permission wall shows up as a warning next to the
+/// Mouse button row, rather than leaving an enabled-looking toggle that
+/// silently does nothing. Always true off macOS.
+#[tauri::command]
+fn mouse_mode_available() -> bool {
+    hotkey::mouse_mode_tap_ok()
+}
+
 /// Restart Bulbul cleanly. Used by the onboarding wizard's
 /// Accessibility card on Mac because macOS establishes a process's
 /// TCC trust state at launch — if Bulbul started while
@@ -2437,10 +2461,11 @@ pub fn run() {
     // than folded into the above.
     #[cfg(target_os = "windows")]
     mouse_hook::install(hotkey_tx.clone());
-    // Mouse mode on Mac: observe-only polling watcher (see
-    // hotkey::macos::spawn_mouse_mode_watcher for why it isn't a real
-    // CGEventTap yet). Spawned once at boot — mouse mode has no
-    // per-hotkey state to re-parse on settings changes.
+    // Mouse mode on Mac: a real CGEventTap that genuinely suppresses the
+    // configured button, same as the Windows hook above. Spawned once at
+    // boot — mouse mode has no per-hotkey state to re-parse on settings
+    // changes. It retries internally, since its event tap is the one thing
+    // in the app that needs a macOS permission of its own.
     #[cfg(target_os = "macos")]
     hotkey::spawn_mac_mouse_mode_watcher(hotkey_tx.clone());
 
@@ -2497,6 +2522,7 @@ pub fn run() {
             open_mac_settings_pane,
             relaunch_app,
             reset_accessibility_mac,
+            mouse_mode_available,
             get_config,
             save_config,
             validate_api_key,
