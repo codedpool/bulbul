@@ -9,10 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import bulbulMark from "../assets/bulbul-mark.png";
 import onboardGroq from "../assets/onboard-groq.png";
 import onboardLanguage from "../assets/onboard-language.png";
-import onboardHero from "../assets/onboard-hero.png";
-import onboardMic from "../assets/onboard-mic.png";
-import onboardOverlay from "../assets/onboard-overlay.png";
-import onboardAccessibility from "../assets/onboard-accessibility.png";
+import recapAssets from "@recap-assets";
 import { applyTheme } from "../theme.js";
 import { IS_ANDROID, IS_LINUX, IS_MAC, IS_WINDOWS, META_KEY_NAME } from "../platform.js";
 import { useInPageChordFallback } from "../inPageHotkey.js";
@@ -345,14 +342,14 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
         )}
         {currentStepName === "heroRecap" && (
           <StepRecap
-            image={onboardHero}
+            image={recapAssets?.hero}
             title="Bulbul is faster than typing"
             onNext={goNext}
           />
         )}
         {currentStepName === "micRecap" && (
           <StepRecap
-            image={onboardMic}
+            image={recapAssets?.mic}
             title="Microphone"
             blurb="Already allowed — this is what that screen looked like."
             onBack={goBack}
@@ -361,7 +358,7 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
         )}
         {currentStepName === "overlayRecap" && (
           <StepRecap
-            image={onboardOverlay}
+            image={recapAssets?.overlay}
             title="Display over other apps"
             blurb="Already allowed — lets the floating bubble appear above your keyboard in any app."
             onBack={goBack}
@@ -370,7 +367,7 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
         )}
         {currentStepName === "accessibilityRecap" && (
           <StepRecap
-            image={onboardAccessibility}
+            image={recapAssets?.accessibility}
             title="Accessibility"
             blurb="Already turned on — lets Bulbul paste cleaned-up transcripts into any text field."
             onBack={goBack}
