@@ -143,9 +143,11 @@ function androidStepSequence(config) {
   return [...recap, "name", "apiKey", "language", "overlayAdjuster", "dictateTest", "done"];
 }
 
-export default function OnboardingWizard({ config, updateConfig, onComplete }) {
+export default function OnboardingWizard({ config, updateConfig, onComplete, recovery = false, onRecovered }) {
   const androidSequence = androidStepSequence(config);
-  const STEP_SEQUENCE = androidSequence
+  const STEP_SEQUENCE = recovery
+    ? ["permissions"]
+    : androidSequence
     ?? (IS_MAC
       ? ["welcome", "permissions", "apiKey", "language", "hotkey", "mouseMode", "done"]
       : ["welcome", "apiKey", "language", "hotkey", "mouseMode", "done"]);
@@ -338,7 +340,11 @@ export default function OnboardingWizard({ config, updateConfig, onComplete }) {
           />
         )}
         {currentStepName === "permissions" && (
-          <StepPermissions onBack={goBack} onNext={goNext} />
+          <StepPermissions
+            onBack={recovery ? undefined : goBack}
+            onNext={recovery ? onRecovered : goNext}
+            recovery={recovery}
+          />
         )}
         {currentStepName === "heroRecap" && (
           <StepRecap
@@ -614,7 +620,7 @@ function StepRecap({ image, title, blurb, onBack, onNext }) {
 //   - Mic: AVCaptureDevice.authorizationStatusForMediaType(.audio)
 // Continue unlocks the moment both flip to granted; no user
 // confirmation step needed.
-function StepPermissions({ onBack, onNext }) {
+function StepPermissions({ onBack, onNext, recovery = false }) {
   const [axGranted, setAxGranted] = useState(false);
   const [micStatus, setMicStatus] = useState("not_determined");
   const micGranted = micStatus === "granted";
@@ -624,7 +630,7 @@ function StepPermissions({ onBack, onNext }) {
   // Persisted in localStorage so it survives the relaunch; cleared once AX
   // finally reads granted.
   const [relaunchTried, setRelaunchTried] = useState(
-    () => localStorage.getItem("bulbul_ax_relaunched") === "1",
+    () => recovery || localStorage.getItem("bulbul_ax_relaunched") === "1",
   );
 
   useEffect(() => {
@@ -753,9 +759,11 @@ function StepPermissions({ onBack, onNext }) {
   return (
     <div className="onb-page-inner">
       <header className="onb-step-head">
-        <h2>Grant macOS permissions</h2>
+        <h2>{recovery ? "Refresh macOS Accessibility" : "Grant macOS permissions"}</h2>
         <p className="onb-sub">
-          Bulbul needs two macOS permissions to capture audio and inject text into other apps. Both grant via System Settings → Privacy &amp; Security.
+          {recovery
+            ? "Bulbul cannot use Accessibility in this version, even if macOS still shows it as enabled after an update. Refresh the permission so Bulbul can type into other apps again."
+            : "Bulbul needs two macOS permissions to capture audio and inject text into other apps. Both grant via System Settings → Privacy &amp; Security."}
         </p>
       </header>
 
@@ -807,7 +815,7 @@ function StepPermissions({ onBack, onNext }) {
                 onClick={doResetAccessibility}
                 title="Relaunching didn't help — clear a stale permission left by a previous install, then grant again"
               >
-                Reset permission
+                {recovery ? "Refresh Accessibility permission" : "Reset permission"}
               </button>
             )}
           </div>
@@ -815,18 +823,22 @@ function StepPermissions({ onBack, onNext }) {
             {axGranted
               ? "Detected — ready to go."
               : relaunchTried
-                ? "Still not detected after a relaunch — this usually means a stale permission left by a previous install. Click Reset permission to clear it, then toggle Bulbul on when the dialog reappears and relaunch once more."
+                ? recovery
+                  ? "macOS can show Bulbul as enabled while this updated build is not trusted. Click Refresh Accessibility permission, approve Bulbul when macOS asks again, then Quit & Relaunch if the check mark does not appear."
+                  : "Still not detected after a relaunch — this usually means a stale permission left by a previous install. Click Reset permission to clear it, then toggle Bulbul on when the dialog reappears and relaunch once more."
                 : "macOS just popped a system dialog asking to grant Accessibility. Click Open System Settings in it, toggle Bulbul on, then come back. If the check mark doesn't appear within a few seconds, click Quit & Relaunch — macOS sometimes needs Bulbul to restart before the new permission takes effect."}
           </p>
         </article>
       </div>
 
       <div className="onb-actions">
-        <button className="onb-btn ghost" onClick={onBack}>
-          Back
-        </button>
+        {onBack && (
+          <button className="onb-btn ghost" onClick={onBack}>
+            Back
+          </button>
+        )}
         <button className="onb-btn primary" onClick={onNext} disabled={!ready}>
-          Continue →
+          {recovery ? "Continue to Bulbul →" : "Continue →"}
         </button>
       </div>
     </div>
