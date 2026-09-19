@@ -106,6 +106,13 @@ function App() {
   // navigation level.
   const [settingsSection, setSettingsSection] = useState(null);
   const [config, setConfig] = useState(null);
+  // A completed Mac setup can lose its usable Accessibility grant after an
+  // ad-hoc-signed update. Keep the dashboard behind a one-purpose recovery
+  // gate until the native trust check answers, rather than briefly showing a
+  // dashboard whose dictation cannot type anywhere.
+  const [macAccessibilityTrusted, setMacAccessibilityTrusted] = useState(
+    IS_MAC ? null : true,
+  );
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -181,6 +188,20 @@ function App() {
   useEffect(() => {
     invoke("get_config").then((cfg) => {
       setConfig(cfg);
+      // First-run Mac onboarding already owns this permission check. For a
+      // returning user, query the live TCC trust state at launch: macOS can
+      // leave Accessibility visibly enabled for a prior ad-hoc signature
+      // while this build is not actually trusted.
+      if (IS_MAC && cfg.onboarding_completed) {
+        invoke("check_accessibility_status_mac")
+          .then((trusted) => setMacAccessibilityTrusted(!!trusted))
+          // Never strand the app behind a UI-only failure. The native command
+          // is a pure bool query and normally cannot fail; this fallback keeps
+          // an older/mismatched backend usable during development.
+          .catch(() => setMacAccessibilityTrusted(true));
+      } else {
+        setMacAccessibilityTrusted(true);
+      }
       if (!cfg.privacy_acknowledged) setShowPrivacy(true);
       // Only nudge to Settings for a returning user missing a key — during
       // first-run the onboarding wizard collects the key, so don't also pop
@@ -332,7 +353,9 @@ function App() {
     setShowPrivacy(false);
   }
 
-  if (!config) return <div className="loading">Loading…</div>;
+  if (!config || (IS_MAC && config.onboarding_completed && macAccessibilityTrusted === null)) {
+    return <div className="loading">Loading…</div>;
+  }
 
   const themePref = config.theme || "light";
   const resolvedTheme =
@@ -347,6 +370,23 @@ function App() {
           onComplete={() =>
             updateConfig({ ...config, onboarding_completed: true, onboarding_ever_completed: true })
           }
+        />
+        <TooltipProvider />
+      </>
+    );
+  }
+
+  // Do not reset onboarding_completed here: API key, language, hotkey, and
+  // every other established preference remain intact. This is only the
+  // permission-recovery screen for a Mac build that TCC no longer trusts.
+  if (IS_MAC && !macAccessibilityTrusted) {
+    return (
+      <>
+        <OnboardingWizard
+          config={config}
+          updateConfig={updateConfig}
+          recovery
+          onRecovered={() => setMacAccessibilityTrusted(true)}
         />
         <TooltipProvider />
       </>
