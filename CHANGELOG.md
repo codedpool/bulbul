@@ -4,11 +4,13 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-09-26
+
 ### Added
 
 - **Tap to talk** — a new dictation mode where one press starts recording and the next stops it, instead of holding the hotkey the whole time.
 - **Mouse mode** — bind a mouse button (middle-click by default) to start and stop dictation, independent of your keyboard hotkey.
-- **Pill position** — pin the desktop overlay to the bottom-left, bottom-center, or bottom-right of the screen instead of always centered.
+- **Pill position** — pin the desktop overlay to the bottom or either side of the screen instead of always centering it.
 - **Delete a dictation** from Home's recent activity list, on both desktop and Android.
 - **Corrections memory on Android** — Bulbul now learns from the fixes you make by hand after dictating, the same way desktop does; those fixes show up in Insights and get suggested as Dictionary entries.
 - **Photographic banners** on Home, Insights, Scratchpad, Transforms, Dictionary, Snippets, and Style, replacing the plain highlight card.
@@ -25,6 +27,7 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 - **Editing a transform on Android** now opens a full-screen view instead of a small card the keyboard could cover.
 - **Bulbul idles lighter on memory** on Windows — the overlay, dashboard, and scratchpad windows release memory back to the system while inactive and reclaim it instantly when needed.
 - **Cleanup model selection keeps up with Groq automatically** — a background check cross-references the cached model list against what Groq currently supports, trimming any model Groq has since dropped.
+- **Desktop updates finish themselves** — verified updates download quietly, survive a shutdown, and install the next time Bulbul starts. You can still install one immediately.
 
 ### Fixed
 
@@ -203,7 +206,11 @@ The first public release. Everything below is in the box.
 - **Local SQLite** — dictation history, dictionary, snippets, transforms, notes all in `%APPDATA%\Bulbul\bulbul.db`
 - **Anonymous usage telemetry** — opt-out — counts, durations, error categories, mode and language. Never your transcripts, audio, dictionary, or the foreground app name. Toggleable in Settings → Privacy
 
-[Unreleased]: https://github.com/codedpool/bulbul/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/codedpool/bulbul/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/codedpool/bulbul/releases/tag/v1.2.2
+[1.2.1]: https://github.com/codedpool/bulbul/releases/tag/v1.2.1
+[1.2.0]: https://github.com/codedpool/bulbul/releases/tag/v1.2.0
+[1.1.1]: https://github.com/codedpool/bulbul/releases/tag/v1.1.1
 [1.1.0]: https://github.com/codedpool/bulbul/releases/tag/v1.1.0
 [1.0.1]: https://github.com/codedpool/bulbul/releases/tag/v1.0.1
 [1.0.0]: https://github.com/codedpool/bulbul/releases/tag/v1.0.0
