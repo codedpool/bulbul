@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import FeatureHero from "../components/FeatureHero.jsx";
+import featureSnippetsImg from "../assets/feature-snippets.png";
 
 const SNIPPETS_HERO_SAMPLES = [
   { trigger: "my LinkedIn", expansion: "https://linkedin.com/in/john-doe/" },
@@ -89,6 +90,7 @@ export default function SnippetsView() {
         title={<>The stuff <em>you</em> shouldn't have to re-type.</>}
         samples={SNIPPETS_HERO_SAMPLES}
         onSampleClick={startNewFromSample}
+        image={featureSnippetsImg}
       />
 
       <div className="dict-toolbar">

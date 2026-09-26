@@ -35,6 +35,22 @@ const RELEASE_POLL_MS: u64 = 25;
 const MODIFIER_CHORD_DEBOUNCE_MS: u64 = 80;
 /// Safety net for the release poller. Mirrors the Windows ceiling.
 const RELEASE_POLL_TIMEOUT_SECS: u64 = 60;
+/// How long to wait before re-attempting a failed mouse-mode event tap.
+/// `CGEventTapCreate` is a cheap syscall, so polling this slowly costs
+/// nothing and buys recovery without a relaunch (see
+/// `spawn_mouse_mode_watcher`).
+const MOUSE_TAP_RETRY: Duration = Duration::from_secs(5);
+
+/// Whether the mouse-mode event tap is currently installed. False means
+/// Mouse mode is silently inert — the Settings UI reads this (via
+/// `super::mouse_mode_tap_ok`) so a missing macOS permission surfaces
+/// instead of looking like a broken feature.
+static MOUSE_TAP_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// True once the mouse-mode event tap has been installed successfully.
+pub fn mouse_tap_installed() -> bool {
+    MOUSE_TAP_INSTALLED.load(Ordering::SeqCst)
+}
 
 // CGEventSourceKeyState isn't bound by core-graphics' Rust crate. Same
 // declaration as in inject/macos.rs; duplicated rather than shared since
@@ -240,6 +256,103 @@ pub fn spawn_release_poller(
                 let _ = tx.send(release_evt.clone());
                 return;
             }
+        }
+    });
+}
+
+/// macOS button numbers as read from a CGEvent's MouseEventButtonNumber
+/// field: 0=left, 1=right, 2=center (middle), 3/4=the two "other" (side)
+/// buttons — matching how AppKit/Quartz number extra mouse buttons
+/// generally, verified against the core-graphics crate's own source
+/// (servo/core-foundation-rs) this session rather than assumed.
+fn mac_button_for_number(n: i64) -> Option<super::MouseButton> {
+    match n {
+        2 => Some(super::MouseButton::Middle),
+        3 => Some(super::MouseButton::Back),
+        4 => Some(super::MouseButton::Forward),
+        _ => None,
+    }
+}
+
+/// "Mouse mode" — a CGEventTap watching OtherMouseDown (middle + side
+/// button presses), genuinely suppressing the configured button the same
+/// way Windows' WH_MOUSE_LL hook does: returning CallbackResult::Drop
+/// removes the event from the stream entirely, so nothing downstream
+/// (the focused app, the OS) ever sees it. Toggles dictation via
+/// hotkey::route_mouse_click on each down edge that matches the
+/// currently-configured button (hotkey::should_handle_mouse_click reads
+/// that live, so changing the button in Settings takes effect without
+/// re-installing the tap).
+///
+/// Spawned once at boot on its own thread with its own run loop — the
+/// tap's callback only runs while that thread's run loop is actually
+/// pumping (CFRunLoop::run_current(), which blocks for the thread's
+/// lifetime). Independent from the modifier-chord watcher above; mouse
+/// mode has no per-hotkey state to re-parse on settings changes.
+///
+/// Known gap, accepted for this pass: if the OS ever force-disables the
+/// tap under load (rare — happens if a callback runs too long; ours just
+/// checks a couple of atomics and returns), there's no watchdog to
+/// re-enable it, unlike the Windows keyboard hook's 5s re-assert timer.
+///
+/// **Retries rather than giving up.** `CGEventTapCreate` returns null
+/// when the process isn't permitted to tap events, which is the one
+/// macOS permission Mouse mode needs and nothing else in the app does
+/// (the keyboard paths poll `CGEventSourceKeyState` and the overlay
+/// polls `CGEventGetLocation`; neither is permission-gated). Retrying
+/// the tap itself — rather than polling `AXIsProcessTrusted`, which
+/// macOS caches at launch and can report false for a process's whole
+/// lifetime even after the user grants the permission — tests the real
+/// capability, so Mouse mode starts working as soon as the grant lands
+/// without needing a relaunch.
+pub fn spawn_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
+    thread::spawn(move || {
+        use core_foundation::runloop::CFRunLoop;
+        use core_graphics::event::{
+            CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+            CallbackResult, EventField,
+        };
+
+        let mut reported = false;
+        loop {
+            let tx = tx.clone();
+            let result = CGEventTap::with_enabled(
+                CGEventTapLocation::Session,
+                CGEventTapPlacement::HeadInsertEventTap,
+                CGEventTapOptions::Default,
+                vec![CGEventType::OtherMouseDown],
+                move |_proxy, _event_type, event| {
+                    let n = event.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
+                    if let Some(btn) = mac_button_for_number(n) {
+                        if super::should_handle_mouse_click(btn) {
+                            super::route_mouse_click(&tx);
+                            return CallbackResult::Drop;
+                        }
+                    }
+                    CallbackResult::Keep
+                },
+                || {
+                    tracing::info!("Mac mouse-mode CGEventTap installed");
+                    MOUSE_TAP_INSTALLED.store(true, Ordering::SeqCst);
+                    // Blocks for this thread's lifetime while the tap is live.
+                    CFRunLoop::run_current();
+                },
+            );
+            // The tap is torn down when `with_enabled` returns either way, so
+            // whichever branch we're in, Mouse mode is inert until we succeed
+            // on a later pass.
+            MOUSE_TAP_INSTALLED.store(false, Ordering::SeqCst);
+            if result.is_err() && !reported {
+                reported = true;
+                tracing::error!(
+                    "Mac mouse-mode: CGEventTap install failed — macOS is refusing to let Bulbul \
+                     tap mouse events. Grant Bulbul permission under System Settings > Privacy & \
+                     Security (Accessibility, and Input Monitoring if listed), then it will pick \
+                     itself up within a few seconds; no relaunch needed. Every other feature is \
+                     unaffected — this permission is only used by Mouse mode. Retrying quietly."
+                );
+            }
+            thread::sleep(MOUSE_TAP_RETRY);
         }
     });
 }

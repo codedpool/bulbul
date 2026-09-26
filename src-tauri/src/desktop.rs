@@ -10,6 +10,8 @@ mod hotkey;
 mod inject;
 #[cfg(target_os = "windows")]
 mod keyboard_hook;
+#[cfg(target_os = "windows")]
+mod mouse_hook;
 mod model_config;
 #[cfg(target_os = "linux")]
 mod linux_env;
@@ -20,8 +22,11 @@ mod window_info;
 use crate::audio::Recorder;
 use crate::config::{CleanupMode, Config};
 use crate::hotkey::{HotkeyEvent, HotkeySet, ParsedHotkey};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use minisign_verify::{PublicKey, Signature};
 use parking_lot::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -40,6 +45,28 @@ const OVERLAY_WIDTH: f64 = 240.0;
 const OVERLAY_HEIGHT: f64 = 48.0;
 // Gap between the pill and the top of the taskbar / work area.
 const OVERLAY_BOTTOM_MARGIN: f64 = 4.0;
+// Gap from the left/right screen edge for the "left"/"right" side docks —
+// wider than OVERLAY_BOTTOM_MARGIN since a side inset needs to clear other
+// taskbar-anchored icons/widgets, not just sit slightly above the
+// taskbar's own top edge.
+const OVERLAY_SIDE_MARGIN: f64 = 16.0;
+// Side-dock ("vertical") window footprint. Unlike bottom mode — which
+// resizes live for the language dropdown (see set_overlay_height) — this
+// is a fixed bounding box sized to fit every internal state (idle
+// capsule, hover icon-stack, active expanded pill, open dropdown) via
+// flex layout inside it, so switching between those states never needs a
+// live backend resize; only switching anchor (bottom/left/right) does.
+// 220 was too tight: the language dropdown (needs ~44px clearance off
+// the docked edge + its own 160px width, see Overlay.css) had nowhere
+// left to go and got clipped against the window's own opposite edge —
+// windows never paint past their own bounds regardless of which screen
+// edge they're docked to. 260 leaves real margin on both sides.
+const OVERLAY_V_WIDTH: f64 = 260.0;
+const OVERLAY_V_HEIGHT: f64 = 300.0;
+// This is the same public updater key embedded in tauri.conf.json. Keeping
+// it here lets a cached package be verified again before an installation
+// after a shutdown, rather than trusting application-cache contents.
+const UPDATER_PUBLIC_KEY_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCMEQ1M0FFRUNEQkJEQ0IKUldUTHZkdnNybE1OUzRMUXZzS08wM1Q4a0YrNWpaMXM3S2l5VTRsS1ptWVBjZDArMXF4bTJnS3QK";
 
 pub struct AppState {
     config: Arc<Mutex<Config>>,
@@ -63,6 +90,15 @@ pub struct AppState {
     /// installer. When `Some`, an update is sitting on disk waiting to
     /// be applied — the user picks the moment.
     staged_update: Arc<Mutex<Option<StagedUpdate>>>,
+    /// While `Some((offset_x, offset_y))`, a drag-to-reposition gesture on
+    /// the overlay pill is in progress: the offset is the grab point
+    /// relative to the window's top-left at drag start (logical px), so
+    /// the window can be moved to follow the cursor without snapping its
+    /// origin under the pointer. `None` means no drag is active — this
+    /// doubles as the flag the hover-watcher polling loop checks every
+    /// tick to decide whether to drive the window itself (dragging) or
+    /// run its normal hover/click-through logic (not dragging).
+    overlay_drag: Arc<Mutex<Option<(f64, f64)>>>,
 }
 
 /// A downloaded-but-not-yet-installed update. Holds the Tauri `Update`
@@ -72,6 +108,126 @@ pub struct StagedUpdate {
     update: tauri_plugin_updater::Update,
     bytes: Vec<u8>,
     pub version: String,
+}
+
+/// The signed release identity stored next to a verified package in the
+/// per-user cache. The package itself is never installed until this
+/// signature verifies again on a later launch.
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedUpdate {
+    version: String,
+    signature: String,
+}
+
+fn pending_update_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map(|dir| dir.join("updates"))
+        .map_err(|e| format!("update cache path: {e}"))
+}
+
+fn pending_update_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let dir = pending_update_dir(app)?;
+    Ok((dir.join("pending-update.bin"), dir.join("pending-update.json")))
+}
+
+fn pending_update_exists(app: &AppHandle) -> bool {
+    pending_update_paths(app)
+        .map(|(package, metadata)| package.is_file() && metadata.is_file())
+        .unwrap_or(false)
+}
+
+fn clear_persisted_update(app: &AppHandle) {
+    let Ok((package, metadata)) = pending_update_paths(app) else {
+        return;
+    };
+    let _ = std::fs::remove_file(package);
+    let _ = std::fs::remove_file(metadata);
+}
+
+fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let temporary = path.with_extension("next");
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+
+    // Windows does not replace an existing destination during rename. The
+    // destination is a fixed, private cache path; losing an older staged
+    // package here is safe because the signed release can be fetched again.
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    std::fs::rename(temporary, path)
+}
+
+fn verify_update_package(bytes: &[u8], signature_b64: &str) -> Result<(), String> {
+    let public_key_text = BASE64
+        .decode(UPDATER_PUBLIC_KEY_B64)
+        .map_err(|e| format!("decode updater public key: {e}"))?;
+    let public_key_text = std::str::from_utf8(&public_key_text)
+        .map_err(|e| format!("read updater public key: {e}"))?;
+    let public_key = PublicKey::decode(public_key_text)
+        .map_err(|e| format!("parse updater public key: {e}"))?;
+    let signature_text = BASE64
+        .decode(signature_b64)
+        .map_err(|e| format!("decode update signature: {e}"))?;
+    let signature_text = std::str::from_utf8(&signature_text)
+        .map_err(|e| format!("read update signature: {e}"))?;
+    let signature = Signature::decode(signature_text)
+        .map_err(|e| format!("parse update signature: {e}"))?;
+
+    public_key
+        .verify(bytes, &signature, true)
+        .map_err(|e| format!("update signature verification failed: {e}"))
+}
+
+fn persist_verified_update(
+    app: &AppHandle,
+    version: &str,
+    signature: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    // `Update::download` verifies this too. Repeating it here keeps this
+    // persistence boundary explicit: no unverified bytes enter the cache.
+    verify_update_package(bytes, signature)?;
+
+    let (package, metadata) = pending_update_paths(app)?;
+    let dir = package
+        .parent()
+        .ok_or_else(|| "update cache package has no parent directory".to_string())?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create update cache: {e}"))?;
+
+    let record = serde_json::to_vec(&PersistedUpdate {
+        version: version.to_owned(),
+        signature: signature.to_owned(),
+    })
+    .map_err(|e| format!("serialize cached update: {e}"))?;
+    write_atomically(&package, bytes).map_err(|e| format!("cache update package: {e}"))?;
+    if let Err(e) = write_atomically(&metadata, &record) {
+        let _ = std::fs::remove_file(&package);
+        return Err(format!("cache update metadata: {e}"));
+    }
+    Ok(())
+}
+
+fn load_persisted_update(app: &AppHandle) -> Result<Option<(PersistedUpdate, Vec<u8>)>, String> {
+    let (package, metadata) = pending_update_paths(app)?;
+    if !package.exists() && !metadata.exists() {
+        return Ok(None);
+    }
+    if !package.is_file() || !metadata.is_file() {
+        clear_persisted_update(app);
+        return Err("incomplete cached update discarded".into());
+    }
+
+    let record = std::fs::read(&metadata).map_err(|e| format!("read cached update metadata: {e}"))?;
+    let record = serde_json::from_slice::<PersistedUpdate>(&record)
+        .map_err(|e| format!("parse cached update metadata: {e}"))?;
+    let bytes = std::fs::read(&package).map_err(|e| format!("read cached update package: {e}"))?;
+    Ok(Some((record, bytes)))
 }
 
 struct PendingDictation {
@@ -208,6 +364,13 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
 /// dictating. When `hide_tray` is off, the overlay stays visible at all
 /// times (idle just shows the small pill).
 fn apply_overlay_visibility_for_state(app: &AppHandle, state: &str) {
+    // Mirrors the current dictation state for the idle working-set
+    // trimmer (see `spawn_idle_working_set_trimmer`), which must never
+    // fire while a dictation is in flight. `emit_status` runs this on
+    // every single state transition, so this is as current as the
+    // dictation pipeline itself.
+    RECORDING_ACTIVE.store(state != "idle", std::sync::atomic::Ordering::Relaxed);
+
     let hide_tray = app.state::<AppState>().config.lock().hide_tray;
     let Some(overlay) = app.get_webview_window("overlay") else { return; };
     let should_show = !hide_tray || state != "idle";
@@ -215,15 +378,64 @@ fn apply_overlay_visibility_for_state(app: &AppHandle, state: &str) {
     if let Err(e) = result {
         tracing::warn!("overlay visibility toggle failed (state={state}): {e}");
     }
+    // Idle memory: the pill is visible most of the time (unless hide_tray
+    // is on) but only actually *doing* anything during listening/
+    // processing/injecting. Trim it the rest of the time; restore full
+    // performance the moment a dictation state starts.
+    set_webview_memory_level(&overlay, state == "idle");
     // X11 window managers re-place a window every time it's mapped, so the
     // position set at creation is thrown away on the next show and the pill
     // reappears wherever the WM likes (seen on Cinnamon: mid-screen, and
     // somewhere new after each hide/unhide). Re-assert it on every show —
     // cheap, and a no-op when it's already in the right spot.
     if should_show {
-        position_overlay_bottom_center(app);
+        position_overlay(app);
     }
 }
+
+/// Ask WebView2 to trim a window's memory footprint while it's hidden or
+/// idle (`low = true`), or restore full performance right before it needs
+/// to be responsive again (`low = false`). This is Microsoft's own
+/// officially documented API for exactly this — WebView2 Runtime
+/// ≥114.0.1823.32's `ICoreWebView2_19::SetMemoryUsageTargetLevel` (see
+/// https://learn.microsoft.com/en-us/dotnet/api/microsoft.web.webview2.core.corewebview2.memoryusagetargetlevel).
+/// Unlike destroying/recreating a window (real state loss, real reload
+/// cost) or lazily building one (previously caused a WebView white-screen
+/// hang — see the comment on `setup_scratchpad_window`), this leaves the
+/// WebView, its JS state, and any live listeners completely untouched:
+/// "Low" just tells the engine's own memory manager it can be more
+/// aggressive about trimming caches; scripts keep running. That also
+/// makes a missed or misordered call here safe by construction — the
+/// window still works normally, it just holds onto some reclaimable
+/// memory a little longer.
+///
+/// `with_webview` runs the closure on the main thread and is a no-op if
+/// the window is already gone; an older WebView2 Runtime without this API
+/// (or a version-mismatched COM cast) is likewise a silent no-op, not an
+/// error — see `WebViewExtWindows::set_memory_usage_level`'s own doc
+/// comment in wry, which this mirrors since Tauri doesn't expose the
+/// underlying `wry::WebView` itself, only `PlatformWebview`'s
+/// `controller()`/`environment()` accessors.
+#[cfg(target_os = "windows")]
+fn set_webview_memory_level(window: &tauri::WebviewWindow, low: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL, ICoreWebView2_19,
+    };
+    use windows_core::Interface;
+
+    let level = COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL(if low { 1 } else { 0 });
+    let _ = window.with_webview(move |pw| {
+        let controller = pw.controller();
+        unsafe {
+            let Ok(webview) = controller.CoreWebView2() else { return; };
+            let Ok(webview19) = webview.cast::<ICoreWebView2_19>() else { return; };
+            let _ = webview19.SetMemoryUsageTargetLevel(level);
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_webview_memory_level(_window: &tauri::WebviewWindow, _low: bool) {}
 
 /// Pull the overlay to the very top of the system z-order without taking
 /// focus. We do this via raw FFI to avoid a HWND type mismatch between
@@ -286,7 +498,61 @@ fn bring_overlay_to_top(window: &tauri::WebviewWindow) {
     let _ = window;
 }
 
-fn position_overlay_bottom_center(app: &AppHandle) {
+/// True for the two anchors that dock the pill to a screen edge with a
+/// vertical internal layout ("left"/"right"), false for "bottom-center"
+/// (or anything unrecognized, which falls back to bottom-center rather
+/// than leaving the pill off-screen — a stale value from a future
+/// version, a hand-edited config).
+fn is_vertical_anchor(anchor: &str) -> bool {
+    matches!(anchor, "left" | "right")
+}
+
+/// Target (x, y, width, height) for the overlay window given its anchor.
+/// "left"/"right" vertically center a narrow window against that screen
+/// edge; anything else bottom-centers the familiar horizontal pill.
+fn overlay_geometry(anchor: &str, logical_w: f64, logical_h: f64, anchor_bottom: f64) -> (f64, f64, f64, f64) {
+    match anchor {
+        "left" => {
+            let y = (logical_h - OVERLAY_V_HEIGHT) / 2.0;
+            (OVERLAY_SIDE_MARGIN, y, OVERLAY_V_WIDTH, OVERLAY_V_HEIGHT)
+        }
+        "right" => {
+            let y = (logical_h - OVERLAY_V_HEIGHT) / 2.0;
+            let x = logical_w - OVERLAY_V_WIDTH - OVERLAY_SIDE_MARGIN;
+            (x, y, OVERLAY_V_WIDTH, OVERLAY_V_HEIGHT)
+        }
+        _ => {
+            let x = (logical_w - OVERLAY_WIDTH) / 2.0;
+            let y = anchor_bottom - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
+            (x, y, OVERLAY_WIDTH, OVERLAY_HEIGHT)
+        }
+    }
+}
+
+/// Nearest of the three canonical dock points to a window whose current
+/// (logical) center sits at (cx, cy) — used both to preview the drop
+/// target live while dragging and to decide where a released drag
+/// actually snaps. Plain nearest-neighbor against each anchor's own
+/// resting center point, not a hand-tuned threshold grid, so "drag
+/// further right" monotonically favors "right" with no dead zones.
+fn nearest_overlay_zone(cx: f64, cy: f64, logical_w: f64, logical_h: f64) -> &'static str {
+    let candidates: [(&'static str, f64, f64); 3] = [
+        ("bottom-center", logical_w / 2.0, logical_h),
+        ("left", 0.0, logical_h / 2.0),
+        ("right", logical_w, logical_h / 2.0),
+    ];
+    candidates
+        .into_iter()
+        .min_by(|a, b| {
+            let da = (a.1 - cx).powi(2) + (a.2 - cy).powi(2);
+            let db = (b.1 - cx).powi(2) + (b.2 - cy).powi(2);
+            da.total_cmp(&db)
+        })
+        .map(|(name, _, _)| name)
+        .unwrap_or("bottom-center")
+}
+
+fn position_overlay(app: &AppHandle) {
     let Some(window) = app.get_webview_window("overlay") else {
         return;
     };
@@ -319,12 +585,20 @@ fn position_overlay_bottom_center(app: &AppHandle) {
     // monitor bottom.
     let anchor_bottom = work_area_bottom_logical(scale).unwrap_or(logical_h);
 
-    let x = (logical_w - OVERLAY_WIDTH) / 2.0;
-    let y = anchor_bottom - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
+    let anchor = app.state::<AppState>().config.lock().overlay_position.clone();
+    let (x, y, w, h) = overlay_geometry(&anchor, logical_w, logical_h, anchor_bottom);
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
     if let Err(e) = window.set_position(LogicalPosition::new(x, y)) {
         tracing::warn!("overlay: set_position({x}, {y}) failed: {e}");
         return;
     }
+    // Broadcast (not just to "overlay"): the dashboard and scratchpad each
+    // hold their own local snapshot of Config fetched once at mount, and
+    // any of them saving an unrelated setting later would otherwise spread
+    // that stale snapshot back over whatever the pill was just dragged to
+    // — the drag/Settings-picker path updates the backend correctly, but
+    // without this, a stale window's *next* save could silently undo it.
+    let _ = app.emit("overlay-position-changed", anchor.clone());
 
     // set_position returning Ok does NOT mean the pill actually moved: X11
     // window managers (Muffin/Cinnamon especially) run their own placement
@@ -374,6 +648,7 @@ fn spawn_hover_watcher(app: AppHandle) {
 
     thread::spawn(move || {
         let mut last_hovered = false;
+        let mut last_drag_zone: Option<&'static str> = None;
         loop {
             thread::sleep(Duration::from_millis(50));
             let Some(overlay) = app.get_webview_window("overlay") else {
@@ -387,12 +662,52 @@ fn spawn_hover_watcher(app: AppHandle) {
                 continue;
             }
 
+            // While a drag-to-reposition gesture is in progress (see
+            // start_overlay_drag/end_overlay_drag), this loop drives the
+            // window itself instead of its normal hover/click-through
+            // logic — reusing the exact same 50ms cursor poll rather than
+            // spinning up a second timer thread just for dragging.
+            let drag_offset = app.state::<AppState>().overlay_drag.lock().clone();
+            if let Some((offset_x, offset_y)) = drag_offset {
+                let Ok(scale) = overlay.scale_factor() else { continue; };
+                let new_x = p.x as f64 - offset_x * scale;
+                let new_y = p.y as f64 - offset_y * scale;
+                let _ = overlay.set_position(tauri::PhysicalPosition::new(new_x, new_y));
+
+                if let Ok(Some(monitor)) = overlay.primary_monitor() {
+                    let mscale = monitor.scale_factor();
+                    let msize = monitor.size();
+                    let logical_w = msize.width as f64 / mscale;
+                    let logical_h = msize.height as f64 / mscale;
+                    let cx = (new_x + size.width as f64 / 2.0) / mscale;
+                    let cy = (new_y + size.height as f64 / 2.0) / mscale;
+                    let zone = nearest_overlay_zone(cx, cy, logical_w, logical_h);
+                    if last_drag_zone != Some(zone) {
+                        last_drag_zone = Some(zone);
+                        let _ = app.emit_to("overlay", "overlay-drag-zone", zone);
+                    }
+                }
+                continue;
+            }
+            last_drag_zone = None;
+
             let x0 = pos.x;
             let y0 = pos.y;
             let w = size.width as i32;
             let h = size.height as i32;
-            let cx = x0 + w / 2;
-            let cy = y0 + h - 24; // pill sits near the bottom of the window
+            // The resting pill's on-screen hotspot depends on the current
+            // dock: bottom mode centers it horizontally near the window's
+            // bottom edge; side-dock mode (see Overlay.css's .vertical)
+            // instead centers it vertically and flushes it to whichever
+            // edge is anchored to the screen. Approximate, not pixel
+            // -exact — entry_w/entry_h below are generous enough that it
+            // doesn't need to be.
+            let anchor = app.state::<AppState>().config.lock().overlay_position.clone();
+            let (cx, cy) = match anchor.as_str() {
+                "left" => (x0 + 20, y0 + h / 2),
+                "right" => (x0 + w - 20, y0 + h / 2),
+                _ => (x0 + w / 2, y0 + h - 24), // bottom-center
+            };
 
             // Entry zone (small, near the dot): triggers expansion.
             let entry_w = 100;
@@ -435,6 +750,7 @@ fn spawn_hover_watcher(app: AppHandle) {
 
     thread::spawn(move || {
         let mut last_hovered = false;
+        let mut last_drag_zone: Option<&'static str> = None;
         loop {
             thread::sleep(Duration::from_millis(50));
             let Some(overlay) = app.get_webview_window("overlay") else {
@@ -463,8 +779,56 @@ fn spawn_hover_watcher(app: AppHandle) {
             let y0 = pos.y as f64 / scale;
             let w = size.width as f64 / scale;
             let h = size.height as f64 / scale;
-            let cx = x0 + w / 2.0;
-            let cy = y0 + h - 24.0;
+
+            // While a drag-to-reposition gesture is in progress (see
+            // start_overlay_drag/end_overlay_drag), this loop drives the
+            // window itself instead of its normal hover/click-through
+            // logic — mirrors the Windows implementation above, reusing
+            // this same 50ms CGEvent poll. This block was missing entirely
+            // until a real Mac test (2026-09-15) found dragging silently
+            // did nothing: start_overlay_drag/end_overlay_drag are both
+            // already platform-generic, but nothing on macOS ever read
+            // `overlay_drag` to actually move the window mid-gesture.
+            let drag_offset = app.state::<AppState>().overlay_drag.lock().clone();
+            if let Some((offset_x, offset_y)) = drag_offset {
+                let new_x = cursor_x - offset_x;
+                let new_y = cursor_y - offset_y;
+                let _ = overlay.set_position(tauri::LogicalPosition::new(new_x, new_y));
+
+                if let Ok(Some(monitor)) = overlay.primary_monitor() {
+                    let mscale = monitor.scale_factor();
+                    let msize = monitor.size();
+                    let logical_mw = msize.width as f64 / mscale;
+                    let logical_mh = msize.height as f64 / mscale;
+                    let cx = new_x + w / 2.0;
+                    let cy = new_y + h / 2.0;
+                    let zone = nearest_overlay_zone(cx, cy, logical_mw, logical_mh);
+                    if last_drag_zone != Some(zone) {
+                        last_drag_zone = Some(zone);
+                        let _ = app.emit_to("overlay", "overlay-drag-zone", zone);
+                    }
+                }
+                continue;
+            }
+            last_drag_zone = None;
+
+            // The resting pill's hotspot depends on the current dock, and
+            // these numbers must match the Windows watcher above exactly:
+            // bottom mode centers the pill horizontally near the window's
+            // bottom edge, side-dock mode centers it vertically and flushes it
+            // to whichever edge is anchored to the screen. This branch was
+            // missing here until a real Mac test (2026-09-18) found left/right
+            // docks never expanding on hover — the bottom-center formula put
+            // the hotspot in the empty bottom-middle of the 260x300 side-dock
+            // window, nowhere near the 9x40 pill flushed to its edge. Second
+            // time these two watchers have drifted (the drag-follow block
+            // above was the first) — keep them in lockstep.
+            let anchor = app.state::<AppState>().config.lock().overlay_position.clone();
+            let (cx, cy) = match anchor.as_str() {
+                "left" => (x0 + 20.0, y0 + h / 2.0),
+                "right" => (x0 + w - 20.0, y0 + h / 2.0),
+                _ => (x0 + w / 2.0, y0 + h - 24.0),
+            };
 
             let entry_w = 100.0;
             let entry_h = 40.0;
@@ -494,11 +858,31 @@ fn spawn_hover_watcher(_app: AppHandle) {
 }
 
 
-/// Background loop that polls GitHub Releases for newer Bulbul versions
-/// and silently downloads them into the AppState's `staged_update` slot.
-/// The frontend listens for the `update-staged` Tauri event and renders
-/// a banner; nothing else happens until the user (or the tray Quit) calls
-/// `install_staged_update`.
+/// Saves a verified package for both the current session and the next launch.
+/// A cache failure must not turn an available update into a dead end: the
+/// in-memory copy still powers the explicit "Install & restart" action.
+fn stage_downloaded_update(
+    app: &AppHandle,
+    state: &tauri::State<'_, AppState>,
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+) {
+    let version = update.version.clone();
+    if let Err(e) = persist_verified_update(app, &version, &update.signature, &bytes) {
+        tracing::warn!("could not persist verified update v{version}: {e}");
+    }
+    *state.staged_update.lock() = Some(StagedUpdate {
+        update,
+        bytes,
+        version: version.clone(),
+    });
+    let _ = app.emit("update-staged", version);
+}
+
+/// Background loop that polls GitHub Releases for newer Bulbul versions,
+/// verifies and stores the installer in the per-user cache, then keeps a
+/// current-session copy for the UI. A cached update is checked again against
+/// the signed release metadata on the next launch before it is installed.
 ///
 /// Cadence:
 /// - 10s grace after boot so we don't fight with first-dictation traffic
@@ -523,16 +907,11 @@ fn spawn_update_watcher(app: AppHandle) {
                             tracing::info!("update watcher: v{version} available, downloading…");
                             match update.download(|_chunk, _len| {}, || {}).await {
                                 Ok(bytes) => {
-                                    let slot = app.state::<AppState>().staged_update.clone();
-                                    *slot.lock() = Some(StagedUpdate {
-                                        update,
-                                        bytes,
-                                        version: version.clone(),
-                                    });
+                                    let state = app.state::<AppState>();
+                                    stage_downloaded_update(&app, &state, update, bytes);
                                     tracing::info!(
-                                        "update watcher: v{version} downloaded, staged for install"
+                                        "update watcher: v{version} downloaded and persisted for next launch"
                                     );
-                                    let _ = app.emit("update-staged", version);
                                 }
                                 Err(e) => {
                                     tracing::warn!("update download failed: {e:#}");
@@ -561,17 +940,121 @@ fn spawn_update_watcher(app: AppHandle) {
 /// On the happy path the installer kills our process mid-call and the
 /// function never returns; on failure we log and let the normal exit
 /// continue.
+fn install_update_and_restart(app: &AppHandle, staged: StagedUpdate) -> Result<(), String> {
+    // Consume the durable cache before starting the installer. If install
+    // returns an error, the normal watcher can safely fetch a fresh package
+    // instead of repeatedly attempting the same failed artifact.
+    clear_persisted_update(app);
+    staged
+        .update
+        .install(staged.bytes)
+        .map_err(|e| format!("install update v{}: {e}", staged.version))?;
+    // Windows' installer exits this process itself. macOS and Linux return
+    // after replacing the bundle/package, so restart explicitly there too.
+    app.restart()
+}
+
 fn install_staged_if_present(app: &AppHandle) {
     let slot = app.state::<AppState>().staged_update.clone();
     let staged = slot.lock().take();
     let Some(staged) = staged else {
         return;
     };
-    tracing::info!("tray quit: installing staged update v{}", staged.version);
-    // install is sync in Tauri 2's updater plugin — it writes the bytes
-    // to a temp file and spawns the installer. We don't await anything.
-    if let Err(e) = staged.update.install(staged.bytes) {
+    tracing::info!("quit: installing staged update v{}", staged.version);
+    if let Err(e) = install_update_and_restart(app, staged) {
         tracing::warn!("staged-update install failed on quit: {e:#}");
+    }
+}
+
+/// Returns only when Bulbul should continue its normal launch. A successful
+/// installation restarts (or, on Windows, exits into) the updater instead.
+async fn apply_persisted_update_on_launch(app: &AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let (cached, bytes) = match load_persisted_update(app) {
+        Ok(Some(cached)) => cached,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!("cached update is unusable: {e}");
+            clear_persisted_update(app);
+            return;
+        }
+    };
+
+    if let Err(e) = verify_update_package(&bytes, &cached.signature) {
+        tracing::warn!("cached update v{} failed verification: {e}", cached.version);
+        clear_persisted_update(app);
+        return;
+    }
+
+    // Re-check the release endpoint before installing. This binds the cached
+    // package to the currently announced version and signature, preventing a
+    // stale cache entry from being applied after a newer release supersedes it.
+    let update = match app.updater() {
+        Ok(updater) => match tokio::time::timeout(Duration::from_secs(12), updater.check()).await {
+            Err(_) => {
+                // Never leave the app invisible on a captive portal or an
+                // unavailable network. The verified cache remains for a
+                // later launch, while this launch continues normally.
+                tracing::info!("defer cached update: startup check timed out");
+                return;
+            }
+            Ok(Err(e)) => {
+                // Keep a verified package for the next launch; launching the
+                // current version is preferable to making offline startup fail.
+                tracing::info!("defer cached update until network is available: {e}");
+                return;
+            }
+            Ok(Ok(Some(update))) => update,
+            Ok(Ok(None)) => {
+                // The running app is already current, so this is leftover
+                // cache from a completed install or a rolled-back release.
+                clear_persisted_update(app);
+                return;
+            }
+        },
+        Err(e) => {
+            tracing::info!("updater unavailable during startup: {e}");
+            return;
+        }
+    };
+
+    if update.version != cached.version || update.signature != cached.signature {
+        tracing::info!(
+            "discarding cached update v{}; release metadata now points to v{}",
+            cached.version,
+            update.version
+        );
+        clear_persisted_update(app);
+        return;
+    }
+
+    tracing::info!("installing persisted update v{} before launch", cached.version);
+    clear_persisted_update(app);
+    if let Err(e) = update.install(&bytes) {
+        tracing::warn!("persisted update install failed: {e:#}");
+        return;
+    }
+    // Windows' updater exits the process inside install(). macOS and Linux
+    // return after replacing the application, so restart in all returning
+    // cases to run the new binary.
+    app.restart();
+}
+
+fn reveal_interface_after_pending_update(app: &AppHandle) {
+    let config = app.state::<AppState>().config.clone();
+    let (hide_tray, show_dashboard) = {
+        let cfg = config.lock();
+        (!cfg.hide_tray, !cfg.has_api_key() || cfg.open_dashboard_on_launch)
+    };
+    if hide_tray {
+        if let Some(overlay) = app.get_webview_window("overlay") {
+            let _ = overlay.show();
+            set_webview_memory_level(&overlay, true);
+        }
+    }
+    if show_dashboard {
+        show_settings(app);
     }
 }
 
@@ -608,7 +1091,7 @@ fn work_area_bottom_logical(scale: f64) -> Option<f64> {
 /// MainThreadMarker::new() returns None when called off the main thread,
 /// in which case we fall back to "no work area known" and the caller
 /// uses the full monitor bottom (the overlay sits flush with the dock).
-/// position_overlay_bottom_center runs from window event handlers which
+/// position_overlay runs from window event handlers which
 /// are dispatched on the main thread, so the marker normally resolves.
 #[cfg(target_os = "macos")]
 fn work_area_bottom_logical(_scale: f64) -> Option<f64> {
@@ -741,7 +1224,19 @@ fn save_config(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (prev_has_key, prev_hotkey, prev_pol, prev_theme, prev_mode, prev_telemetry, prev_style) = {
+    let (
+        prev_has_key,
+        prev_hotkey,
+        prev_pol,
+        prev_theme,
+        prev_mode,
+        prev_telemetry,
+        prev_style,
+        prev_tap_to_talk,
+        prev_mouse_mode,
+        prev_mouse_button,
+        prev_overlay_position,
+    ) = {
         let cfg = state.config.lock();
         (
             cfg.has_api_key(),
@@ -751,12 +1246,20 @@ fn save_config(
             cfg.mode.as_str().to_string(),
             cfg.telemetry_enabled,
             cfg.style_enabled,
+            cfg.tap_to_talk,
+            cfg.mouse_mode,
+            cfg.mouse_button.clone(),
+            cfg.overlay_position.clone(),
         )
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
     let next_has_key = new_cfg.has_api_key();
     let next_hotkey = new_cfg.hotkey.clone();
     let next_pol = new_cfg.polish_hotkey.clone();
+    let next_tap_to_talk = new_cfg.tap_to_talk;
+    let next_mouse_mode = new_cfg.mouse_mode;
+    let next_mouse_button = new_cfg.mouse_button.clone();
+    let next_overlay_position = new_cfg.overlay_position.clone();
     let next_theme = new_cfg.theme.clone();
     let next_mode = new_cfg.mode.as_str().to_string();
     let next_telemetry = new_cfg.telemetry_enabled;
@@ -795,6 +1298,18 @@ fn save_config(
     if prev_theme != next_theme {
         // Broadcast to every window so the dashboard + scratchpad re-theme live.
         let _ = app.emit("theme-changed", next_theme);
+    }
+    if prev_tap_to_talk != next_tap_to_talk {
+        hotkey::set_tap_to_talk_enabled(next_tap_to_talk);
+    }
+    if prev_mouse_mode != next_mouse_mode {
+        hotkey::set_mouse_mode_enabled(next_mouse_mode);
+    }
+    if prev_mouse_button != next_mouse_button {
+        hotkey::set_mouse_button(hotkey::MouseButton::parse(&next_mouse_button));
+    }
+    if prev_overlay_position != next_overlay_position {
+        position_overlay(&app);
     }
     if prev_hotkey != next_hotkey || prev_pol != next_pol {
         {
@@ -999,6 +1514,11 @@ fn get_recent_dictations(
         }
     }
     Ok(rows)
+}
+
+#[tauri::command]
+fn delete_dictation(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    db::delete_dictation(&state.db, id).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -1361,6 +1881,7 @@ fn open_scratchpad(app: AppHandle) -> Result<(), String> {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+    set_webview_memory_level(&window, false);
     Ok(())
 }
 
@@ -1410,6 +1931,9 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
     // opaque + our custom titlebar; square corners. See the
     // `.platform-linux` note in App.css / ScratchpadWindow.css.
     let window = builder.build()?;
+    // Built hidden — trim immediately rather than waiting for the first
+    // hide, since most sessions never open the scratchpad at all.
+    set_webview_memory_level(&window, true);
 
     // Intercept the close button (X on Win/Linux, red traffic light on
     // macOS) so the window persists across opens. Cmd+Q / RunEvent::
@@ -1433,11 +1957,13 @@ fn setup_scratchpad_window(app: &AppHandle) -> tauri::Result<()> {
                             }
                         }
                         let _ = after.hide();
+                        set_webview_memory_level(&after, true);
                     });
                     return;
                 }
             }
             let _ = win_handle.hide();
+            set_webview_memory_level(&win_handle, true);
         }
     });
     disable_fullscreen_mac(&window);
@@ -1496,6 +2022,14 @@ fn disable_fullscreen_mac(_window: &tauri::WebviewWindow) {}
 /// Called from the frontend when the language dropdown opens or closes.
 #[tauri::command]
 fn set_overlay_height(height: f64, app: AppHandle) {
+    let anchor = app.state::<AppState>().config.lock().overlay_position.clone();
+    if is_vertical_anchor(&anchor) {
+        // Side-dock mode's window is a fixed OVERLAY_V_WIDTH x
+        // OVERLAY_V_HEIGHT bounding box (see overlay_geometry) that the
+        // dropdown positions itself inside of via CSS instead of growing
+        // the window — nothing to resize here.
+        return;
+    }
     let Some(window) = app.get_webview_window("overlay") else {
         return;
     };
@@ -1506,10 +2040,119 @@ fn set_overlay_height(height: f64, app: AppHandle) {
         let logical_w = size.width as f64 / scale;
         let logical_h = size.height as f64 / scale;
         let anchor_bottom = work_area_bottom_logical(scale).unwrap_or(logical_h);
+        // Bottom-center is the only anchor that reaches here (guarded
+        // above), so this always matches position_overlay's own X for it.
         let x = (logical_w - OVERLAY_WIDTH) / 2.0;
         let y = anchor_bottom - height - OVERLAY_BOTTOM_MARGIN;
         let _ = window.set_position(LogicalPosition::new(x, y));
     }
+}
+
+/// Current cursor position in logical (DPI-independent) coordinates,
+/// matching the units `overlay_geometry`/`nearest_overlay_zone` already
+/// work in. Windows' `GetCursorPos` returns physical pixels (divided by
+/// the window's own scale factor here); macOS's Quartz `CGEventGetLocation`
+/// already returns logical points, matching the same CGEvent-based
+/// approach `spawn_hover_watcher` uses for hover detection. Linux has no
+/// global cursor query on Wayland and isn't wired up here either — same
+/// gap as hover-expand.
+#[cfg(target_os = "windows")]
+fn global_cursor_pos_logical(window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut p = POINT::default();
+    if unsafe { GetCursorPos(&mut p) }.is_err() {
+        return None;
+    }
+    let scale = window.scale_factor().ok()?;
+    Some((p.x as f64 / scale, p.y as f64 / scale))
+}
+
+#[cfg(target_os = "macos")]
+fn global_cursor_pos_logical(_window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    use core_foundation::base::CFTypeRef;
+    use core_graphics::geometry::CGPoint;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventCreate(source: CFTypeRef) -> CFTypeRef;
+        fn CGEventGetLocation(event: CFTypeRef) -> CGPoint;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(cf: CFTypeRef);
+    }
+    let event = unsafe { CGEventCreate(std::ptr::null()) };
+    if event.is_null() {
+        return None;
+    }
+    let p = unsafe { CGEventGetLocation(event) };
+    unsafe { CFRelease(event) };
+    Some((p.x, p.y))
+}
+
+#[cfg(target_os = "linux")]
+fn global_cursor_pos_logical(_window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    None
+}
+
+/// Begin a drag-to-reposition gesture on the overlay pill. Called from
+/// `Overlay.jsx` on `pointerdown`; the actual window-following happens in
+/// `spawn_hover_watcher`'s existing 50ms cursor poll (see its
+/// `overlay_drag` check) rather than a separate loop, reusing the same
+/// per-platform cursor-position code hover-detection already needed.
+#[tauri::command]
+fn start_overlay_drag(state: tauri::State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("overlay")
+        .ok_or_else(|| "overlay window not found".to_string())?;
+    let (cx, cy) = global_cursor_pos_logical(&window)
+        .ok_or_else(|| "cursor position unavailable on this platform".to_string())?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let win_x = pos.x as f64 / scale;
+    let win_y = pos.y as f64 / scale;
+    *state.overlay_drag.lock() = Some((cx - win_x, cy - win_y));
+    Ok(())
+}
+
+/// End a drag-to-reposition gesture: stop the follow loop, snap the
+/// window to whichever of the three canonical dock points its current
+/// (dragged-to) center is nearest, and persist that as the new
+/// `overlay_position`. Called from `Overlay.jsx` on `pointerup` — bound
+/// globally (not just on the pill) so a drag that ends after the cursor
+/// has left the shrinking/moving pill still gets a release.
+#[tauri::command]
+fn end_overlay_drag(state: tauri::State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    *state.overlay_drag.lock() = None;
+    let window = app
+        .get_webview_window("overlay")
+        .ok_or_else(|| "overlay window not found".to_string())?;
+    let Ok(Some(monitor)) = window.primary_monitor() else {
+        // No sane monitor to classify against — leave the pill wherever
+        // the drag left it rather than guessing.
+        return Ok(());
+    };
+    let scale = monitor.scale_factor();
+    let msize = monitor.size();
+    let logical_w = msize.width as f64 / scale;
+    let logical_h = msize.height as f64 / scale;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let cx = (pos.x as f64 + size.width as f64 / 2.0) / scale;
+    let cy = (pos.y as f64 + size.height as f64 / 2.0) / scale;
+    let zone = nearest_overlay_zone(cx, cy, logical_w, logical_h);
+
+    {
+        let mut cfg = state.config.lock();
+        cfg.overlay_position = zone.to_string();
+        config::save(&cfg).map_err(|e| format!("{e:#}"))?;
+    }
+    // Re-run unconditionally, even if the zone didn't change from before
+    // the drag — the drag itself may have left the window somewhere
+    // between two zones, and this is what snaps it back to the exact
+    // canonical spot.
+    position_overlay(&app);
+    Ok(())
 }
 
 /// Self-healing autostart. The user's launch-at-login INTENT lives in
@@ -1587,14 +2230,20 @@ fn set_tray_visible(
         cfg.hide_tray = !visible;
         config::save(&cfg).map_err(|e| format!("{e:#}"))?;
     }
+    // Broadcast (not just to whichever window called this): the overlay's
+    // own hide button and the Settings toggle both land here, and each
+    // window holds its own local snapshot of Config fetched once at
+    // mount — without this, toggling from one place left the other
+    // silently stale until its next unrelated save. Mirrors
+    // position_overlay's "overlay-position-changed" broadcast.
+    let _ = app.emit("hide-tray-changed", !visible);
     if visible {
         if let Some(tray) = app.tray_by_id("bulbul-tray") {
             tray.set_visible(true).map_err(|e| format!("{e}"))?;
         } else {
-            // The tray wasn't built at startup because hide_tray was on.
-            // Build it now (visible). Creating it at runtime — after the
-            // shell and message loop have settled — sidesteps the startup
-            // add-then-remove race entirely.
+            // Defensive fallback — the tray is now always built at startup
+            // (see setup()), so this shouldn't normally be reached. Kept in
+            // case that ever changes: build it now, visible.
             let has_key = { app.state::<AppState>().config.lock().has_api_key() };
             setup_tray(&app, has_key).map_err(|e| format!("{e}"))?;
         }
@@ -1609,11 +2258,13 @@ fn set_tray_visible(
     if !visible {
         if let Some(overlay) = app.get_webview_window("overlay") {
             let _ = overlay.hide();
+            set_webview_memory_level(&overlay, true);
         }
     } else if let Some(overlay) = app.get_webview_window("overlay") {
         // Restore the always-visible behaviour when revealing the tray
         // again — even in idle, the pill should be back on screen.
         let _ = overlay.show();
+        set_webview_memory_level(&overlay, false);
         // Re-assert the position: X11 window managers run their own
         // placement every time a window is mapped, so a plain show() drops
         // the pill wherever the WM likes (Cinnamon: top-left). Every show()
@@ -1621,20 +2272,42 @@ fn set_tray_visible(
         // wrong after a hide/unhide but snapped back to bottom-centre on the
         // next dictation, which does go through
         // apply_overlay_visibility_for_state.
-        position_overlay_bottom_center(&app);
+        position_overlay(&app);
     }
     Ok(())
 }
 
+/// Checks for an update and, if one exists, downloads and stages it in the
+/// same `staged_update` slot `spawn_update_watcher` uses — so a manual
+/// check and the background watcher are indistinguishable to the rest of
+/// the app once either one finds something. That's what lets the
+/// Settings "Check for updates" button turn directly into "Install &
+/// restart" itself instead of just reporting availability and leaving
+/// the user to find the separate dashboard banner: this command does the
+/// download eagerly rather than making the user click twice (once to
+/// learn an update exists, again to fetch it).
 #[tauri::command]
-async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
+async fn check_for_updates(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| format!("{e}"))?;
-    match updater.check().await {
-        Ok(Some(update)) => Ok(Some(update.version.to_string())),
-        Ok(None) => Ok(None),
-        Err(e) => Err(format!("{e}")),
+    // Already staged, whether by an earlier click or the background
+    // watcher — reuse it instead of re-downloading the same installer.
+    if let Some(staged) = state.staged_update.lock().as_ref() {
+        return Ok(Some(staged.version.clone()));
     }
+    let updater = app.updater().map_err(|e| format!("{e}"))?;
+    let Some(update) = updater.check().await.map_err(|e| format!("{e}"))? else {
+        return Ok(None);
+    };
+    let version = update.version.clone();
+    let bytes = update
+        .download(|_chunk, _len| {}, || {})
+        .await
+        .map_err(|e| format!("download failed: {e}"))?;
+    stage_downloaded_update(&app, &state, update, bytes);
+    Ok(Some(version))
 }
 
 /// If the background watcher (see `spawn_update_watcher`) has downloaded
@@ -1749,6 +2422,15 @@ fn prime_accessibility_mac() -> Result<(), String> {
 #[tauri::command]
 fn prime_accessibility_mac() -> Result<(), String> {
     Ok(())
+}
+
+/// Whether Mouse mode's platform hook is actually live. Settings polls
+/// this so a macOS permission wall shows up as a warning next to the
+/// Mouse button row, rather than leaving an enabled-looking toggle that
+/// silently does nothing. Always true off macOS.
+#[tauri::command]
+fn mouse_mode_available() -> bool {
+    hotkey::mouse_mode_tap_ok()
 }
 
 /// Restart Bulbul cleanly. Used by the onboarding wizard's
@@ -1956,13 +2638,7 @@ async fn install_staged_update(app: AppHandle) -> Result<(), String> {
     let Some(staged) = staged else {
         return Err("no update is staged".into());
     };
-    // `install` moves the Update and the bytes. From here, the installer
-    // process is in the driver's seat.
-    staged
-        .update
-        .install(staged.bytes)
-        .map_err(|e| format!("{e}"))?;
-    Ok(())
+    install_update_and_restart(&app, staged)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2002,6 +2678,9 @@ pub fn run() {
     let hotkey_mutex = Arc::new(Mutex::new(initial_set));
     let (hotkey_tx, hotkey_rx) = hotkey::make_channel();
     let hotkey_rx_for_setup = Mutex::new(Some(hotkey_rx));
+    hotkey::set_tap_to_talk_enabled(initial_config.tap_to_talk);
+    hotkey::set_mouse_mode_enabled(initial_config.mouse_mode);
+    hotkey::set_mouse_button(hotkey::MouseButton::parse(&initial_config.mouse_button));
 
     // Install the global low-level keyboard hook BEFORE any Tauri plugin
     // touches the shortcut subsystem. The hook is what makes modifier-only
@@ -2012,6 +2691,18 @@ pub fn run() {
     // modifier-only chord; otherwise the hook stays dormant.
     #[cfg(target_os = "windows")]
     keyboard_hook::install(hotkey_tx.clone());
+    // Mouse mode: an independent LL hook, own lifecycle from the keyboard
+    // one — see mouse_hook.rs for why it's a separate file/thread rather
+    // than folded into the above.
+    #[cfg(target_os = "windows")]
+    mouse_hook::install(hotkey_tx.clone());
+    // Mouse mode on Mac: a real CGEventTap that genuinely suppresses the
+    // configured button, same as the Windows hook above. Spawned once at
+    // boot — mouse mode has no per-hotkey state to re-parse on settings
+    // changes. It retries internally, since its event tap is the one thing
+    // in the app that needs a macOS permission of its own.
+    #[cfg(target_os = "macos")]
+    hotkey::spawn_mac_mouse_mode_watcher(hotkey_tx.clone());
 
     // Pre-warm the cpal/WASAPI input stream during startup so the first
     // dictation doesn't pay the device-open cost (200–700ms on observed
@@ -2046,6 +2737,7 @@ pub fn run() {
                 let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
+                set_webview_memory_level(&w, false);
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -2065,6 +2757,7 @@ pub fn run() {
             open_mac_settings_pane,
             relaunch_app,
             reset_accessibility_mac,
+            mouse_mode_available,
             get_config,
             save_config,
             validate_api_key,
@@ -2080,8 +2773,11 @@ pub fn run() {
             set_tray_visible,
             show_settings_window,
             set_overlay_height,
+            start_overlay_drag,
+            end_overlay_drag,
             get_home_stats,
             get_recent_dictations,
+            delete_dictation,
             get_insights_usage,
             get_voice_stats,
             refresh_voice_narrative,
@@ -2113,6 +2809,9 @@ pub fn run() {
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+            // A verified package from a previous session is given a chance to
+            // install before Bulbul exposes any of its windows.
+            let defer_interface_for_pending_update = pending_update_exists(&handle);
 
             // Let the Windows keyboard-hook thread surface hotkey-health to the
             // dashboard (it was spawned earlier, before the app handle existed).
@@ -2208,6 +2907,7 @@ pub fn run() {
                 db: db_handle,
                 regex_cache: Arc::new(db::RegexCache::new()),
                 staged_update: Arc::new(Mutex::new(None)),
+                overlay_drag: Arc::new(Mutex::new(None)),
             });
 
             // Warm the dictionary/snippet regex caches in the background so the
@@ -2230,18 +2930,23 @@ pub fn run() {
                 hotkey_tx.clone(),
             );
 
-            // Only build the tray when it should be visible. If hide_tray
-            // is on we deliberately do NOT create it here: Tauri 2's builder
-            // adds the icon visible (Windows NIM_ADD) and a set_visible(false)
-            // issued before the shell has registered the icon fails, which is
-            // why a hidden tray used to reappear on restart. Not creating it
-            // avoids that race entirely; it's built lazily in set_tray_visible
-            // when the user unhides.
+            // Always build the tray, even when hide_tray is on. Windows
+            // identifies our icon to Explorer by (hwnd, uID) only — the
+            // underlying tray-icon crate never sets NIF_GUID — so Explorer's
+            // own notification-area cache (NotifyIconSettings) is keyed off
+            // whatever it last saw for that identity. Skipping registration
+            // entirely for a whole session (the previous approach) means we
+            // never give Explorer a fresh signal either way, so a real OS
+            // restart can redraw a stale icon straight from that cache —
+            // which a dev-build relaunch never reproduces, since that never
+            // restarts explorer.exe. Building it fresh every boot keeps
+            // Explorer's cache in sync with what this process actually wants.
+            setup_tray(&handle, has_key_on_boot)?;
             let hide_tray_on_boot = handle.state::<AppState>().config.lock().hide_tray;
-            if !hide_tray_on_boot {
-                setup_tray(&handle, has_key_on_boot)?;
+            if hide_tray_on_boot {
+                hide_tray_after_grace(&handle);
             }
-            setup_overlay_window(&handle)?;
+            setup_overlay_window(&handle, !defer_interface_for_pending_update)?;
             setup_scratchpad_window(&handle)?;
             reconcile_autostart(&handle);
 
@@ -2259,10 +2964,13 @@ pub fn run() {
                     let c = cfg.lock();
                     !c.has_api_key() || c.open_dashboard_on_launch
                 };
-                if want_show {
+                if want_show && !defer_interface_for_pending_update {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+                // Idle memory: matches whichever state the window actually
+                // starts in above (visible or hidden-until-first-open).
+                set_webview_memory_level(&window, !want_show || defer_interface_for_pending_update);
                 let win_handle = window.clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
@@ -2290,11 +2998,13 @@ pub fn run() {
                                         }
                                     }
                                     let _ = after.hide();
+                                    set_webview_memory_level(&after, true);
                                 });
                                 return;
                             }
                         }
                         let _ = win_handle.hide();
+                        set_webview_memory_level(&win_handle, true);
                     }
                 });
             }
@@ -2308,12 +3018,22 @@ pub fn run() {
                 .expect("hotkey rx already consumed");
             spawn_orchestrator(handle.clone(), rx);
             spawn_hover_watcher(handle.clone());
+            spawn_idle_working_set_trimmer();
 
-            // Mode-B auto-update: silently poll GitHub Releases on a
-            // 6-hour cadence (10s grace after boot), download new
-            // installers into AppState.staged_update, fire `update-staged`
-            // event. The UI banner and the tray Quit handler do the rest.
+            // Auto-update: silently poll GitHub Releases on a 6-hour cadence
+            // (10s grace after boot), persist verified installers, and fire
+            // `update-staged` for the immediate-install UI.
             spawn_update_watcher(handle.clone());
+
+            if defer_interface_for_pending_update {
+                let startup_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    apply_persisted_update_on_launch(&startup_handle).await;
+                    // A successful install does not return: Windows hands off
+                    // to its installer, while macOS/Linux restart below.
+                    reveal_interface_after_pending_update(&startup_handle);
+                });
+            }
 
             // Remote cleanup-model chain: lets a future Groq model rotation
             // be fixed by editing bulbultypes.xyz/models.json, not shipping
@@ -2447,18 +3167,37 @@ fn setup_tray(app: &AppHandle, has_key: bool) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    // setup_tray is only ever called when the tray SHOULD be visible — at
-    // startup when hide_tray is off, or from set_tray_visible when the user
-    // unhides. We never build it while hidden: Tauri 2's builder has no
-    // .visible(), so build() adds the icon visible (Windows NIM_ADD), and a
-    // set_visible(false) issued before the shell registers the icon fails —
-    // which is why a hidden tray used to reappear on restart. Not creating
-    // it at all avoids that race by construction.
+    // Tauri 2's builder has no .visible() — build() always adds the icon
+    // visible (Windows NIM_ADD). Callers that want it hidden apply that
+    // afterwards (see hide_tray_after_grace) rather than skipping this
+    // build entirely, so Explorer's own icon cache gets a real registration
+    // every session regardless of hide_tray.
     let _ = tray;
     Ok(())
 }
 
-fn setup_overlay_window(app: &AppHandle) -> tauri::Result<()> {
+/// Hides a just-built tray after a short grace period instead of
+/// synchronously in the same call as build(). On a genuine OS restart (as
+/// opposed to a plain process relaunch) explorer.exe's notification-area
+/// host isn't always ready the instant an autostart app launches —
+/// Shell_NotifyIcon(NIM_ADD) can silently fail, and the underlying tray-icon
+/// crate re-registers automatically once Explorer's "TaskbarCreated"
+/// broadcast arrives, always visible, with no hook for us to re-apply a
+/// hidden state at that point. Hiding immediately after build() used to race
+/// that same not-ready-yet window and fail outright ("Error removing system
+/// tray icon"). Giving the initial add a short window to actually land
+/// before hiding sidesteps both failure modes.
+fn hide_tray_after_grace(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(tray) = app.tray_by_id("bulbul-tray") {
+            let _ = tray.set_visible(false);
+        }
+    });
+}
+
+fn setup_overlay_window(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     // Wayland has no global window positioning — set_position is a
     // no-op and the compositor drops new windows wherever it likes
     // (usually dead center). A "bottom-center pill" that actually
@@ -2487,11 +3226,14 @@ fn setup_overlay_window(app: &AppHandle) -> tauri::Result<()> {
     .resizable(false)
     .transparent(true)
     .shadow(false)
-    .visible(true)
+    .visible(visible)
     .focused(false)
     .build()?;
     let _ = overlay.set_ignore_cursor_events(true);
-    position_overlay_bottom_center(app);
+    position_overlay(app);
+    // Starts visible-but-idle (no dictation yet at boot) — trim right away
+    // instead of waiting for the first state transition.
+    set_webview_memory_level(&overlay, true);
     Ok(())
 }
 
@@ -2500,6 +3242,7 @@ fn show_settings(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        set_webview_memory_level(&window, false);
     }
 }
 
@@ -2566,6 +3309,58 @@ fn inpage_hotkey(pressed: bool, state: tauri::State<'_, AppState>) {
     );
     let _ = state.hotkey_tx.send(evt);
 }
+
+/// Mirrors whether a dictation is currently in flight (set from
+/// `apply_overlay_visibility_for_state`, which runs on every
+/// `emit_status` call). The only reader is the idle working-set trimmer
+/// below — it's a coarse gate, not a lock, but it's enough to rule out
+/// the one scenario worth ruling out: a trim's page eviction landing at
+/// the exact moment a hotkey fires and needing a soft-fault to bring a
+/// hot-path page back.
+static RECORDING_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Periodically ask Windows to trim `bulbul.exe`'s own working set —
+/// separate from the WebView2 windows (see `set_webview_memory_level`),
+/// this is the ~50MB backend process itself. `EmptyWorkingSet` doesn't
+/// free anything or evict working data; it just moves currently-unused
+/// physical pages to the standby list, and the very next touch soft-faults
+/// them back in (typically sub-millisecond — the pages are still in RAM,
+/// just no longer charged to this process's working set). That soft-fault
+/// cost is why this deliberately does NOT run on a tight loop: Microsoft's
+/// own guidance (and prior art in other trimming tools) is that calling it
+/// often enough to matter causes needless paging/perf overhead, and it's
+/// only worth doing when the process is actually going to sit idle a
+/// while. A long cadence (2 minutes after boot to let init settle, then
+/// every 20 minutes) stays well inside "used sparingly" while still
+/// reclaiming the same memory a genuinely idle process would eventually
+/// give back on its own — this just does it proactively instead of
+/// waiting on OS memory pressure.
+///
+/// Skips the trim entirely while `RECORDING_ACTIVE` is set, so a page
+/// evicted here can never be the reason a hotkey-triggered read stalls —
+/// the hook thread and orchestrator are otherwise untouched by this.
+#[cfg(target_os = "windows")]
+fn spawn_idle_working_set_trimmer() {
+    use std::sync::atomic::Ordering;
+    use windows::Win32::System::ProcessStatus::EmptyWorkingSet;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    thread::spawn(|| loop {
+        thread::sleep(Duration::from_secs(120));
+        if RECORDING_ACTIVE.load(Ordering::Relaxed) {
+            tracing::debug!("idle working-set trim: skipped, dictation in flight");
+        } else {
+            let handle = unsafe { GetCurrentProcess() };
+            if let Err(e) = unsafe { EmptyWorkingSet(handle) } {
+                tracing::debug!("EmptyWorkingSet failed: {e:#}");
+            }
+        }
+        thread::sleep(Duration::from_secs(20 * 60));
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn spawn_idle_working_set_trimmer() {}
 
 /// SIGUSR2 toggles dictation, SIGUSR1 toggles polish dictation — the
 /// signal-level equivalent of `--toggle-dictation` for users who prefer
@@ -3486,7 +4281,7 @@ fn track_dictation_failed(app: &AppHandle, category: &str, mode: &CleanupMode) {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_slot_hotkey, resolve_slot_hotkey};
+    use super::{default_slot_hotkey, resolve_slot_hotkey, verify_update_package, write_atomically};
     use crate::hotkey::{parsed_to_shortcut, ParsedHotkey};
 
     fn same(a: &ParsedHotkey, b: &ParsedHotkey) -> bool {
@@ -3509,5 +4304,24 @@ mod tests {
         assert!(same(&resolve_slot_hotkey(Some("zzzz-not-a-key"), 2), &def), "unknown key -> default");
         assert!(same(&resolve_slot_hotkey(Some("Ctrl+Alt"), 2), &def), "modifier-only -> default");
         assert!(same(&resolve_slot_hotkey(Some("P"), 2), &def), "bare key (no modifier) -> default");
+    }
+
+    #[test]
+    fn cached_update_requires_a_valid_minisign_signature() {
+        assert!(verify_update_package(b"not an installer", "not-base64").is_err());
+    }
+
+    #[test]
+    fn atomic_update_write_replaces_a_previous_cache_entry() {
+        let dir = std::env::temp_dir().join(format!("bulbul-update-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pending-update.bin");
+
+        write_atomically(&path, b"first").unwrap();
+        write_atomically(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert!(!path.with_extension("next").exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

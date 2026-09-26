@@ -361,6 +361,16 @@ struct ChatRequest<'a> {
     // 400 on an unsupported field).
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'a str>,
+    // Device-tested 2026-09-13: leaving this unset let Groq default to an
+    // estimate that landed just over qwen3.8-27b's 1000 output-tokens-per-
+    // minute cap on THIS account tier — even for a short, few-word
+    // dictation ("Requested 1383" for a 9-word cleanup). That's a
+    // per-request ceiling, so any single uncapped request could trip it
+    // regardless of what else ran that minute. Each call site sets its
+    // own sane cap well under 1000, sized to what that call actually
+    // needs, rather than leaving it to Groq's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
 }
 
 /// The `reasoning_effort` value to send for a given cleanup model, or None if
@@ -546,6 +556,12 @@ pub async fn cleanup(
             ],
             temperature: 0.2,
             reasoning_effort: reasoning_effort_for(model),
+            // Cleanup normalizes already-spoken text — output tracks input
+            // length and is often shorter (filler removal), never
+            // drastically longer. 400 comfortably covers a long dictation
+            // (several hundred words) while leaving headroom under the
+            // 1000/min ceiling for more dictations in the same minute.
+            max_tokens: Some(400),
         };
         let make = || {
             client
@@ -772,6 +788,12 @@ pub async fn execute_transform(
             // qwen must get "none" or it dumps a <think> block into the rewrite;
             // gpt-oss gets "low". Same per-model policy as cleanup.
             reasoning_effort: reasoning_effort_for(model),
+            // Transforms can legitimately ask for more text than they're
+            // given (expand, translate, make more formal), so this gets a
+            // more generous cap than cleanup's — still comfortably under
+            // the 1000/min ceiling with margin for other calls that
+            // minute.
+            max_tokens: Some(800),
         };
         let make = || {
             client
@@ -855,6 +877,8 @@ pub async fn generate_voice_profile(
         ],
         temperature: 0.4,
         reasoning_effort: reasoning_effort_for(model),
+        // A short profile summary + blurb — same reasoning as cleanup's cap.
+        max_tokens: Some(400),
     };
 
     let client = shared_client();
@@ -939,6 +963,34 @@ pub async fn list_cerebras_models(api_key: &str) -> Result<Vec<String>> {
     let mut ids: Vec<String> = parsed.data.into_iter().map(|m| m.id).collect();
     ids.sort();
     Ok(ids)
+}
+
+/// List Groq's currently-served model ids (OpenAI-compatible GET
+/// /v1/models). Used by the remote model-config safety net to cross-check
+/// the cleanup chain fetched from bulbultypes.xyz against what Groq
+/// actually still serves, so a stale or forgotten site update can't lead
+/// dictation with a model Groq has since retired.
+pub async fn list_groq_models(api_key: &str) -> Result<Vec<String>> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err(anyhow!("Groq API key is empty"));
+    }
+    let client = shared_client();
+    let resp = client
+        .get(format!("{BASE_URL}/models"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .context("GET Groq /models")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("Groq rejected key ({status}): {body}"));
+    }
+    let body = resp.text().await.context("reading Groq /models body")?;
+    let parsed: ModelsResponse = serde_json::from_str(&body)
+        .with_context(|| format!("parsing Groq models: {body}"))?;
+    Ok(parsed.data.into_iter().map(|m| m.id).collect())
 }
 
 #[derive(Deserialize)]

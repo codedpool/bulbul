@@ -463,12 +463,13 @@ dependencies = [
 
 [[package]]
 name = "bulbul"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "accessibility-sys",
  "anyhow",
  "arboard",
  "ashpd 0.13.12",
+ "base64 0.22.1",
  "block2",
  "core-foundation",
  "core-graphics",
@@ -479,6 +480,7 @@ dependencies = [
  "evdev",
  "futures-util",
  "hound",
+ "minisign-verify",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -502,7 +504,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webview2-com",
  "windows 0.58.0",
+ "windows-core 0.61.2",
  "x11rb",
 ]
 

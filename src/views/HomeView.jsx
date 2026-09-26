@@ -6,7 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import FeatureHero from "../components/FeatureHero.jsx";
 import HowToCard from "../components/HowToCard.jsx";
+import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { OS_NOUN, IS_ANDROID } from "../platform.js";
+import featureHomeImg from "../assets/feature-home.png";
 
 const PAGE_SIZE = 50;
 
@@ -15,6 +17,7 @@ export default function HomeView({ displayName }) {
   const [recent, setRecent] = useState([]);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -61,6 +64,22 @@ export default function HomeView({ displayName }) {
     }
   }
 
+  // Splice the row out locally (no need to re-fetch the whole page, which
+  // would also reset any "load older" progress) and separately refresh
+  // stats, since word/streak totals need to drop the deleted entry too.
+  async function confirmDelete() {
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
+    if (id == null) return;
+    try {
+      await invoke("delete_dictation", { id });
+      setRecent((prev) => prev.filter((d) => d.id !== id));
+      invoke("get_home_stats").then(setStats).catch(() => {});
+    } catch (e) {
+      console.error("delete dictation failed", e);
+    }
+  }
+
   const grouped = groupByDay(recent);
 
   return (
@@ -80,8 +99,12 @@ export default function HomeView({ displayName }) {
             ? "Tap the floating bubble in any app, talk, and Bulbul types the cleaned-up text right where your cursor is."
             : `Hold your hotkey anywhere on ${OS_NOUN}, talk, release. Bulbul transcribes, cleans up, and pastes the result right at your cursor.`
         }
+        image={featureHomeImg}
       />
 
+      {/* Superseded by the FeatureHero banner photo above — kept here,
+          not deleted, in case the image treatment doesn't cover this
+          ground well enough and the explicit steps need to come back.
       {IS_ANDROID && (
         <HowToCard title="How to dictate" storageKey="bulbul.home.howto">
           <ol className="howto-steps">
@@ -94,6 +117,7 @@ export default function HomeView({ displayName }) {
           </p>
         </HowToCard>
       )}
+      */}
 
       <section className="stat-cards">
         <StatCard
@@ -136,7 +160,7 @@ export default function HomeView({ displayName }) {
                 <div className="day-label">{day}</div>
                 <div className="day-card">
                   {items.map((d) => (
-                    <DictationRow key={d.id} d={d} />
+                    <DictationRow key={d.id} d={d} onRequestDelete={setPendingDeleteId} />
                   ))}
                 </div>
               </div>
@@ -153,11 +177,21 @@ export default function HomeView({ displayName }) {
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        title="Delete this dictation?"
+        message="This removes it from your history. This can't be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </div>
   );
 }
 
-function DictationRow({ d }) {
+function DictationRow({ d, onRequestDelete }) {
   // Idle → copied → idle. The copied state is purely cosmetic (icon
   // swaps to a check, button stays highlighted) so the user sees the
   // copy succeeded without needing a toast.
@@ -184,15 +218,26 @@ function DictationRow({ d }) {
           <span className="badge muted-badge">{d.word_count}w</span>
         </div>
       </div>
-      <button
-        type="button"
-        className={`dictation-copy ${copied ? "copied" : ""}`}
-        onClick={copy}
-        aria-label={copied ? "Copied" : "Copy text"}
-        title={copied ? "Copied" : "Copy text"}
-      >
-        {copied ? <CheckIcon /> : <CopyIcon />}
-      </button>
+      <div className="dictation-actions">
+        <button
+          type="button"
+          className={`dictation-copy ${copied ? "copied" : ""}`}
+          onClick={copy}
+          aria-label={copied ? "Copied" : "Copy text"}
+          title={copied ? "Copied" : "Copy text"}
+        >
+          {copied ? <CheckIcon /> : <CopyIcon />}
+        </button>
+        <button
+          type="button"
+          className="dictation-delete"
+          onClick={() => onRequestDelete(d.id)}
+          aria-label="Delete"
+          title="Delete this dictation"
+        >
+          <TrashIcon />
+        </button>
+      </div>
     </div>
   );
 }
@@ -210,6 +255,16 @@ function CheckIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
     </svg>
   );
 }

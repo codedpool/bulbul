@@ -197,16 +197,23 @@ class BulbulForegroundService : Service() {
 
                 // Apply the user's dictionary (whole-word substitutions) then
                 // expand snippets — same order as desktop — before injecting.
-                // Count dictionary fixes so Insights can report them.
-                val (corrected, fixes) = BulbulConfig.applyDictionary(this, cleaned)
+                val (corrected, dictionaryFixes) = BulbulConfig.applyDictionary(this, cleaned)
                 val finalText = BulbulConfig.applySnippets(this, corrected)
 
                 val injected = TextInjector.inject(finalText)
-                Log.i(TAG, "transcript len=${finalText.length} mode=$mode fixes=$fixes app=$friendly injected=$injected")
+                // Total fixes = raw-vs-final word diff, same meaning as
+                // desktop's count_fixes (db.rs) — folds in the Cleanup LLM's
+                // edits together with dictionary substitutions. Previously
+                // this stored only dictionaryFixes, so Insights' "Fixes made
+                // by Bulbul" always showed 0 AI fixes even though Cleanup
+                // genuinely runs on Android now (mobile.rs::get_insights_usage
+                // derives ai_fixes back out as total - dictionary_fixes).
+                val totalFixes = countFixes(transcript, finalText)
+                Log.i(TAG, "transcript len=${finalText.length} mode=$mode fixes=$totalFixes (dictionary=$dictionaryFixes) app=$friendly injected=$injected")
                 val durationMs = wavDurationMs(wav)
                 // Store the pre-cleanup transcript + actual mode so Insights and
                 // style-memory personalization have real raw→cleaned pairs.
-                recordHistory(transcript, finalText, mode, durationMs, fixes, friendly)
+                recordHistory(transcript, finalText, mode, durationMs, totalFixes, friendly)
 
                 // Opt-in telemetry: coarse buckets only — no text, no app name.
                 val words = finalText.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
@@ -215,7 +222,7 @@ class BulbulForegroundService : Service() {
                     put("language", BulbulConfig.language(this@BulbulForegroundService))
                     put("duration_bucket", Telemetry.durationBucket(durationMs))
                     put("word_count_bucket", Telemetry.wordCountBucket(words))
-                    put("had_fixes", fixes > 0)
+                    put("had_fixes", totalFixes > 0)
                 })
                 // Couldn't type it in (focus gone, A11y unbound) — put
                 // the words on the clipboard so they're one long-press
@@ -244,6 +251,22 @@ class BulbulForegroundService : Service() {
     /// Appends one dictation to filesDir/history.jsonl. The Rust side
     /// (mobile.rs get_recent_dictations / get_home_stats) reads the same
     /// file — file-as-IPC, same trick as config.json.
+    /// Word-level symmetric-difference fix count — mirrors db.rs::count_fixes
+    /// on desktop, so Insights' "total fixes" means the same thing on both
+    /// platforms: everything that changed between the raw transcript and the
+    /// final injected text (Cleanup LLM edits, dictionary substitutions, and
+    /// snippet expansions together), not just dictionary hits.
+    private fun countFixes(raw: String, cleaned: String): Int {
+        fun normalize(s: String): Set<String> =
+            s.split(Regex("\\s+"))
+                .map { it.trim { c -> !c.isLetterOrDigit() }.lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        val rawSet = normalize(raw)
+        val cleanSet = normalize(cleaned)
+        return (rawSet - cleanSet).size + (cleanSet - rawSet).size
+    }
+
     private fun recordHistory(
         rawText: String,
         cleanedText: String,
@@ -254,6 +277,7 @@ class BulbulForegroundService : Service() {
     ) {
         try {
             val words = cleanedText.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+            val now = java.util.Calendar.getInstance()
             val line = org.json.JSONObject().apply {
                 put("ts", System.currentTimeMillis() / 1000)
                 // Pre-cleanup transcript, kept so style-memory personalization
@@ -267,6 +291,15 @@ class BulbulForegroundService : Service() {
                 // Which app the dictation landed in — powers the dashboard's
                 // per-row app badge (Rust get_recent_dictations reads this key).
                 if (!app.isNullOrBlank()) put("foreground_app", app)
+                // Local day-of-week (0=Sunday..6=Saturday, matching SQLite's
+                // %w on desktop) and hour-of-day (0-23) at record time, in the
+                // device's own timezone — used by Rust's voice_stats_value for
+                // "your peak dictation time". Computed here because the JVM's
+                // tz database is reliable; Rust has no timezone crate on
+                // mobile, so it falls back to a UTC-derived bucket only for
+                // rows written before this field existed.
+                put("dow", now.get(java.util.Calendar.DAY_OF_WEEK) - 1)
+                put("hour", now.get(java.util.Calendar.HOUR_OF_DAY))
             }
             // Same dir the Rust side reads (app_data_dir) — resolved, not
             // assumed, for the same reason as getApiKey.

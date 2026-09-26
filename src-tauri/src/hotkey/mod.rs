@@ -44,6 +44,8 @@ use linux as native;
 mod linux_portal;
 #[cfg(target_os = "linux")]
 mod linux_evdev;
+#[cfg(target_os = "linux")]
+mod linux_mouse;
 
 /// Minimum gap between two fires of the same hotkey. Guards against
 /// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
@@ -57,6 +59,239 @@ pub enum HotkeyEvent {
     PolishDictationPressed,
     PolishDictationReleased,
     TransformTriggered(i64),
+}
+
+// ─── "Tap to talk" ──────────────────────────────────────────────────────
+//
+// When on, the dictation/polish hotkeys toggle instead of requiring a
+// hold: one tap starts, the next tap stops. A plain global rather than
+// something threaded through HotkeySet/re_register, because the Windows
+// LL keyboard hook (keyboard_hook.rs) is installed ONCE at boot and isn't
+// re-created per hotkey registration the way the other physical-key
+// producers are — a global is the one thing every producer can reach
+// without re-plumbing each of their call sites individually.
+//
+// `route_physical_event` is the single choke point every PHYSICAL
+// press/release producer sends through instead of hitting `tx` directly:
+// the Windows LL keyboard hook (modifier-only chords like the default
+// Ctrl+Win), the global-shortcut handler + native release poller (regular
+// combos, e.g. Shift+Alt+P), and Linux evdev (direct /dev/input reading,
+// the default Linux path once the user has input-device access).
+//
+// Deliberately NOT wired into two other producers:
+//   - `cli_toggle_dictation` (desktop.rs) — the Linux CLI/signal escape
+//     hatch for GNOME Wayland users whose compositor can't register the
+//     hotkey at all. It already has its own complete, independent toggle
+//     state and sends straight to AppState.hotkey_tx without going
+//     through hotkey::re_register or this function at all, so it's
+//     structurally unaffected by this setting either way — which is
+//     exactly what keeps it working regardless of whether "Tap to talk"
+//     is on.
+//   - `linux_portal.rs` (the Wayland GlobalShortcuts portal, used when
+//     evdev access isn't available yet) — it already implements its own
+//     toggle-tolerance as a workaround for a GNOME bug where a held
+//     shortcut sometimes never emits a release signal at all: a second
+//     Activated while already active is treated as the missing release
+//     and turned into a synthesized `DictationReleased`. Passing that
+//     synthesized release back through this translation would swallow it
+//     (tap mode treats a raw release as "ignore, wait for the next tap"),
+//     silently breaking the exact GNOME workaround it depends on. Until
+//     that's unified deliberately, "Tap to talk" simply has no effect on
+//     the portal path — a real hold still behaves as a real hold there.
+static TAP_TO_TALK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static DICTATION_TAP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static POLISH_TAP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Updates the shared "Tap to talk" flag every physical producer reads.
+/// Call at boot (from the loaded config) and whenever Settings saves a
+/// change to it. Resets both per-hotkey toggle states so flipping the
+/// setting can never leave a stale "already active" flag around that
+/// would silently eat the next real tap.
+pub fn set_tap_to_talk_enabled(on: bool) {
+    use std::sync::atomic::Ordering;
+    TAP_TO_TALK.store(on, Ordering::SeqCst);
+    DICTATION_TAP_ACTIVE.store(false, Ordering::SeqCst);
+    POLISH_TAP_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+/// Whether "Tap to talk" is currently on. Used by keyboard_hook.rs's
+/// modifier-chord engagement check to decide whether it can trust a fast
+/// tap immediately or should keep cross-checking GetAsyncKeyState first —
+/// see the comment at that call site for why the two modes need
+/// different answers to the same question.
+pub fn tap_to_talk_enabled() -> bool {
+    TAP_TO_TALK.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Routes one raw physical press/release through "Tap to talk"
+/// translation when it's on, before forwarding to `tx`: a tap starts
+/// (forwards Pressed), a raw release is swallowed, and the next tap stops
+/// (forwards Released instead of Pressed). Passed straight through
+/// unchanged when the setting is off, and for event kinds it doesn't
+/// apply to (`TransformTriggered` — slots are already tap-to-trigger).
+pub fn route_physical_event(evt: HotkeyEvent, tx: &Sender<HotkeyEvent>) {
+    use std::sync::atomic::Ordering;
+    if !TAP_TO_TALK.load(Ordering::SeqCst) {
+        let _ = tx.send(evt);
+        return;
+    }
+    match evt {
+        HotkeyEvent::DictationPressed => {
+            toggle_forward(&DICTATION_TAP_ACTIVE, HotkeyEvent::DictationPressed, HotkeyEvent::DictationReleased, tx)
+        }
+        HotkeyEvent::DictationReleased => {}
+        HotkeyEvent::PolishDictationPressed => toggle_forward(
+            &POLISH_TAP_ACTIVE,
+            HotkeyEvent::PolishDictationPressed,
+            HotkeyEvent::PolishDictationReleased,
+            tx,
+        ),
+        HotkeyEvent::PolishDictationReleased => {}
+        other => {
+            let _ = tx.send(other);
+        }
+    }
+}
+
+fn toggle_forward(
+    active: &std::sync::atomic::AtomicBool,
+    pressed: HotkeyEvent,
+    released: HotkeyEvent,
+    tx: &Sender<HotkeyEvent>,
+) {
+    use std::sync::atomic::Ordering;
+    if !active.swap(true, Ordering::SeqCst) {
+        let _ = tx.send(pressed);
+    } else {
+        active.store(false, Ordering::SeqCst);
+        let _ = tx.send(released);
+    }
+}
+
+// ─── "Mouse mode" ───────────────────────────────────────────────────────
+//
+// A user-configured mouse button (default: middle-click) always toggles
+// dictation — click to start, click again to stop — independent of
+// "Tap to talk" above, which only governs the keyboard hotkey. This is
+// the user's separate choice to dictate via a click at all.
+//
+// All three platforms genuinely suppress the configured button's normal
+// effect (browser back/forward, X11 primary-paste, etc.) while Mouse
+// mode is on — not just react to it:
+//   - Windows: `mouse_hook.rs`'s WH_MOUSE_LL hook sits inline in the
+//     delivery path.
+//   - Linux: `linux_mouse.rs` exclusively grabs the mouse device
+//     (EVIOCGRAB) and re-emits everything except the configured button
+//     through a virtual mouse (evdev::uinput) that mirrors the real
+//     one's capabilities — falls back to observing-without-suppressing
+//     if the grab or the virtual mirror can't be built, rather than
+//     ever leaving a device grabbed with nothing forwarding its events.
+//   - macOS: `macos.rs` uses a real CGEventTap (not just polling live key
+//     state, which can't suppress anything) — returning
+//     CallbackResult::Drop removes the event from the stream entirely.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MouseButton {
+    Middle,
+    Back,
+    Forward,
+}
+
+impl MouseButton {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "back" => MouseButton::Back,
+            "forward" => MouseButton::Forward,
+            _ => MouseButton::Middle,
+        }
+    }
+
+    fn as_u8(self) -> u8 {
+        match self {
+            MouseButton::Middle => 0,
+            MouseButton::Back => 1,
+            MouseButton::Forward => 2,
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => MouseButton::Back,
+            2 => MouseButton::Forward,
+            _ => MouseButton::Middle,
+        }
+    }
+}
+
+static MOUSE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static MOUSE_BUTTON: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static MOUSE_DICTATION_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Updates the shared "Mouse mode" on/off flag. Call at boot (from the
+/// loaded config) and whenever Settings saves a change to it. Resets the
+/// toggle state so flipping it can't leave a stale "already active" flag
+/// that would silently eat the next real click.
+pub fn set_mouse_mode_enabled(on: bool) {
+    use std::sync::atomic::Ordering;
+    MOUSE_MODE.store(on, Ordering::SeqCst);
+    MOUSE_DICTATION_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+/// Updates the currently-configured mouse button. Call at boot and on
+/// every save_config. Also resets the toggle state, for the same reason
+/// as set_mouse_mode_enabled.
+pub fn set_mouse_button(btn: MouseButton) {
+    use std::sync::atomic::Ordering;
+    MOUSE_BUTTON.store(btn.as_u8(), Ordering::SeqCst);
+    MOUSE_DICTATION_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+/// Whether a detected click on `btn` should actually be treated as a
+/// mouse-mode trigger right now — Mouse mode is on AND it's the
+/// currently-configured button. Platform watchers call this to decide
+/// both whether to react at all, and (Windows only) whether to suppress
+/// the click.
+pub fn should_handle_mouse_click(btn: MouseButton) -> bool {
+    use std::sync::atomic::Ordering;
+    MOUSE_MODE.load(Ordering::SeqCst) && MouseButton::from_u8(MOUSE_BUTTON.load(Ordering::SeqCst)) == btn
+}
+
+/// Toggles dictation on a mouse-mode click: the first click starts
+/// (forwards Pressed), the next stops (forwards Released). Always
+/// toggles — unlike route_physical_event, this doesn't consult
+/// "Tap to talk" at all, since a mouse click is never a hold.
+pub fn route_mouse_click(tx: &Sender<HotkeyEvent>) {
+    toggle_forward(
+        &MOUSE_DICTATION_ACTIVE,
+        HotkeyEvent::DictationPressed,
+        HotkeyEvent::DictationReleased,
+        tx,
+    );
+}
+
+/// Thin public entry point for desktop.rs's boot sequence — `macos` is a
+/// private submodule (platform internals stay out of the public API
+/// surface, same as the rest of this file), so this is the one crack in
+/// that wall, purely to spawn the watcher once at startup.
+#[cfg(target_os = "macos")]
+pub fn spawn_mac_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
+    macos::spawn_mouse_mode_watcher(tx);
+}
+
+/// Whether Mouse mode's platform hook is actually live, so the UI can say
+/// so instead of showing an on-looking toggle that does nothing. Only
+/// macOS can answer false: its event tap needs a permission the rest of
+/// the app never asks for, and without it the tap simply won't install
+/// (see `macos::spawn_mouse_mode_watcher`). Windows' and Linux's hooks
+/// need no permission of their own, so they're reported live.
+pub fn mouse_mode_tap_ok() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::mouse_tap_installed()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
 }
 
 /// Parsed hotkey: required modifier state + non-modifier key.
@@ -303,6 +538,19 @@ fn re_register(
         Vec::new()
     };
 
+    // Mouse mode: independent of the dictation hotkey's own path above —
+    // it reads whichever mouse devices are available regardless of
+    // whether the keyboard hotkey itself is using evdev or the portal.
+    // Observe-only (see linux_mouse.rs); registered unconditionally
+    // whenever a mouse is readable, since should_handle_mouse_click
+    // gates on the live mouse_mode/mouse_button config either way.
+    #[cfg(target_os = "linux")]
+    if linux_mouse::available() {
+        linux_mouse::register(tx.clone());
+    } else {
+        linux_mouse::stop();
+    }
+
     // Linux Wayland WITHOUT evdev access (pre-relogin, AppImage): fall
     // back to the GlobalShortcuts portal for dictation + polish. Neither
     // the plugin nor the X11 poller can see global key state on Wayland.
@@ -362,11 +610,13 @@ fn re_register(
                 *last = Some(Instant::now());
             }
             tracing::debug!("global-shortcut dictation pressed: {:?}", sc);
-            let _ = tx_dict.send(HotkeyEvent::DictationPressed);
+            route_physical_event(HotkeyEvent::DictationPressed, &tx_dict);
 
             // Spawn a one-shot poller that watches for release, sends the
             // release event, then clears `dict_active` so the next press
-            // can fire again.
+            // can fire again. Still runs in tap mode — route_physical_event
+            // is what decides whether the release actually gets forwarded
+            // or swallowed, not this poller.
             let tx_release = tx_dict.clone();
             let parsed = dict_parsed.clone();
             let dict_active_clone = dict_active.clone();
@@ -374,7 +624,7 @@ fn re_register(
                 let (poll_tx, poll_rx) = mpsc::channel();
                 native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::DictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
-                    let _ = tx_release.send(evt);
+                    route_physical_event(evt, &tx_release);
                 }
                 *dict_active_clone.lock() = false;
             });
@@ -431,7 +681,7 @@ fn re_register(
                 *last = Some(Instant::now());
             }
             tracing::debug!("global-shortcut polish-dictation pressed: {:?}", sc);
-            let _ = tx_pol.send(HotkeyEvent::PolishDictationPressed);
+            route_physical_event(HotkeyEvent::PolishDictationPressed, &tx_pol);
 
             let tx_release = tx_pol.clone();
             let parsed = pol_parsed.clone();
@@ -440,7 +690,7 @@ fn re_register(
                 let (poll_tx, poll_rx) = mpsc::channel();
                 native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::PolishDictationReleased);
                 if let Ok(evt) = poll_rx.recv() {
-                    let _ = tx_release.send(evt);
+                    route_physical_event(evt, &tx_release);
                 }
                 *pol_active_clone.lock() = false;
             });
@@ -570,12 +820,10 @@ fn derive_slot_number(h: &ParsedHotkey) -> Option<u8> {
 // scratchpad hotkey routing is also handled now — see the
 // "run-transform-in-app" emit in the TransformTriggered handler.)
 //
-// TODO(post-1.1.1): transform-slot keys are still FIXED (Alt+1..9 on
-// Win/Linux, ⌘1..9 on Mac). Making them USER-EDITABLE (a per-transform
-// hotkey recorder like the dictation HotkeyControl, a persisted custom
-// binding, registration in refresh_transform_bindings, and this combo
-// reflecting the custom key) is a feature deferred past 1.1.1 by the user
-// on 2026-07-17 — it needs a schema change + new UI, not shipped for launch.
+// Per-transform hotkeys ARE user-editable (shipped 2026-07-19, a7b13e1):
+// TransformsView's HotkeyRecorder writes a custom combo to Transform.hotkey,
+// resolve_slot_hotkey (desktop.rs) reads it first and validates it before
+// falling back to the numbered default (Alt+N / ⌘N) reflected here.
 fn format_combo(h: &ParsedHotkey) -> String {
     // macOS shows shortcuts as glyphs with no separators (⌃⌥⇧⌘ + key), in
     // that canonical modifier order. Windows/Linux use "Mod+Mod+Key" — with

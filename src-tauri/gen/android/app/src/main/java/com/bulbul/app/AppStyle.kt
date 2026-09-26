@@ -2,13 +2,21 @@
 // Copyright (c) 2026 Romanch Roshan Singh
 
 // Per-app dictation style — the Android side of the desktop "Style"
-// feature. The desktop biases its cleanup LLM with a tone hint chosen by
-// which app you're dictating into (WhatsApp → casual, Outlook → formal,
-// …). Mobile has no always-on cleanup pass, and an LLM restyle proved
-// both slow and prone to *answering* the dictation instead of reformatting
-// it. Since the three styles differ only in capitalization/punctuation
-// (see the Style page's samples), we do the reformat with plain string
-// transforms — instant, offline, and impossible to "reply".
+// feature. Both platforms now bias the cleanup LLM with a tone hint chosen
+// by which app you're dictating into (WhatsApp → casual, Outlook → formal,
+// …) — see Cleanup.kt's styleModifier, called from categoryForApp below via
+// BulbulConfig.styleForApp. That LLM pass is the only thing that currently
+// applies style; it's the whole app's cleanup pass (guards against
+// answering the dictation etc. — see Cleanup.kt), not a separate slow path.
+//
+// applyStyle() below predates that: it's a pure string-transform reformat
+// written for an earlier version of this feature that had no cleanup LLM on
+// mobile at all. It's correct and unit-clean but currently UNUSED — nothing
+// calls it. Kept rather than deleted because it's a plausible building
+// block if style ever needs a deterministic guarantee on top of the LLM's
+// best-effort compliance (its blanket comma-stripping would need scoping
+// down first — safe for the Style page's own short samples, untested on
+// longer real dictations).
 //
 // Desktop keys categories on exe names / macOS bundle ids; Android hands
 // us Java package names instead, so the mapping table below is Android

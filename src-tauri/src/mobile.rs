@@ -80,7 +80,13 @@ fn read_config(app: &tauri::AppHandle) -> Option<Config> {
         return None;
     }
     let text = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str::<Config>(&text).ok()
+    let cfg = serde_json::from_str::<Config>(&text).ok()?;
+    // Sweeps a stale/retired chat_model (e.g. a Groq model decommissioned
+    // after this config was saved) onto the current default, same as
+    // desktop's config::load() and the Kotlin bubble's chatModel(). Without
+    // this, the dashboard's Groq calls (Insights voice profile, Transforms)
+    // kept leading with a dead model and failing outright.
+    Some(config::migrate(cfg))
 }
 
 /// Autostart on Android is governed by the BOOT_COMPLETED broadcast,
@@ -161,10 +167,17 @@ fn get_recent_dictations(app: tauri::AppHandle, limit: u32, offset: u32) -> Vec<
         .rev() // newest first
         .skip(offset as usize)
         .take(limit as usize)
-        .enumerate()
-        .map(|(i, r)| {
+        .map(|r| {
             json!({
-                "id": (offset as usize + i) as i64,
+                // ts doubles as the row's stable id — history.jsonl has no
+                // dedicated id field (unlike desktop's SQLite autoincrement),
+                // and a full dictation pipeline (STT + cleanup round-trip)
+                // can't realistically complete twice within the same
+                // second, so this is unique in practice. A read-time
+                // position (offset+i) would shift under any delete/insert,
+                // silently pointing a later delete_dictation at the wrong
+                // row once the list had moved.
+                "id": r["ts"].as_i64().unwrap_or(0),
                 "ts": r["ts"],
                 "cleaned_text": r["cleaned_text"],
                 "foreground_app": r.get("foreground_app").cloned().unwrap_or(Value::Null),
@@ -173,6 +186,27 @@ fn get_recent_dictations(app: tauri::AppHandle, limit: u32, offset: u32) -> Vec<
             })
         })
         .collect()
+}
+
+/// Removes the history.jsonl row whose ts matches [id] (see
+/// get_recent_dictations for why ts is used as the row id) and rewrites the
+/// file without it. Errors if the app_data_dir can't be resolved; a missing
+/// id (already deleted, e.g. a stale UI list) is a silent no-op rather than
+/// an error, matching desktop's DELETE-affects-zero-rows behavior.
+#[tauri::command]
+fn delete_dictation(app: tauri::AppHandle, id: i64) -> Result<(), String> {
+    let rows = history_rows(&app);
+    let kept: Vec<Value> = rows
+        .into_iter()
+        .filter(|r| r["ts"].as_i64() != Some(id))
+        .collect();
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut text = kept.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+    if !kept.is_empty() {
+        text.push('\n');
+    }
+    std::fs::write(dir.join(HISTORY_FILE), text).map_err(|e| e.to_string())
 }
 
 // ---------- File-backed stores (transforms, dictionary) ----------
@@ -267,6 +301,27 @@ fn reasoning_effort_for(model: &str) -> Option<&'static str> {
 
 /// One-shot Groq chat completion. Mirrors `groq::chat` on desktop but kept
 /// inline so the mobile build doesn't pull the whole desktop groq module.
+/// Hard cap on attempts (1 initial + 3 retries) before giving up on a
+/// rate-limited or transiently-failing Groq chat request. Mirrors groq.rs
+/// (desktop), which mobile.rs otherwise deliberately doesn't import — kept
+/// self-contained here for the same reason as the rest of this file.
+const MOBILE_CHAT_MAX_ATTEMPTS: u32 = 4;
+
+/// How long to wait before the next attempt: the server's `Retry-After`
+/// header (seconds) if present, else exponential backoff (2s, 4s, 8s…)
+/// capped at 30s.
+fn mobile_retry_wait_secs(resp: &reqwest::Response, attempt: u32) -> u64 {
+    if let Some(secs) = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+    {
+        return secs.clamp(1, 30);
+    }
+    2u64.saturating_pow(attempt).min(30)
+}
+
 async fn groq_chat(
     api_key: &str,
     model: &str,
@@ -289,16 +344,38 @@ async fn groq_chat(
     if let Some(effort) = reasoning_effort_for(model) {
         body["reasoning_effort"] = json!(effort);
     }
-    let resp = client
-        .post("https://api.groq.com/openai/v1/chat/completions")
-        .bearer_auth(api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Network error: {e}"))?;
+
+    // Retry on 429 (rate limit) and 5xx with backoff, honoring Retry-After —
+    // previously this was a single bare attempt, so any rate limit (or a
+    // stale/retired model still in the config, see read_config's migrate
+    // call) surfaced the raw Groq error straight to the Insights UI.
+    let mut attempt = 0u32;
+    let resp = loop {
+        attempt += 1;
+        let resp = client
+            .post("https://api.groq.com/openai/v1/chat/completions")
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {e}"))?;
+        let status = resp.status();
+        if (status.as_u16() == 429 || status.is_server_error()) && attempt < MOBILE_CHAT_MAX_ATTEMPTS {
+            let wait = mobile_retry_wait_secs(&resp, attempt);
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            continue;
+        }
+        break resp;
+    };
+
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 429 {
+            return Err(
+                "The API is rate-limited right now. Wait a few seconds and try again.".to_string(),
+            );
+        }
         return Err(format!("Groq error ({status}): {text}"));
     }
     let v: Value = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
@@ -401,9 +478,17 @@ fn get_insights_usage(app: tauri::AppHandle) -> Value {
     let today = now.div_euclid(86_400);
 
     let total_words: i64 = rows.iter().map(|r| r["word_count"].as_i64().unwrap_or(0)).sum();
-    // Every mobile fix is a dictionary substitution (no AI cleanup pass on
-    // mobile yet), so total_fixes == dictionary_fixes and ai_fixes stays 0.
+    // fix_count per row is a raw-vs-final word-level diff (BulbulForegroundService
+    // countFixes), same meaning as desktop's count_fixes — it folds in the
+    // Cleanup LLM's edits together with dictionary substitutions. Split back
+    // out below via dictionary_fixes (summed from dictionary.json hit_count,
+    // same shape as desktop's SQL), mirroring db.rs::usage_stats exactly.
     let total_fixes: i64 = rows.iter().map(|r| r["fix_count"].as_i64().unwrap_or(0)).sum();
+    let dictionary_fixes: i64 = load_dictionary(&app)
+        .iter()
+        .map(|e| e["hit_count"].as_i64().unwrap_or(0))
+        .sum();
+    let ai_fixes = (total_fixes - dictionary_fixes).max(0);
 
     // WPM over the last 7 days — same window Home uses.
     let cutoff = now - 7 * 86_400;
@@ -485,8 +570,8 @@ fn get_insights_usage(app: tauri::AppHandle) -> Value {
         "words_last_month": words_last_month,
         "mom_change_pct": mom_change_pct,
         "total_fixes": total_fixes,
-        "ai_fixes": 0,
-        "dictionary_fixes": total_fixes,
+        "ai_fixes": ai_fixes,
+        "dictionary_fixes": dictionary_fixes,
         "day_streak": day_streak,
         "longest_streak": longest_streak,
         "total_apps_used": 0,
@@ -501,11 +586,66 @@ fn get_insights_usage(app: tauri::AppHandle) -> Value {
 /// correct "dictate N more words to unlock" progress instead of a dead 0.
 #[tauri::command]
 fn voice_stats_value(app: &tauri::AppHandle) -> Value {
-    let total_words: i64 = history_rows(app)
-        .iter()
-        .map(|r| r["word_count"].as_i64().unwrap_or(0))
-        .sum();
+    let rows = history_rows(app);
+    let total_words: i64 = rows.iter().map(|r| r["word_count"].as_i64().unwrap_or(0)).sum();
     let has_api_key = read_config(app).map(|c| c.has_api_key()).unwrap_or(false);
+
+    // Newest-first, capped at 500 — same recency window desktop's
+    // pull_cleaned_texts/pull_text_pairs use (db.rs) for the word-frequency
+    // stats below. history.jsonl is written oldest-line-first.
+    let recent: Vec<&Value> = rows.iter().rev().take(500).collect();
+    let texts: Vec<String> = recent
+        .iter()
+        .filter_map(|r| r["cleaned_text"].as_str())
+        .map(|s| s.to_string())
+        .collect();
+    let pairs: Vec<(String, String)> = recent
+        .iter()
+        .filter_map(|r| Some((r["raw_text"].as_str()?.to_string(), r["cleaned_text"].as_str()?.to_string())))
+        .collect();
+
+    let most_used_word = top_meaningful_word(&texts);
+    let most_corrected_word = top_corrected_word(&pairs);
+    let catchphrase = top_catchphrase(&texts);
+
+    // Peak (day-of-week, hour) bucket across all history. Rows written after
+    // this fix carry real local "dow"/"hour" (BulbulForegroundService::
+    // recordHistory, via the JVM's timezone database); older rows fall back
+    // to a UTC-derived bucket from `ts` so they still count rather than
+    // vanishing from the stat.
+    let bucket_for = |r: &Value| -> Option<(i64, i64)> {
+        let ts = r["ts"].as_i64()?;
+        let dow = r.get("dow").and_then(|v| v.as_i64())
+            .unwrap_or_else(|| (ts.div_euclid(86_400) + 4).rem_euclid(7));
+        let hour = r.get("hour").and_then(|v| v.as_i64())
+            .unwrap_or_else(|| ts.rem_euclid(86_400) / 3_600);
+        Some((dow, hour))
+    };
+    let mut bucket_counts: std::collections::HashMap<(i64, i64), i64> = std::collections::HashMap::new();
+    for r in &rows {
+        if let Some(b) = bucket_for(r) {
+            *bucket_counts.entry(b).or_insert(0) += 1;
+        }
+    }
+    let peak_bucket = bucket_counts.into_iter().max_by_key(|(_, n)| *n).map(|(b, _)| b);
+
+    let (peak_day_name, peak_hour_label, peak_app, peak_app_category) = match peak_bucket {
+        Some((dow, hour)) => {
+            let mut app_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+            for r in &rows {
+                if bucket_for(r) != Some((dow, hour)) {
+                    continue;
+                }
+                if let Some(a) = r["foreground_app"].as_str() {
+                    *app_counts.entry(a.to_string()).or_insert(0) += 1;
+                }
+            }
+            let peak_app = app_counts.into_iter().max_by_key(|(_, n)| *n).map(|(a, _)| a);
+            let peak_app_category = peak_app.as_deref().map(|a| categorize_app_mobile(a).to_string());
+            (Some(day_name(dow).to_string()), Some(format_hour(hour)), peak_app, peak_app_category)
+        }
+        None => (None, None, None, None),
+    };
 
     let voice = read_json_object(app, VOICE_FILE);
     let field = |k: &str| {
@@ -520,13 +660,13 @@ fn voice_stats_value(app: &tauri::AppHandle) -> Value {
     let words_since = (total_words - words_at_gen).max(0);
 
     json!({
-        "most_used_word": null,
-        "most_corrected_word": null,
-        "catchphrase": null,
-        "peak_day_name": null,
-        "peak_hour_label": null,
-        "peak_app": null,
-        "peak_app_category": null,
+        "most_used_word": most_used_word,
+        "most_corrected_word": most_corrected_word,
+        "catchphrase": catchphrase,
+        "peak_day_name": peak_day_name,
+        "peak_hour_label": peak_hour_label,
+        "peak_app": peak_app,
+        "peak_app_category": peak_app_category,
         "voice_narrative": field("voice_narrative"),
         "peak_narrative": field("peak_narrative"),
         "last_generated_at": last_generated_at,
@@ -535,6 +675,144 @@ fn voice_stats_value(app: &tauri::AppHandle) -> Value {
         "total_words": total_words,
         "has_api_key": has_api_key,
     })
+}
+
+// ---------- Local voice-profile stats (ported from db.rs, JSON instead of
+// SQL — mobile has no SQLite dependency; see the module doc comment) ----------
+
+const VOICE_STOP_WORDS: &[&str] = &[
+    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been",
+    "being", "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "of", "in", "on", "at", "to",
+    "for", "with", "by", "from", "up", "about", "into", "through", "during", "before",
+    "after", "above", "below", "between", "i", "you", "he", "she", "it", "we", "they",
+    "me", "him", "her", "us", "them", "my", "your", "his", "its", "our", "their",
+    "this", "that", "these", "those", "what", "which", "who", "whom", "whose", "where",
+    "when", "why", "how", "all", "each", "every", "both", "few", "more", "most",
+    "other", "some", "such", "no", "not", "only", "own", "same", "so", "than", "too",
+    "very", "just", "as", "if", "any", "yes", "well", "okay", "ok", "yeah", "im",
+    "youre", "theyre", "weve", "ive", "dont", "doesnt", "didnt", "wont", "cant",
+    "isnt", "arent", "wasnt", "werent", "thats", "theres", "heres", "let", "lets",
+    "go", "going", "get", "got", "really", "actually", "basically", "kind", "sort",
+];
+
+fn voice_tokenize_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect()
+}
+
+fn voice_is_meaningful(word: &str) -> bool {
+    word.len() > 2 && !VOICE_STOP_WORDS.contains(&word)
+}
+
+fn top_meaningful_word(texts: &[String]) -> Option<String> {
+    let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for text in texts {
+        for tok in voice_tokenize_words(text) {
+            if voice_is_meaningful(&tok) {
+                *counts.entry(tok).or_insert(0) += 1;
+            }
+        }
+    }
+    counts.into_iter().max_by_key(|(_, n)| *n).map(|(w, _)| w)
+}
+
+fn top_corrected_word(pairs: &[(String, String)]) -> Option<String> {
+    let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for (raw, cleaned) in pairs {
+        let raw_set: std::collections::HashSet<String> = voice_tokenize_words(raw).into_iter().collect();
+        let cleaned_set: std::collections::HashSet<String> = voice_tokenize_words(cleaned).into_iter().collect();
+        for token in raw_set.difference(&cleaned_set) {
+            if voice_is_meaningful(token) {
+                *counts.entry(token.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    counts.into_iter().max_by_key(|(_, n)| *n).map(|(w, _)| w)
+}
+
+fn top_catchphrase(texts: &[String]) -> Option<String> {
+    let mut ngrams: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for text in texts {
+        let words: Vec<String> = text
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'').to_lowercase())
+            .filter(|w| !w.is_empty())
+            .collect();
+        for n in 3..=5 {
+            if words.len() < n {
+                continue;
+            }
+            for window in words.windows(n) {
+                let all_stop = window.iter().all(|w| VOICE_STOP_WORDS.contains(&w.as_str()));
+                if all_stop {
+                    continue;
+                }
+                let phrase = window.join(" ");
+                if phrase.len() < 12 {
+                    continue;
+                }
+                *ngrams.entry(phrase).or_insert(0) += 1;
+            }
+        }
+    }
+    ngrams
+        .into_iter()
+        .filter(|(_, n)| *n >= 2)
+        .max_by_key(|(p, n)| (*n, p.len() as i64))
+        .map(|(p, _)| p)
+}
+
+fn day_name(dow: i64) -> &'static str {
+    match dow {
+        0 => "Sunday",
+        1 => "Monday",
+        2 => "Tuesday",
+        3 => "Wednesday",
+        4 => "Thursday",
+        5 => "Friday",
+        6 => "Saturday",
+        _ => "—",
+    }
+}
+
+fn format_hour(hour: i64) -> String {
+    let (display, suffix) = match hour {
+        0 => (12, "a.m."),
+        1..=11 => (hour, "a.m."),
+        12 => (12, "p.m."),
+        _ => (hour - 12, "p.m."),
+    };
+    format!("{display} {suffix}")
+}
+
+/// Friendly app name → the same category vocabulary db.rs's categorize_app
+/// uses on desktop. Keyed on the launcher-visible label ("WhatsApp"), NOT
+/// the package id ("com.whatsapp") — history.jsonl's foreground_app has
+/// always stored the label (BulbulForegroundService resolves it via
+/// friendlyAppName before writing), and corrections.json now does the same
+/// (CorrectionWatcher). Matching is case-insensitive since PackageManager
+/// labels aren't guaranteed to match a fixed case. Deliberately
+/// conservative: an unrecognized name falls to "Other" rather than
+/// guessing, which is a safe, honest default — the UI just skips the
+/// personality-title easter egg in that case.
+fn categorize_app_mobile(app: &str) -> &'static str {
+    match app.to_lowercase().as_str() {
+        "whatsapp" | "whatsapp business" | "telegram" | "signal" | "messenger"
+        | "instagram" | "snapchat" | "messages" | "google messages" => "Personal messages",
+        "slack" | "teams" | "microsoft teams" | "discord" | "chat" | "google chat" => "Work messages",
+        "gmail" | "outlook" | "microsoft outlook" | "yahoo mail" | "proton mail"
+        | "protonmail" | "k-9 mail" | "k-9 mail (fork)" => "Emails",
+        "chrome" | "google chrome" | "firefox" | "firefox fast & private" | "edge"
+        | "microsoft edge" | "brave" | "brave browser" | "opera" | "opera browser"
+        | "samsung internet" | "internet" => "Browsing",
+        "chatgpt" | "claude" | "perplexity" | "perplexity - ask anything" => "AI Prompts",
+        "word" | "microsoft word" | "docs" | "google docs" | "evernote" | "obsidian"
+        | "notion" => "Documents",
+        _ => "Other",
+    }
 }
 
 #[tauri::command]
@@ -578,7 +856,10 @@ async fn refresh_voice_narrative(app: tauri::AppHandle) -> Result<Value, String>
         rows.len(),
     );
 
-    let content = groq_chat(
+    // groq_chat_chain (not bare groq_chat) so a retired/rate-limited primary
+    // model falls through to CHAT_FALLBACK instead of dead-ending the whole
+    // Voice tab on one model's failure.
+    let content = groq_chat_chain(
         cfg.groq_api_key.trim(),
         &cfg.chat_model,
         VOICE_PROFILE_SYSTEM_PROMPT,
@@ -663,18 +944,102 @@ fn list_dictionary(app: tauri::AppHandle) -> Vec<Value> {
     load_dictionary(&app)
 }
 
+// corrections.json is written by CorrectionWatcher.kt (post-injection field
+// watcher — see that file) after a dictation is hand-edited; Rust only ever
+// reads it. correction_dismissals.json is the reverse: only Rust writes it,
+// from the Dictionary page's "Dismiss" action. Keeping them as two files
+// (rather than one shared one) means the always-running Kotlin watcher and
+// a UI-triggered Rust write never race on the same file.
+const CORRECTIONS_FILE: &str = "corrections.json";
+const CORRECTION_DISMISSALS_FILE: &str = "correction_dismissals.json";
+
+/// Newest-first corrections, same shape as db::list_corrections on desktop.
 #[tauri::command]
-fn correction_suggestions() -> Vec<Value> {
-    Vec::new()
+fn list_corrections(app: tauri::AppHandle, limit: Option<u32>) -> Vec<Value> {
+    let mut rows = read_json_array(&app, CORRECTIONS_FILE);
+    rows.sort_by_key(|r| std::cmp::Reverse(r["ts"].as_i64().unwrap_or(0)));
+    rows.truncate(limit.unwrap_or(100) as usize);
+    rows
 }
 
+/// If `injected` and `corrected` differ by exactly one whitespace-delimited
+/// word (ignoring surrounding punctuation), return that (from, to) swap.
+/// Ported verbatim from db.rs::extract_word_substitution.
+fn extract_word_substitution(injected: &str, corrected: &str) -> Option<(String, String)> {
+    let inj: Vec<&str> = injected.split_whitespace().collect();
+    let cor: Vec<&str> = corrected.split_whitespace().collect();
+    if inj.is_empty() || inj.len() != cor.len() {
+        return None;
+    }
+    fn strip(w: &str) -> &str {
+        w.trim_matches(|c: char| !c.is_alphanumeric())
+    }
+    let mut diff: Option<(String, String)> = None;
+    for (a, b) in inj.iter().zip(cor.iter()) {
+        let (sa, sb) = (strip(a), strip(b));
+        if sa == sb {
+            continue;
+        }
+        if diff.is_some() {
+            return None; // more than one word changed — not a clean swap
+        }
+        diff = Some((sa.to_string(), sb.to_string()));
+    }
+    let (from, to) = diff?;
+    if from.is_empty() || to.is_empty() || from.chars().count() > 40 || to.chars().count() > 40 {
+        return None;
+    }
+    Some((from, to))
+}
+
+/// Distinct single-word fixes as dictionary suggestions — ported from
+/// db.rs::correction_suggestions (SQL GROUP BY replaced with a HashMap over
+/// the same JSON array list_corrections reads).
 #[tauri::command]
-fn list_corrections(_limit: Option<u32>) -> Vec<Value> {
-    // Correction tracking (detecting when the user hand-edits injected text)
-    // needs post-injection edit monitoring that isn't built on mobile yet, so
-    // this stays empty. Option<u32> so the arg-less invoke from the UI doesn't
-    // error on a missing `limit` key.
-    Vec::new()
+fn correction_suggestions(app: tauri::AppHandle) -> Vec<Value> {
+    let dict: std::collections::HashSet<String> = load_dictionary(&app)
+        .iter()
+        .filter_map(|e| e["from_word"].as_str())
+        .map(|s| s.to_lowercase())
+        .collect();
+    let dismissed: std::collections::HashSet<(String, String)> =
+        read_json_array(&app, CORRECTION_DISMISSALS_FILE)
+            .iter()
+            .filter_map(|e| Some((e["from_word"].as_str()?.to_string(), e["to_word"].as_str()?.to_string())))
+            .collect();
+
+    let mut rows = read_json_array(&app, CORRECTIONS_FILE);
+    rows.sort_by_key(|r| std::cmp::Reverse(r["ts"].as_i64().unwrap_or(0)));
+
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut counts: std::collections::HashMap<(String, String), (String, String, i64)> =
+        std::collections::HashMap::new();
+    for r in &rows {
+        let (Some(inj), Some(cor)) = (r["injected"].as_str(), r["corrected"].as_str()) else { continue };
+        let Some((from, to)) = extract_word_substitution(inj, cor) else { continue };
+        let (from_lower, to_lower) = (from.to_lowercase(), to.to_lowercase());
+        if dict.contains(&from_lower) {
+            continue;
+        }
+        let key = (from_lower, to_lower);
+        if dismissed.contains(&key) {
+            continue;
+        }
+        match counts.get_mut(&key) {
+            Some(entry) => entry.2 += 1,
+            None => {
+                order.push(key.clone());
+                counts.insert(key, (from, to, 1));
+            }
+        }
+    }
+    let mut out: Vec<(String, String, i64)> =
+        order.into_iter().filter_map(|k| counts.remove(&k)).collect();
+    out.sort_by(|a, b| b.2.cmp(&a.2)); // stable: keeps recency within ties
+    out.truncate(20);
+    out.into_iter()
+        .map(|(from_word, to_word, count)| json!({ "from_word": from_word, "to_word": to_word, "count": count }))
+        .collect()
 }
 
 #[tauri::command]
@@ -753,7 +1118,19 @@ fn delete_dictionary_entry(app: tauri::AppHandle, id: i64) -> Result<(), String>
 }
 
 #[tauri::command]
-fn dismiss_correction_suggestion(_from_word: String) -> Result<(), String> {
+fn dismiss_correction_suggestion(app: tauri::AppHandle, from_word: String, to_word: String) -> Result<(), String> {
+    let (from, to) = (from_word.trim().to_lowercase(), to_word.trim().to_lowercase());
+    if from.is_empty() || to.is_empty() {
+        return Ok(());
+    }
+    let mut rows = read_json_array(&app, CORRECTION_DISMISSALS_FILE);
+    let already = rows.iter().any(|r| {
+        r["from_word"].as_str() == Some(from.as_str()) && r["to_word"].as_str() == Some(to.as_str())
+    });
+    if !already {
+        rows.push(json!({ "from_word": from, "to_word": to }));
+        write_json_array(&app, CORRECTION_DISMISSALS_FILE, &rows)?;
+    }
     Ok(())
 }
 
@@ -1192,6 +1569,87 @@ async fn validate_api_key(api_key: String) -> Result<(), String> {
     }
 }
 
+/// Real transcription for the onboarding "Try it yourself" rehearsal
+/// (StepDictateTest in OnboardingWizard.jsx) — not hardcoded, not a
+/// mock: the same Groq Whisper endpoint and model fallback order the
+/// real floating bubble uses (mirrors GroqClient.kt's STT_MODELS). The
+/// webview captures the audio itself via the Web Audio API and encodes
+/// a real WAV file client-side (there's no way to reach Kotlin's
+/// AudioRecord from here), so this just needs to upload exactly what
+/// AudioRecorder.kt would have produced. The wizard has no target app
+/// to inject into, so the transcript is returned to JS to render in its
+/// own preview field instead. Kept inline rather than routed through
+/// groq.rs for the same reason validate_api_key above is: the mobile
+/// build skips pulling in the whole desktop groq module.
+#[tauri::command]
+async fn transcribe_dictate_sample(
+    app: tauri::AppHandle,
+    wav_bytes: Vec<u8>,
+) -> Result<String, String> {
+    let cfg = read_config(&app).unwrap_or_default();
+    let cfg = mobile_config_defaults(cfg);
+    let key = cfg.groq_api_key.trim().to_string();
+    if key.is_empty() {
+        return Err("No Groq API key saved yet.".to_string());
+    }
+    if wav_bytes.len() < 200 {
+        return Err("No audio captured — try holding a little longer.".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client init failed: {e}"))?;
+
+    let lang = cfg.language.trim();
+    let lang = if !lang.is_empty() && lang != "auto" {
+        Some(lang.to_string())
+    } else {
+        None
+    };
+
+    #[derive(serde::Deserialize)]
+    struct TranscriptionResponse {
+        text: String,
+    }
+
+    // Same primary-then-fallback order as GroqClient.kt's STT_MODELS, so a
+    // decommissioned/rate-limited turbo model doesn't dead-end the rehearsal.
+    for model in ["whisper-large-v3-turbo", "whisper-large-v3"] {
+        let part = match reqwest::multipart::Part::bytes(wav_bytes.clone())
+            .file_name("audio.wav")
+            .mime_str("audio/wav")
+        {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let mut form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("model", model)
+            .text("response_format", "json");
+        if let Some(l) = &lang {
+            form = form.text("language", l.clone());
+        }
+        let resp = match client
+            .post("https://api.groq.com/openai/v1/audio/transcriptions")
+            .bearer_auth(&key)
+            .multipart(form)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let body = resp.text().await.unwrap_or_default();
+        if let Ok(parsed) = serde_json::from_str::<TranscriptionResponse>(&body) {
+            return Ok(parsed.text.trim().to_string());
+        }
+    }
+    Err("Transcription failed — check your connection and try again.".to_string())
+}
+
 // ---------- Overlay / scratchpad windows (desktop-only concepts) ----------
 
 #[tauri::command]
@@ -1242,6 +1700,7 @@ pub fn run() {
             // Home + Insights
             get_home_stats,
             get_recent_dictations,
+            delete_dictation,
             get_insights_usage,
             get_voice_stats,
             refresh_voice_narrative,
@@ -1274,6 +1733,7 @@ pub fn run() {
             delete_note,
             // Settings
             validate_api_key,
+            transcribe_dictate_sample,
             get_overlay_snoozed_until,
             resume_overlay,
             // Overlay / scratchpad windows

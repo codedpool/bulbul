@@ -37,6 +37,7 @@ object BulbulConfig {
     private const val MODEL_CONFIG_PREFS = "bulbul_model_config"
     private const val MODEL_CONFIG_CHAIN = "cleanup_chain"
     private const val MODELS_URL = "https://bulbultypes.xyz/models.json"
+    private const val GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 
     private var cachedDir: File? = null
 
@@ -79,6 +80,16 @@ object BulbulConfig {
 
     fun apiKey(context: Context): String =
         read(context)?.optString("groq_api_key", "").orEmpty()
+
+    /// Whether the React wizard has finished the CURRENT onboarding pass
+    /// (false again during a deliberate "Re-run setup wizard" replay).
+    /// Gates the floating bubble in BulbulAccessibilityService — without
+    /// this, the bubble was appearing over the wizard's own text fields
+    /// (e.g. the name screen) before a Groq key even existed, where
+    /// tapping it could only fail, and its own overlay window could sit
+    /// on top of the field the user was trying to type into.
+    fun onboardingCompleted(context: Context): Boolean =
+        read(context)?.optBoolean("onboarding_completed", false) ?: false
 
     /// Opt-in telemetry gate (Settings ▸ Privacy / onboarding toggle).
     /// Defaults true to match the desktop Config default.
@@ -156,6 +167,34 @@ object BulbulConfig {
         }
     }
 
+    /// Groq's currently-served model ids (OpenAI-compatible GET /v1/models),
+    /// or null if the call didn't work (no/blank key, offline, rejected).
+    /// Used only as a best-effort safety net below — never required for
+    /// fetchAndCacheModelChain to succeed. Mirrors desktop's
+    /// groq::list_groq_models.
+    private fun liveGroqModelIds(apiKey: String): List<String>? {
+        if (apiKey.isBlank()) return null
+        return try {
+            val conn = java.net.URL(GROQ_MODELS_URL).openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 15_000
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Authorization", "Bearer $apiKey")
+            if (conn.responseCode !in 200..299) {
+                Log.w(TAG, "Groq live-model check rejected: ${conn.responseCode}")
+                conn.disconnect()
+                return null
+            }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            val data = JSONObject(body).getJSONArray("data")
+            (0 until data.length()).map { data.getJSONObject(it).getString("id") }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Groq live-model check failed", t)
+            null
+        }
+    }
+
     /// Fetches bulbultypes.xyz/models.json and caches its cleanup_chain
     /// locally, so a future Groq model rotation (like qwen3.6-27b's
     /// 2026-09-14 retirement) can be fixed by editing that JSON file and
@@ -163,6 +202,13 @@ object BulbulConfig {
     /// network call; run off the main thread (see
     /// BulbulForegroundService.spawnModelConfigRefresh). Failures are
     /// logged and swallowed — the cache simply keeps whatever it last had.
+    ///
+    /// Before caching, the fetched chain is cross-checked against Groq's own
+    /// live model list (liveGroqModelIds) so a stale or forgotten
+    /// models.json update can't lead dictation with a model Groq has since
+    /// retired. Best-effort: no key, an offline check, or every model
+    /// coming up missing all fall back to caching the chain exactly as
+    /// fetched. Mirrors desktop's model_config::verify_against_groq.
     fun fetchAndCacheModelChain(context: Context) {
         try {
             val conn = java.net.URL(MODELS_URL).openConnection() as java.net.HttpURLConnection
@@ -171,13 +217,33 @@ object BulbulConfig {
             conn.requestMethod = "GET"
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             conn.disconnect()
-            val chain = JSONObject(body).getJSONArray("cleanup_chain")
-            if (chain.length() == 0) {
+            val fetched = JSONObject(body).getJSONArray("cleanup_chain")
+            if (fetched.length() == 0) {
                 Log.w(TAG, "model config: models.json cleanup_chain is empty — ignoring")
                 return
             }
+            val fetchedList = (0 until fetched.length()).map { fetched.getString(it) }
+            val live = liveGroqModelIds(apiKey(context))
+            val chain = if (live == null) {
+                fetchedList
+            } else {
+                val verified = fetchedList.filter { it in live }
+                if (verified.isEmpty()) {
+                    Log.w(
+                        TAG,
+                        "model config: none of $fetchedList are in Groq's live list — " +
+                            "keeping the chain as fetched"
+                    )
+                    fetchedList
+                } else {
+                    if (verified.size != fetchedList.size) {
+                        Log.i(TAG, "model config: trimmed against Groq's live models: $fetchedList -> $verified")
+                    }
+                    verified
+                }
+            }
             context.getSharedPreferences(MODEL_CONFIG_PREFS, Context.MODE_PRIVATE)
-                .edit().putString(MODEL_CONFIG_CHAIN, chain.toString()).apply()
+                .edit().putString(MODEL_CONFIG_CHAIN, org.json.JSONArray(chain).toString()).apply()
             Log.i(TAG, "model config: cached remote cleanup chain $chain")
         } catch (t: Throwable) {
             Log.w(TAG, "model config fetch failed", t)

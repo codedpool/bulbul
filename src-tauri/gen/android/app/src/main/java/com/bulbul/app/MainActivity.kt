@@ -12,9 +12,11 @@ import android.os.FileObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebView
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -29,6 +31,7 @@ import java.io.File
 class MainActivity : TauriActivity() {
   private var configObserver: FileObserver? = null
   private var permissionBanner: View? = null
+  private var webView: WebView? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -54,9 +57,65 @@ class MainActivity : TauriActivity() {
     // dismissible in-app banner (see showPermissionBanner) rather than
     // force-reopening SetupActivity, so the user is never trapped but also
     // never left on a silently non-functional app.
-    if (!hasAllPermissions()) {
+    if (!hasAllPermissions() || !SetupActivity.heroSeenStatic(this)) {
       startActivity(Intent(this, SetupActivity::class.java))
     }
+  }
+
+  /// WryActivity's hook for when the Tauri webview is created (see
+  /// WryActivity.setWebView in the vendored wry source) — the only way to
+  /// get a reference to it, since it's a private field on the base class.
+  ///
+  /// This exists to fix the bottom nav bar's spacing. CSS env(safe-area-
+  /// inset-bottom) is unreliable in this WebView (see the .m-tabbar CSS
+  /// comment) — RustWebView does no inset handling of its own at all — so
+  /// the bottom padding was a flat guessed value. That guess can't match
+  /// every device: gesture nav's real reserved strip is usually smaller
+  /// than the guess (wasted gap), while some 3-button-nav devices reserve
+  /// MORE than the guess (the system bar overlapping the app's own tab
+  /// bar). Reading the real navigationBars() inset here and pushing it
+  /// into the page as a CSS variable — which the OS re-delivers on its own
+  /// whenever it actually changes (rotation, switching nav mode in
+  /// Settings) — replaces the guess with the true per-device, per-mode
+  /// value.
+  override fun onWebViewCreate(webView: WebView) {
+    super.onWebViewCreate(webView)
+    this.webView = webView
+    ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
+      applyNavInset(v, insets)
+      insets
+    }
+    // This first request usually lands before the window has actually
+    // settled (the webview is inserted into the hierarchy mid-setup) and
+    // reports 0 for every inset — nothing then triggers a further one on
+    // its own, since a fresh dispatch normally needs a real change (focus,
+    // rotation, IME) to fire again. onWindowFocusChanged below forces the
+    // real read once the window has genuinely settled.
+    ViewCompat.requestApplyInsets(webView)
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (!hasFocus) return
+    // Querying the webview's own dispatched insets never produced a real
+    // (non-zero) value — something in Wry's view hierarchy between the
+    // decor view and the webview consumes them first. window.decorView is
+    // the true root the system delivers insets to before any app view gets
+    // a chance to touch them, so read from there directly instead of
+    // relying on a dispatch reaching the webview.
+    ViewCompat.getRootWindowInsets(window.decorView)?.let { applyNavInset(window.decorView, it) }
+  }
+
+  private fun applyNavInset(view: View, insets: WindowInsetsCompat) {
+    val bottomPx = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+    // WebView content renders in CSS px, which line up with dp (not raw
+    // device pixels) once a standard "width=device-width" viewport is set
+    // (see index.html) — same conversion applyBarAppearance's sibling code
+    // already relies on elsewhere in this file.
+    val bottomDp = bottomPx / view.resources.displayMetrics.density
+    val js = "document.documentElement.style.setProperty('--android-nav-inset', '${bottomDp}px')"
+    Log.d("BulbulNavInset", "navigationBars bottom=${bottomPx}px -> ${bottomDp}dp")
+    webView?.evaluateJavascript(js, null)
   }
 
   override fun onResume() {

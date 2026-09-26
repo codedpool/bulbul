@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import FeatureHero from "../components/FeatureHero.jsx";
+import featureDictionaryImg from "../assets/feature-dictionary.png";
 
 const DICTIONARY_HERO_SAMPLES = [
   { trigger: "groq", expansion: "Groq" },
@@ -113,6 +114,7 @@ export default function DictionaryView() {
         dismissKey="bulbul.dictionary.hero.dismissed"
         title={<>Names, brands, jargon — <em>spelled right</em> every time.</>}
         samples={DICTIONARY_HERO_SAMPLES}
+        image={featureDictionaryImg}
       />
 
       {suggestions.length > 0 && (

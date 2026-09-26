@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
+import MouseButtonRecorder from "../components/MouseButtonRecorder.jsx";
 import { AUTOSTART_LABEL, IS_ANDROID, IS_LINUX, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
 
 const MODES = [
@@ -19,6 +20,20 @@ const THEMES = [
   { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
   { value: "system", label: "System" },
+];
+
+// Desktop only — the overlay pill is a WebView2/WebKit window positioned by
+// the Rust backend (see desktop.rs's position_overlay); Android's "Overlay"
+// section is a different, native floating bubble the user already drags
+// anywhere. Same three dock points the pill itself snaps to when you drag
+// it directly (see Overlay.jsx) — this is the non-drag way to reach them.
+// A top anchor isn't offered: it would need the language-dropdown's
+// grow-upward direction (and the pill's own bottom-justified layout) to
+// flip too, not just a coordinate.
+const OVERLAY_POSITIONS = [
+  { value: "left", label: "Left" },
+  { value: "bottom-center", label: "Bottom" },
+  { value: "right", label: "Right" },
 ];
 
 // Cleanup model is intentionally NOT a user picker (like the STT model, it's
@@ -89,6 +104,12 @@ export default function SettingsView({
   onAutostartChange,
   autostartError,
   onHideTrayChange,
+  // Desktop only — App.jsx's Mode-B auto-update state. Undefined on the
+  // Android sheet's own SettingsView instance, which never passes these
+  // (checkUpdates already branches to "Open Play Store" there instead).
+  stagedUpdate,
+  installUpdate,
+  installing,
   // Android drill-down nav is lifted to App so the hardware-back handler can
   // step through it. null = the section list; a section id = its detail.
   section: mSection = null,
@@ -281,9 +302,14 @@ export default function SettingsView({
     }
     setUpdateState({ state: "checking", message: "" });
     try {
+      // A truthy result means check_for_updates has already downloaded and
+      // staged it (see desktop.rs) — App.jsx's own "update-staged" listener
+      // picks up stagedUpdate from here, which is what actually flips this
+      // pane's button to "Install & restart" (see PaneAbout's `ready`).
+      // Nothing to show locally in that case — reset back to idle rather
+      // than tracking a redundant "available" state nothing renders.
       const result = await invoke("check_for_updates");
-      if (result) setUpdateState({ state: "available", message: `v${result}` });
-      else setUpdateState({ state: "uptodate", message: "You're on the latest version." });
+      setUpdateState(result ? { state: "idle", message: "" } : { state: "uptodate", message: "You're on the latest version." });
     } catch (e) {
       setUpdateState({ state: "error", message: String(e) });
     }
@@ -436,6 +462,7 @@ export default function SettingsView({
             {active === "hotkeys" && (
               <PaneHotkeys
                 config={config}
+                updateConfig={updateConfig}
                 recordingHotkeyFor={recordingHotkeyFor}
                 setRecordingHotkeyFor={setRecordingHotkeyFor}
                 recordingError={recordingError}
@@ -463,6 +490,9 @@ export default function SettingsView({
                 checkUpdates={checkUpdates}
                 updateState={updateState}
                 onResetSetup={() => updateConfig({ ...config, onboarding_completed: false })}
+                stagedUpdate={stagedUpdate}
+                installUpdate={installUpdate}
+                installing={installing}
               />
             )}
           </main>
@@ -483,6 +513,7 @@ const MODE_OPTIONS = MODES.map((m) => ({ code: m.value, label: m.label }));
 function PaneGeneral({ config, updateConfig }) {
   const activeMode = MODES.find((m) => m.value === config.mode) || MODES[1];
   const activeTheme = config.theme || "light";
+  const activePosition = config.overlay_position || "bottom-center";
   return (
     <>
       <Row title="Cleanup mode" hint={activeMode.hint}>
@@ -523,6 +554,22 @@ function PaneGeneral({ config, updateConfig }) {
           ))}
         </div>
       </Row>
+      {!IS_ANDROID && (
+        <Row title="Pill position" hint="Where the dictation pill sits along the bottom of the screen.">
+          <div className="segmented">
+            {OVERLAY_POSITIONS.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                className={`segmented-btn ${activePosition === p.value ? "selected" : ""}`}
+                onClick={() => updateConfig({ ...config, overlay_position: p.value })}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </Row>
+      )}
     </>
   );
 }
@@ -577,6 +624,7 @@ function PaneAccount({ config, updateConfig, hasKey, draftKey, setDraftKey, save
 
 function PaneHotkeys({
   config,
+  updateConfig,
   recordingHotkeyFor,
   setRecordingHotkeyFor,
   recordingError,
@@ -590,6 +638,31 @@ function PaneHotkeys({
     clearRecordingError?.();
     setRecordingHotkeyFor(null);
   };
+  // macOS only: Mouse mode's event tap needs a system permission nothing
+  // else in Bulbul asks for (the hotkeys poll key state, the overlay polls
+  // the cursor — neither is gated). Without it the tap never installs and
+  // Mouse mode is silently inert while its toggle still reads "on". Poll
+  // on roughly the same cadence the backend retries the tap, so this
+  // clears itself once the grant lands instead of going stale until
+  // Settings is reopened.
+  const [mouseModeOk, setMouseModeOk] = useState(true);
+  useEffect(() => {
+    if (!IS_MAC) return;
+    let active = true;
+    const check = () => {
+      invoke("mouse_mode_available")
+        .then((ok) => {
+          if (active) setMouseModeOk(ok);
+        })
+        .catch(() => {});
+    };
+    check();
+    const id = setInterval(check, 4000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
   return (
     <>
       <Row
@@ -621,6 +694,42 @@ function PaneHotkeys({
       <p className="muted small settings-note">
         Transform shortcuts ({IS_MAC ? <><kbd>⌘1</kbd>…<kbd>⌘6</kbd></> : <><kbd>Alt+1</kbd>…<kbd>Alt+6</kbd></>}) for rewriting selected text live on the Transforms page.
       </p>
+      {/* `stack` for the same reason the two hotkey rows above use it: this
+          control can grow a validation message under the button, and the
+          side-by-side layout gives the control column `flex-shrink: 0` while
+          the title/hint column is `flex: 1; min-width: 0`. An unconstrained
+          error string then wins the width fight outright and crushes the hint
+          down toward zero, wrapping it one word per line. Stacked, there's no
+          competition — hint and control each get the full row. */}
+      <Row
+        title="Mouse button"
+        hint="Which button triggers Mouse mode (the sidebar toggle) — click to start dictating, click again to stop."
+        stack
+      >
+        <MouseButtonRecorder
+          value={config.mouse_button || "middle"}
+          onChange={(v) => updateConfig({ ...config, mouse_button: v })}
+        />
+        {!mouseModeOk && config.mouse_mode && (
+          <p className="err small" role="alert">
+            macOS is blocking Mouse mode — it needs permission to watch mouse
+            clicks.{" "}
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => {
+                invoke("open_mac_settings_pane", { pane: "accessibility" }).catch(() =>
+                  invoke("open_mac_settings_pane", { pane: "privacy" }).catch(() => {}),
+                );
+              }}
+            >
+              Open System Settings
+            </button>{" "}
+            and add Bulbul under Accessibility (and Input Monitoring, if listed).
+            It starts working within a few seconds — no restart needed.
+          </p>
+        )}
+      </Row>
     </>
   );
 }
@@ -832,7 +941,7 @@ function PanePrivacy({ config, updateConfig }) {
   );
 }
 
-function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
+function PaneAbout({ checkUpdates, updateState, onResetSetup, stagedUpdate, installUpdate, installing }) {
   const [copied, setCopied] = useState(false);
   const copyEmail = async () => {
     try {
@@ -841,26 +950,42 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
       setTimeout(() => setCopied(false), 1600);
     } catch {}
   };
+  // Once an update is staged — by this same button (check_for_updates now
+  // downloads eagerly, not just reports) or by the background watcher
+  // finding one first — the button IS the install action, not a second
+  // "check again" step. stagedUpdate comes from App.jsx and updates live
+  // (the "update-staged" event), so this also reflects the watcher's own
+  // finds without the user ever pressing Check for updates.
+  const ready = !IS_ANDROID && !!stagedUpdate;
   return (
     <>
       <Row
         title="Updates"
-        hint={IS_ANDROID ? "Play Store keeps Bulbul up to date." : "Bulbul checks GitHub releases on a schedule."}
+        hint={
+          IS_ANDROID
+            ? "Play Store keeps Bulbul up to date."
+            : ready
+              ? "Downloaded. It installs automatically next time Bulbul starts."
+              : "Bulbul checks GitHub releases on a schedule."
+        }
         stack
       >
         <div className="row">
-          <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
-            {IS_ANDROID
-              ? "Open Play Store"
-              : updateState.state === "checking"
-                ? "Checking…"
-                : "Check for updates"}
-          </button>
+          {ready ? (
+            <button onClick={installUpdate} disabled={installing}>
+              {installing ? "Installing…" : `Install v${stagedUpdate} & restart now`}
+            </button>
+          ) : (
+            <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
+              {IS_ANDROID
+                ? "Open Play Store"
+                : updateState.state === "checking"
+                  ? "Checking…"
+                  : "Check for updates"}
+            </button>
+          )}
         </div>
-        {!IS_ANDROID && updateState.state === "available" && (
-          <p className="ok small">Update available: {updateState.message}</p>
-        )}
-        {!IS_ANDROID && updateState.state === "uptodate" && (
+        {!ready && !IS_ANDROID && updateState.state === "uptodate" && (
           <p className="muted small">{updateState.message}</p>
         )}
         {!IS_ANDROID && updateState.state === "error" && (
@@ -894,7 +1019,7 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup }) {
         </div>
       </Row>
       <p className="muted small settings-note">
-        Bulbul v1.2.1 · GPL-3.0 · made with care · <a
+        Bulbul v1.2.2 · GPL-3.0 · made with care · <a
           href="#"
           onClick={(e) => { e.preventDefault(); openUrl("https://bulbultypes.xyz"); }}
         >bulbultypes.xyz</a>

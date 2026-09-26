@@ -1,6 +1,6 @@
 [package]
 name = "bulbul"
-version = "1.2.1"
+version = "1.2.2"
 description = "Free, open-source voice dictation for Windows, macOS, Linux, and Android, powered by Groq"
 authors = ["Bulbul contributors"]
 edition = "2021"
@@ -40,6 +40,10 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Re-validates a downloaded updater package after a laptop restart, before
+# handing cached bytes back to the updater for installation.
+base64 = "0.22"
+minisign-verify = "0.2.5"
 
 # WAV encoder — used to package recorded audio for Groq's STT endpoint
 hound = "3.5"
@@ -92,7 +96,23 @@ features = [
     "Win32_System_Threading",
     "Win32_System_Com",
     "Win32_Storage_FileSystem",
+    "Win32_System_ProcessStatus",
 ]
+
+# WebView2's own memory-usage-target-level API (idle-memory optimization,
+# see desktop.rs's set_webview_memory_level) needs the ICoreWebView2_19 COM
+# interface. Pinned to the same versions wry 0.55 itself depends on
+# (wry's Cargo.toml: webview2-com "0.38", windows-core "0.61") so Cargo
+# resolves the exact instances already in the tree instead of pulling a
+# second copy — these are separate crate instances from the `windows`
+# 0.58 dependency above (used by our own hooks), which is fine: COM
+# interface identity is GUID-based, not tied to a specific windows-rs
+# major version.
+[target.'cfg(windows)'.dependencies.webview2-com]
+version = "0.38"
+
+[target.'cfg(windows)'.dependencies.windows-core]
+version = "0.61"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # CGEvent-driven keystroke synthesis for inject/macos.rs. Replaces the
@@ -117,8 +137,11 @@ objc2 = "0.6"
 # allocation outlives the async completion callback. Pinned to match
 # objc2 0.6's block2 alignment.
 block2 = "0.6"
-# CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs)
-# and live key-state polling in the hotkey path (hotkey/macos.rs).
+# CGEvent / CGEventSource for synthesizing Cmd+V (inject/macos.rs),
+# live key-state polling in the hotkey path (hotkey/macos.rs), and a
+# CGEventTap for genuinely suppressing the configured Mouse mode button
+# (same file) — the tap needs core-foundation's runloop module below to
+# pump its callback.
 core-graphics = "0.25"
 # AXUIElement bindings for the correction-memory watcher
 # (uia/macos.rs). Also pulls in core-foundation transitively, but we

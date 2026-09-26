@@ -788,7 +788,14 @@ body, html, #root {
   align-items: flex-start;
 }
 
-.dictation-copy {
+.dictation-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.dictation-copy,
+.dictation-delete {
   flex-shrink: 0;
   width: 30px;
   height: 30px;
@@ -806,7 +813,8 @@ body, html, #root {
     border-color 120ms ease, background 120ms ease;
 }
 
-.dictation-row:hover .dictation-copy {
+.dictation-row:hover .dictation-copy,
+.dictation-row:hover .dictation-delete {
   opacity: 1;
 }
 
@@ -823,6 +831,12 @@ body, html, #root {
   color: #2f8c84;
   background: rgba(94, 200, 192, 0.12);
   border-color: rgba(94, 200, 192, 0.35);
+}
+
+.dictation-delete:hover {
+  background: rgba(212, 107, 107, 0.12);
+  color: #d46b6b;
+  border-color: rgba(212, 107, 107, 0.35);
 }
 
 .dictation-row:first-child {
@@ -2333,6 +2347,74 @@ kbd {
   min-width: 0;
 }
 
+/* Photo variant (see FeatureHero.jsx's `image` prop). A warm blurred
+   banner photo replaces the gradient card, with a taller, more generous
+   footprint (this is meant to strike as a real banner, not a compact
+   settings-style card). Colors below are forced light-on-photo values,
+   NOT the theme's normal text/surface tokens — the photo itself carries
+   its own baked-in warm/cool tonality regardless of app theme, so the
+   text over it has to stay the same regardless too, the same way a
+   photo caption doesn't flip color with dark mode. A scrim gradient
+   (strongest at the text-bearing left/bottom, fading toward the right)
+   guarantees legibility no matter how bright that particular patch of
+   the photo happens to be. */
+.feature-hero-photo {
+  /* Three stacked layers, painted in this order (first listed = on top):
+     a left-to-right scrim, a bottom-up scrim (for samples/close button
+     legibility near the edges), then the photo itself — supplied as
+     --feature-hero-image by the inline style, since inline styles win
+     over a stylesheet for the same property and would otherwise wipe
+     out these scrim layers entirely if the photo were set as a plain
+     inline backgroundImage instead of via a custom property. */
+  background-image:
+    linear-gradient(100deg, rgba(10, 12, 16, 0.62) 0%, rgba(10, 12, 16, 0.32) 45%, rgba(10, 12, 16, 0.08) 75%),
+    linear-gradient(0deg, rgba(10, 12, 16, 0.55) 0%, transparent 55%),
+    var(--feature-hero-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-color: rgba(255, 255, 255, 0.14);
+  min-height: 168px;
+  padding: 22px 26px;
+  justify-content: center;
+}
+.feature-hero-photo .feature-hero-title,
+.feature-hero-photo .feature-hero-title em {
+  color: #fff;
+}
+.feature-hero-photo .feature-hero-blurb {
+  color: rgba(255, 255, 255, 0.82);
+}
+.feature-hero-photo .feature-hero-close {
+  border-color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.2);
+}
+.feature-hero-photo .feature-hero-close:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(0, 0, 0, 0.35);
+}
+.feature-hero-photo .feature-hero-trigger {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+.feature-hero-photo .feature-hero-arrow {
+  color: rgba(255, 255, 255, 0.55);
+}
+.feature-hero-photo .feature-hero-expansion {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.feature-hero-photo .feature-hero-row-clickable:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.feature-hero-photo .feature-hero-row-clickable:hover .feature-hero-trigger {
+  border-color: rgba(94, 200, 192, 0.75);
+}
+
 .dict-toolbar {
   display: flex;
   align-items: center;
@@ -3789,9 +3871,12 @@ html.platform-android .m-tabbar {
   border-top: 1px solid var(--fill);
   padding: 6px 8px;
   /* env(safe-area-inset-bottom) is as unreliable on this WebView as
-     inset-top (see .m-appbar) — 8px alone left a 3-button nav bar
-     overlapping the tab bar. Generous fixed floor, same pattern as top. */
-  padding-bottom: max(44px, calc(env(safe-area-inset-bottom) + 20px));
+     inset-top (see .m-appbar) — RustWebView does no inset handling of its
+     own, so a flat guessed floor was used here, which meant a wasted gap
+     on gesture nav and an overlapping 3-button bar on some devices where
+     it reserves more than the guess. --android-nav-inset is the real
+     per-device value, pushed in by MainActivity.onWebViewCreate. */
+  padding-bottom: calc(var(--android-nav-inset, 24px) + 12px);
 }
 html.platform-android .m-tab {
   flex: 1;
@@ -3864,9 +3949,8 @@ html.platform-android .m-sheet {
   border-radius: 18px 18px 0 0;
   border-top: 1px solid var(--border);
   padding: 8px 14px;
-  /* Same unreliable-inset floor as the tab bar (see .m-tabbar) — 14px
-     wasn't enough to clear a 3-button nav bar. */
-  padding-bottom: max(44px, calc(env(safe-area-inset-bottom) + 20px));
+  /* Real inset, same as .m-tabbar. */
+  padding-bottom: calc(var(--android-nav-inset, 24px) + 12px);
   animation: m-sheet-up 180ms ease-out;
 }
 @keyframes m-sheet-up {
@@ -3962,16 +4046,16 @@ html.platform-android .m-settings-head-spacer { width: 52px; }
 html.platform-android .m-settings-scroll {
   flex: 1;
   overflow-y: auto;
-  /* Same unreliable-inset floor as .m-tabbar — the last row could sit
-     under a 3-button nav bar otherwise. */
-  padding: 4px 16px max(44px, calc(env(safe-area-inset-bottom) + 20px));
+  /* Real inset, same as .m-tabbar — the last row could sit under a
+     3-button nav bar otherwise. */
+  padding: 4px 16px calc(var(--android-nav-inset, 24px) + 12px);
 }
 /* Drill-down list: one tappable row per section. */
 html.platform-android .m-settings-list {
   flex: 1;
   overflow-y: auto;
-  /* Same unreliable-inset floor as .m-tabbar. */
-  padding: 8px 12px max(44px, calc(env(safe-area-inset-bottom) + 20px));
+  /* Real inset, same as .m-tabbar. */
+  padding: 8px 12px calc(var(--android-nav-inset, 24px) + 12px);
 }
 html.platform-android .m-settings-row {
   display: flex;
@@ -4384,6 +4468,45 @@ html.platform-android .m-scratch-title {
 }
 html.platform-android .m-scratch-body { min-height: 52vh; width: 100%; }
 html.platform-android .m-scratch-err { font-size: 12px; }
+
+/* Transform editor: full-screen view instead of desktop's inline card —
+   same master/detail pattern as the scratchpad editor (reuses
+   .m-scratch-editor-head), so the keyboard has room to open without
+   burying the prompt field or the Save button. */
+html.platform-android .m-transform-editor-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  gap: 12px;
+}
+html.platform-android .m-transform-editor-title {
+  flex: 1;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+html.platform-android .m-transform-editor-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+html.platform-android .m-transform-prompt {
+  min-height: 40vh;
+  width: 100%;
+}
+html.platform-android .m-transform-editor-actions {
+  padding-bottom: calc(var(--android-nav-inset, 24px) + 12px);
+}
+
+/* Dictation row copy/delete: desktop reveals these on :hover, which never
+   fires on touch — they'd render but stay invisible/untappable on Android
+   without this. */
+html.platform-android .dictation-copy,
+html.platform-android .dictation-delete { opacity: 1; }
 
 /* Cards and panels: tighter padding at phone width. */
 html.platform-android .insight-card,

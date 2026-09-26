@@ -106,6 +106,13 @@ function App() {
   // navigation level.
   const [settingsSection, setSettingsSection] = useState(null);
   const [config, setConfig] = useState(null);
+  // A completed Mac setup can lose its usable Accessibility grant after an
+  // ad-hoc-signed update. Keep the dashboard behind a one-purpose recovery
+  // gate until the native trust check answers, rather than briefly showing a
+  // dashboard whose dictation cannot type anywhere.
+  const [macAccessibilityTrusted, setMacAccessibilityTrusted] = useState(
+    IS_MAC ? null : true,
+  );
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -181,6 +188,20 @@ function App() {
   useEffect(() => {
     invoke("get_config").then((cfg) => {
       setConfig(cfg);
+      // First-run Mac onboarding already owns this permission check. For a
+      // returning user, query the live TCC trust state at launch: macOS can
+      // leave Accessibility visibly enabled for a prior ad-hoc signature
+      // while this build is not actually trusted.
+      if (IS_MAC && cfg.onboarding_completed) {
+        invoke("check_accessibility_status_mac")
+          .then((trusted) => setMacAccessibilityTrusted(!!trusted))
+          // Never strand the app behind a UI-only failure. The native command
+          // is a pure bool query and normally cannot fail; this fallback keeps
+          // an older/mismatched backend usable during development.
+          .catch(() => setMacAccessibilityTrusted(true));
+      } else {
+        setMacAccessibilityTrusted(true);
+      }
       if (!cfg.privacy_acknowledged) setShowPrivacy(true);
       // Only nudge to Settings for a returning user missing a key — during
       // first-run the onboarding wizard collects the key, so don't also pop
@@ -189,6 +210,22 @@ function App() {
         setSettingsOpen(true);
     });
     invoke("get_autostart").then(setAutostart).catch(() => {});
+    // Dragging the overlay pill (or the Settings picker, from another
+    // window) updates overlay_position on the backend directly — patch
+    // just that field into our own local snapshot rather than leaving it
+    // stale, so this window's *next* unrelated save (spreading `...config`)
+    // can't silently drag the pill back to wherever it was when we mounted.
+    const unOverlayPos = listen("overlay-position-changed", (e) => {
+      setConfig((prev) => (prev ? { ...prev, overlay_position: e.payload } : prev));
+    });
+    // Same staleness problem, different field: the overlay's own hide
+    // button calls set_tray_visible directly, which this window never
+    // otherwise hears about — without this, the sidebar/Settings toggle
+    // would keep showing the old state until some unrelated save
+    // overwrote it back from a stale snapshot.
+    const unHideTray = listen("hide-tray-changed", (e) => {
+      setConfig((prev) => (prev ? { ...prev, hide_tray: e.payload } : prev));
+    });
     // Mode-B auto-update (desktop only): the Rust watcher emits this event
     // after it downloads a new installer. If the user reopens the app
     // between checks, the version is still in the slot — fetch it on
@@ -212,6 +249,8 @@ function App() {
     return () => {
       un.then((f) => f());
       unStaged.then((f) => f());
+      unOverlayPos.then((f) => f());
+      unHideTray.then((f) => f());
       window.removeEventListener("keydown", onKey);
     };
   }, []);
@@ -251,7 +290,7 @@ function App() {
 
   // Desktop only — stagedUpdate is never set on Android (see the mount
   // effect above), so this never runs there. Returns only on failure; on
-  // success the installer kills this process mid-call.
+  // success the installer takes over and relaunches Bulbul.
   async function installUpdate() {
     setInstalling(true);
     try {
@@ -263,8 +302,20 @@ function App() {
   }
 
   async function updateConfig(next) {
-    await invoke("save_config", { newCfg: next });
+    // Optimistic, same idiom as toggleAutostart below: reflect the change
+    // immediately and revert on failure. Previously this awaited the disk
+    // round-trip before touching state at all, which reads as laggy on
+    // Android where every settings write is a full file-as-IPC round-trip
+    // (e.g. every tap on the Style page).
+    const prev = config;
     setConfig(next);
+    try {
+      await invoke("save_config", { newCfg: next });
+    } catch (e) {
+      setConfig(prev);
+      console.error("save_config failed:", e);
+      throw e;
+    }
   }
 
   async function toggleAutostart(next) {
@@ -302,7 +353,9 @@ function App() {
     setShowPrivacy(false);
   }
 
-  if (!config) return <div className="loading">Loading…</div>;
+  if (!config || (IS_MAC && config.onboarding_completed && macAccessibilityTrusted === null)) {
+    return <div className="loading">Loading…</div>;
+  }
 
   const themePref = config.theme || "light";
   const resolvedTheme =
@@ -314,7 +367,26 @@ function App() {
         <OnboardingWizard
           config={config}
           updateConfig={updateConfig}
-          onComplete={() => setConfig({ ...config, onboarding_completed: true })}
+          onComplete={() =>
+            updateConfig({ ...config, onboarding_completed: true, onboarding_ever_completed: true })
+          }
+        />
+        <TooltipProvider />
+      </>
+    );
+  }
+
+  // Do not reset onboarding_completed here: API key, language, hotkey, and
+  // every other established preference remain intact. This is only the
+  // permission-recovery screen for a Mac build that TCC no longer trusts.
+  if (IS_MAC && !macAccessibilityTrusted) {
+    return (
+      <>
+        <OnboardingWizard
+          config={config}
+          updateConfig={updateConfig}
+          recovery
+          onRecovered={() => setMacAccessibilityTrusted(true)}
         />
         <TooltipProvider />
       </>
@@ -423,7 +495,7 @@ function App() {
                   <img src={bulbulMark} alt="" className="m-sheet-brand-mark" aria-hidden />
                   <span className="m-sheet-brand-text">bulbul</span>
                 </span>
-                <span className="muted small">v1.2.1 · GPL-3.0</span>
+                <span className="muted small">v1.2.2 · GPL-3.0</span>
               </div>
             </div>
           </div>
@@ -525,6 +597,34 @@ function App() {
             <>
               <label
                 className="sidebar-toggle-row"
+                title="Tap your hotkey once to start dictating, tap again to stop — instead of holding it down."
+              >
+                <span className="sidebar-toggle-label">Tap to talk</span>
+                <span className={`toggle ${config.tap_to_talk ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.tap_to_talk}
+                    onChange={(e) => updateConfig({ ...config, tap_to_talk: e.target.checked })}
+                  />
+                  <span className="toggle-thumb" />
+                </span>
+              </label>
+              <label
+                className="sidebar-toggle-row"
+                title="Click your configured mouse button to start dictating, click again to stop. Change which button in Settings ▸ Hotkeys."
+              >
+                <span className="sidebar-toggle-label">Mouse mode</span>
+                <span className={`toggle ${config.mouse_mode ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.mouse_mode}
+                    onChange={(e) => updateConfig({ ...config, mouse_mode: e.target.checked })}
+                  />
+                  <span className="toggle-thumb" />
+                </span>
+              </label>
+              <label
+                className="sidebar-toggle-row"
                 title="When on, the dashboard pops up at startup. When off, Bulbul boots silently to the tray — the pill still appears when you dictate."
               >
                 <span className="sidebar-toggle-label">Open at startup</span>
@@ -557,7 +657,7 @@ function App() {
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
           </div>
-          <div className="version muted small">v1.2.1 · GPL-3.0</div>
+          <div className="version muted small">v1.2.2 · GPL-3.0</div>
         </div>
       </aside>
 
@@ -571,14 +671,14 @@ function App() {
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />
             <span className="update-banner-text">
-              <strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.
+              <strong>Bulbul v{stagedUpdate}</strong> is ready — it will install automatically next time Bulbul starts.
             </span>
             <button
               className="update-banner-btn"
               onClick={installUpdate}
               disabled={installing}
             >
-              {installing ? "Installing…" : "Install & restart"}
+              {installing ? "Installing…" : "Install & restart now"}
             </button>
           </div>
         )}
@@ -594,6 +694,9 @@ function App() {
       onAutostartChange={toggleAutostart}
       autostartError={autostartError}
       onHideTrayChange={toggleHideTray}
+      stagedUpdate={stagedUpdate}
+      installUpdate={installUpdate}
+      installing={installing}
     />
     <TooltipProvider />
     </>

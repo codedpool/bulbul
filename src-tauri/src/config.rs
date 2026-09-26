@@ -188,6 +188,48 @@ pub struct Config {
     #[serde(default = "default_hide_tray")]
     pub hide_tray: bool,
 
+    /// When true, the dictation and polish hotkeys toggle instead of
+    /// requiring a hold: one tap starts, the next tap stops. Off by
+    /// default (hold-to-talk). Applied in hotkey::re_register, only to
+    /// the platform-native physical-key producers — never to the Linux
+    /// CLI/signal toggle escape hatch (cli_toggle_dictation), which
+    /// already has its own independent toggle state for GNOME Wayland
+    /// users whose compositor can't register the hotkey at all.
+    #[serde(default = "default_tap_to_talk")]
+    pub tap_to_talk: bool,
+
+    /// When true, a configured mouse button always toggles dictation —
+    /// click to start, click again to stop — independent of tap_to_talk,
+    /// which only governs the keyboard hotkey. On by default (middle
+    /// click), since it's an additive, opt-out convenience rather than a
+    /// behavior change to an existing control.
+    #[serde(default = "default_mouse_mode")]
+    pub mouse_mode: bool,
+
+    /// Which mouse button triggers mouse_mode: "middle" | "back" |
+    /// "forward". Parsed via hotkey::MouseButton::parse, which falls
+    /// back to "middle" for anything else — so a stale/invalid value can
+    /// never leave mouse mode pointing at nothing.
+    #[serde(default = "default_mouse_button")]
+    pub mouse_button: String,
+
+    /// Where the overlay pill docks: "bottom-center" (the default,
+    /// horizontal pill) | "left" | "right" (vertically centered against
+    /// that screen edge, rotated capsule + stacked satellite buttons —
+    /// see Overlay.jsx/Overlay.css).
+    /// Written either by the Settings ▸ General picker or by dragging the
+    /// pill itself and releasing near an edge (desktop.rs's
+    /// start_overlay_drag/end_overlay_drag), both going through the same
+    /// save_config path. Top-edge anchors aren't offered — bottom mode's
+    /// dropdown/resize logic (desktop.rs's `set_overlay_height`) assumes
+    /// growing upward from a fixed bottom edge, which a top anchor would
+    /// need to invert, plus a mirrored frontend layout. Anything
+    /// unrecognized falls back to bottom-center (desktop::overlay_geometry
+    /// and ::nearest_overlay_zone both default there), so a stale/invalid
+    /// value never strands the pill off-screen.
+    #[serde(default = "default_overlay_position")]
+    pub overlay_position: String,
+
     #[serde(default = "default_language")]
     pub language: String,
 
@@ -220,8 +262,25 @@ pub struct Config {
 
     /// True once the user has finished (or explicitly skipped) the
     /// first-run wizard. Defaults to false so fresh installs see it.
+    /// "Re-run setup wizard" (Settings ▸ About) flips this back to false
+    /// to replay it — see onboarding_ever_completed below for how the
+    /// Android wizard tells a genuine first run from a replay.
     #[serde(default)]
     pub onboarding_completed: bool,
+
+    /// True the first time onboarding_completed is ever set true, and
+    /// NEVER reset by a later replay (unlike onboarding_completed
+    /// itself). Android's native SetupActivity only ever runs once, on
+    /// a real first run, to request actual system permissions — a
+    /// "Re-run setup wizard" replay can't re-trigger it (nor should it,
+    /// since the permissions are already granted). The React wizard
+    /// uses this flag to tell the two cases apart: a real first run
+    /// picks up right where the native walker left off, while a replay
+    /// shows the full journey from its own "hero" recap of what the
+    /// native walker already did, so re-running never skips or
+    /// misorders a screen. See OnboardingWizard.jsx's STEP_SEQUENCE.
+    #[serde(default)]
+    pub onboarding_ever_completed: bool,
 
     /// Anonymous usage telemetry. On by default for fresh installs so the
     /// solo-dev signal isn't permanently zero, but always toggleable from
@@ -304,6 +363,18 @@ fn default_display_name() -> String {
 fn default_hide_tray() -> bool {
     false
 }
+fn default_tap_to_talk() -> bool {
+    false
+}
+fn default_mouse_mode() -> bool {
+    true
+}
+fn default_mouse_button() -> String {
+    "middle".to_string()
+}
+fn default_overlay_position() -> String {
+    "bottom-center".to_string()
+}
 fn default_language() -> String {
     "auto".to_string()
 }
@@ -331,7 +402,7 @@ pub fn style_modifier(style: &str) -> Option<&'static str> {
             "Style: casual. Use natural capitalization and standard punctuation. Conversational tone, contractions allowed.",
         ),
         "very_casual" => Some(
-            "Style: very casual. Skip sentence-start capitalization where natural. Minimize punctuation (no full stops, fewer commas). Keep it brief and informal — like a quick text.",
+            "Style: very casual. This OVERRIDES the capitalization/punctuation instruction above: skip sentence-start capitalization where natural, and minimize punctuation (no full stops, fewer commas). Keep it brief and informal — like a quick text.",
         ),
         _ => None,
     }
@@ -519,6 +590,10 @@ impl Default for Config {
             autostart: None,
             display_name: default_display_name(),
             hide_tray: default_hide_tray(),
+            tap_to_talk: default_tap_to_talk(),
+            mouse_mode: default_mouse_mode(),
+            mouse_button: default_mouse_button(),
+            overlay_position: default_overlay_position(),
             language: default_language(),
             style_enabled: default_style_enabled(),
             style_personal: default_style_personal(),
@@ -530,6 +605,7 @@ impl Default for Config {
             learn_corrections: default_learn_corrections(),
             theme: default_theme(),
             onboarding_completed: false,
+            onboarding_ever_completed: false,
             telemetry_enabled: default_telemetry_enabled(),
             overlay_opacity: default_overlay_opacity(),
             overlay_size: default_overlay_size(),
@@ -632,8 +708,11 @@ fn is_supported_chat_model(model: &str) -> bool {
 }
 
 /// One-shot fixups for configs written by earlier builds. Runs on every
-/// load; each rule must be a no-op once applied.
-fn migrate(cfg: Config) -> Config {
+/// load; each rule must be a no-op once applied. pub(crate) so mobile.rs's
+/// `read_config` can apply the same in-memory chat_model self-heal desktop
+/// gets here and the Kotlin bubble gets via BulbulConfig.chatModel() — the
+/// dashboard's Insights/Transforms Groq calls were the one path missing it.
+pub(crate) fn migrate(cfg: Config) -> Config {
     #[allow(unused_mut)]
     let mut cfg = cfg;
     // Linux builds before the port fix shipped the Windows default

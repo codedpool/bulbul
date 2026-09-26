@@ -8,6 +8,7 @@ import FeatureHero from "../components/FeatureHero.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { IS_ANDROID } from "../platform.js";
 import { useInPageChordFallback } from "../inPageHotkey.js";
+import featureScratchpadImg from "../assets/feature-scratchpad.png";
 
 const AUTOSAVE_DELAY_MS = 600;
 
@@ -166,7 +167,14 @@ export default function ScratchpadView() {
     try {
       const rows = await invoke("list_notes");
       setNotes(rows);
-      if (rows.length > 0 && !activeId) {
+      // Desktop's two-pane layout always shows the sidebar list alongside
+      // the editor, so auto-opening the most recent note there just picks
+      // a sensible default. Android is single-pane master/detail — doing
+      // the same thing meant every visit skipped straight past the note
+      // list (and its FeatureHero card) into a near-empty editor, which
+      // read as "the page is blank". Land on the list instead, matching
+      // how Dictionary/Snippets work on Android.
+      if (rows.length > 0 && !activeId && !IS_ANDROID) {
         openNote(rows[0]);
       }
     } catch (e) {
@@ -303,6 +311,14 @@ export default function ScratchpadView() {
                 <PlusIcon /> New note
               </button>
             </header>
+
+            <FeatureHero
+              dismissKey="bulbul.scratchpad.hero.dismissed"
+              title={<>Quick thoughts you <em>don't want to lose.</em></>}
+              blurb="Dictate or type freely. Notes auto-save as you go — no save buttons, no folders, just a place for the things that would otherwise live in your head."
+              image={featureScratchpadImg}
+            />
+
             <div className="search-input scratch-search">
               <SearchIcon />
               <input
@@ -436,6 +452,7 @@ export default function ScratchpadView() {
         dismissKey="bulbul.scratchpad.hero.dismissed"
         title={<>Quick thoughts you <em>don't want to lose.</em></>}
         blurb="Dictate or type freely. Notes auto-save as you go — no save buttons, no folders, just a place for the things that would otherwise live in your head."
+        image={featureScratchpadImg}
       />
 
       <div className="scratchpad-layout">

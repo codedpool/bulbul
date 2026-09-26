@@ -4,6 +4,33 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Added
+
+- **Tap to talk** — a new dictation mode where one press starts recording and the next stops it, instead of holding the hotkey the whole time.
+- **Mouse mode** — bind a mouse button (middle-click by default) to start and stop dictation, independent of your keyboard hotkey.
+- **Pill position** — pin the desktop overlay to the bottom-left, bottom-center, or bottom-right of the screen instead of always centered.
+- **Delete a dictation** from Home's recent activity list, on both desktop and Android.
+- **Corrections memory on Android** — Bulbul now learns from the fixes you make by hand after dictating, the same way desktop does; those fixes show up in Insights and get suggested as Dictionary entries.
+- **Photographic banners** on Home, Insights, Scratchpad, Transforms, Dictionary, Snippets, and Style, replacing the plain highlight card.
+- **A guided, 10-screen setup wizard on Android** — walks through each permission with a real preview, a guided "try dictating" screen, an overlay size/opacity/position tuner, and language/API key setup, all before you land on the dashboard for the first time.
+
+### Improved
+
+- **Insights on Android now actually computes your catchphrase, most-used word, most-corrected word, and peak dictation time/app** instead of always showing "not enough data yet."
+- **The Android Groq connection retries automatically** on a rate limit instead of failing outright, and self-heals if your saved cleanup model has since been retired by Groq.
+- **Style's very-casual tone is more reliable** on both platforms — removed a contradiction in the instructions sent to the cleanup model that was fighting itself.
+- **Settings feel snappier on Android** — changes apply immediately instead of waiting on the save to finish.
+- **Scratchpad on Android** opens on the note list instead of jumping straight into the last note you had open.
+- **The Android bottom navigation bar now sizes itself to your phone's actual gesture or 3-button navigation** instead of guessing — no more wasted gap on gesture nav, no more overlap on 3-button nav.
+- **Editing a transform on Android** now opens a full-screen view instead of a small card the keyboard could cover.
+- **Bulbul idles lighter on memory** on Windows — the overlay, dashboard, and scratchpad windows release memory back to the system while inactive and reclaim it instantly when needed.
+- **Cleanup model selection keeps up with Groq automatically** — a background check cross-references the cached model list against what Groq currently supports, trimming any model Groq has since dropped.
+
+### Fixed
+
+- **AI cleanup no longer needlessly falls back to a backup model** on an ordinary-length dictation — a missing request limit was letting Groq apply its own, much lower, default cap.
+- **"Hide tray icon" survives a Windows restart.**
+
 ## [1.2.1] — 2026-09-12
 
 A stability and Android-polish release, plus a permanent fix for how Bulbul keeps up with changes on Groq's side.
@@ -16,6 +43,7 @@ A stability and Android-polish release, plus a permanent fix for how Bulbul keep
 - **Cleaner Android taps** — removed the gray highlight box that flashed on every tap, most visible on the bottom navigation, replacing it with a proper pressed state.
 - **Onboarding and the dashboard no longer sit under the 3-button navigation bar** on Android devices that use it instead of gestures.
 - **Bulbul now shows up under the right category** in Android's app drawer and Settings, instead of "Others."
+- **Android's "Check for updates" now opens the Play Store** instead of checking GitHub releases.
 - **"Hide tray icon" actually stays hidden** across a restart on Windows.
 - **The overlay pill is lighter on system resources while idle** — it no longer keeps redrawing itself continuously, and is restyled as a slimmer, quieter capsule.
 
