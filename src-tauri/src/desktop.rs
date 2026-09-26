@@ -22,8 +22,11 @@ mod window_info;
 use crate::audio::Recorder;
 use crate::config::{CleanupMode, Config};
 use crate::hotkey::{HotkeyEvent, HotkeySet, ParsedHotkey};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use minisign_verify::{PublicKey, Signature};
 use parking_lot::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -60,6 +63,10 @@ const OVERLAY_SIDE_MARGIN: f64 = 16.0;
 // edge they're docked to. 260 leaves real margin on both sides.
 const OVERLAY_V_WIDTH: f64 = 260.0;
 const OVERLAY_V_HEIGHT: f64 = 300.0;
+// This is the same public updater key embedded in tauri.conf.json. Keeping
+// it here lets a cached package be verified again before an installation
+// after a shutdown, rather than trusting application-cache contents.
+const UPDATER_PUBLIC_KEY_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCMEQ1M0FFRUNEQkJEQ0IKUldUTHZkdnNybE1OUzRMUXZzS08wM1Q4a0YrNWpaMXM3S2l5VTRsS1ptWVBjZDArMXF4bTJnS3QK";
 
 pub struct AppState {
     config: Arc<Mutex<Config>>,
@@ -101,6 +108,126 @@ pub struct StagedUpdate {
     update: tauri_plugin_updater::Update,
     bytes: Vec<u8>,
     pub version: String,
+}
+
+/// The signed release identity stored next to a verified package in the
+/// per-user cache. The package itself is never installed until this
+/// signature verifies again on a later launch.
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedUpdate {
+    version: String,
+    signature: String,
+}
+
+fn pending_update_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map(|dir| dir.join("updates"))
+        .map_err(|e| format!("update cache path: {e}"))
+}
+
+fn pending_update_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let dir = pending_update_dir(app)?;
+    Ok((dir.join("pending-update.bin"), dir.join("pending-update.json")))
+}
+
+fn pending_update_exists(app: &AppHandle) -> bool {
+    pending_update_paths(app)
+        .map(|(package, metadata)| package.is_file() && metadata.is_file())
+        .unwrap_or(false)
+}
+
+fn clear_persisted_update(app: &AppHandle) {
+    let Ok((package, metadata)) = pending_update_paths(app) else {
+        return;
+    };
+    let _ = std::fs::remove_file(package);
+    let _ = std::fs::remove_file(metadata);
+}
+
+fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let temporary = path.with_extension("next");
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+
+    // Windows does not replace an existing destination during rename. The
+    // destination is a fixed, private cache path; losing an older staged
+    // package here is safe because the signed release can be fetched again.
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    std::fs::rename(temporary, path)
+}
+
+fn verify_update_package(bytes: &[u8], signature_b64: &str) -> Result<(), String> {
+    let public_key_text = BASE64
+        .decode(UPDATER_PUBLIC_KEY_B64)
+        .map_err(|e| format!("decode updater public key: {e}"))?;
+    let public_key_text = std::str::from_utf8(&public_key_text)
+        .map_err(|e| format!("read updater public key: {e}"))?;
+    let public_key = PublicKey::decode(public_key_text)
+        .map_err(|e| format!("parse updater public key: {e}"))?;
+    let signature_text = BASE64
+        .decode(signature_b64)
+        .map_err(|e| format!("decode update signature: {e}"))?;
+    let signature_text = std::str::from_utf8(&signature_text)
+        .map_err(|e| format!("read update signature: {e}"))?;
+    let signature = Signature::decode(signature_text)
+        .map_err(|e| format!("parse update signature: {e}"))?;
+
+    public_key
+        .verify(bytes, &signature, true)
+        .map_err(|e| format!("update signature verification failed: {e}"))
+}
+
+fn persist_verified_update(
+    app: &AppHandle,
+    version: &str,
+    signature: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    // `Update::download` verifies this too. Repeating it here keeps this
+    // persistence boundary explicit: no unverified bytes enter the cache.
+    verify_update_package(bytes, signature)?;
+
+    let (package, metadata) = pending_update_paths(app)?;
+    let dir = package
+        .parent()
+        .ok_or_else(|| "update cache package has no parent directory".to_string())?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create update cache: {e}"))?;
+
+    let record = serde_json::to_vec(&PersistedUpdate {
+        version: version.to_owned(),
+        signature: signature.to_owned(),
+    })
+    .map_err(|e| format!("serialize cached update: {e}"))?;
+    write_atomically(&package, bytes).map_err(|e| format!("cache update package: {e}"))?;
+    if let Err(e) = write_atomically(&metadata, &record) {
+        let _ = std::fs::remove_file(&package);
+        return Err(format!("cache update metadata: {e}"));
+    }
+    Ok(())
+}
+
+fn load_persisted_update(app: &AppHandle) -> Result<Option<(PersistedUpdate, Vec<u8>)>, String> {
+    let (package, metadata) = pending_update_paths(app)?;
+    if !package.exists() && !metadata.exists() {
+        return Ok(None);
+    }
+    if !package.is_file() || !metadata.is_file() {
+        clear_persisted_update(app);
+        return Err("incomplete cached update discarded".into());
+    }
+
+    let record = std::fs::read(&metadata).map_err(|e| format!("read cached update metadata: {e}"))?;
+    let record = serde_json::from_slice::<PersistedUpdate>(&record)
+        .map_err(|e| format!("parse cached update metadata: {e}"))?;
+    let bytes = std::fs::read(&package).map_err(|e| format!("read cached update package: {e}"))?;
+    Ok(Some((record, bytes)))
 }
 
 struct PendingDictation {
@@ -731,11 +858,31 @@ fn spawn_hover_watcher(_app: AppHandle) {
 }
 
 
-/// Background loop that polls GitHub Releases for newer Bulbul versions
-/// and silently downloads them into the AppState's `staged_update` slot.
-/// The frontend listens for the `update-staged` Tauri event and renders
-/// a banner; nothing else happens until the user (or the tray Quit) calls
-/// `install_staged_update`.
+/// Saves a verified package for both the current session and the next launch.
+/// A cache failure must not turn an available update into a dead end: the
+/// in-memory copy still powers the explicit "Install & restart" action.
+fn stage_downloaded_update(
+    app: &AppHandle,
+    state: &tauri::State<'_, AppState>,
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+) {
+    let version = update.version.clone();
+    if let Err(e) = persist_verified_update(app, &version, &update.signature, &bytes) {
+        tracing::warn!("could not persist verified update v{version}: {e}");
+    }
+    *state.staged_update.lock() = Some(StagedUpdate {
+        update,
+        bytes,
+        version: version.clone(),
+    });
+    let _ = app.emit("update-staged", version);
+}
+
+/// Background loop that polls GitHub Releases for newer Bulbul versions,
+/// verifies and stores the installer in the per-user cache, then keeps a
+/// current-session copy for the UI. A cached update is checked again against
+/// the signed release metadata on the next launch before it is installed.
 ///
 /// Cadence:
 /// - 10s grace after boot so we don't fight with first-dictation traffic
@@ -760,16 +907,11 @@ fn spawn_update_watcher(app: AppHandle) {
                             tracing::info!("update watcher: v{version} available, downloading…");
                             match update.download(|_chunk, _len| {}, || {}).await {
                                 Ok(bytes) => {
-                                    let slot = app.state::<AppState>().staged_update.clone();
-                                    *slot.lock() = Some(StagedUpdate {
-                                        update,
-                                        bytes,
-                                        version: version.clone(),
-                                    });
+                                    let state = app.state::<AppState>();
+                                    stage_downloaded_update(&app, &state, update, bytes);
                                     tracing::info!(
-                                        "update watcher: v{version} downloaded, staged for install"
+                                        "update watcher: v{version} downloaded and persisted for next launch"
                                     );
-                                    let _ = app.emit("update-staged", version);
                                 }
                                 Err(e) => {
                                     tracing::warn!("update download failed: {e:#}");
@@ -798,17 +940,121 @@ fn spawn_update_watcher(app: AppHandle) {
 /// On the happy path the installer kills our process mid-call and the
 /// function never returns; on failure we log and let the normal exit
 /// continue.
+fn install_update_and_restart(app: &AppHandle, staged: StagedUpdate) -> Result<(), String> {
+    // Consume the durable cache before starting the installer. If install
+    // returns an error, the normal watcher can safely fetch a fresh package
+    // instead of repeatedly attempting the same failed artifact.
+    clear_persisted_update(app);
+    staged
+        .update
+        .install(staged.bytes)
+        .map_err(|e| format!("install update v{}: {e}", staged.version))?;
+    // Windows' installer exits this process itself. macOS and Linux return
+    // after replacing the bundle/package, so restart explicitly there too.
+    app.restart()
+}
+
 fn install_staged_if_present(app: &AppHandle) {
     let slot = app.state::<AppState>().staged_update.clone();
     let staged = slot.lock().take();
     let Some(staged) = staged else {
         return;
     };
-    tracing::info!("tray quit: installing staged update v{}", staged.version);
-    // install is sync in Tauri 2's updater plugin — it writes the bytes
-    // to a temp file and spawns the installer. We don't await anything.
-    if let Err(e) = staged.update.install(staged.bytes) {
+    tracing::info!("quit: installing staged update v{}", staged.version);
+    if let Err(e) = install_update_and_restart(app, staged) {
         tracing::warn!("staged-update install failed on quit: {e:#}");
+    }
+}
+
+/// Returns only when Bulbul should continue its normal launch. A successful
+/// installation restarts (or, on Windows, exits into) the updater instead.
+async fn apply_persisted_update_on_launch(app: &AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let (cached, bytes) = match load_persisted_update(app) {
+        Ok(Some(cached)) => cached,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!("cached update is unusable: {e}");
+            clear_persisted_update(app);
+            return;
+        }
+    };
+
+    if let Err(e) = verify_update_package(&bytes, &cached.signature) {
+        tracing::warn!("cached update v{} failed verification: {e}", cached.version);
+        clear_persisted_update(app);
+        return;
+    }
+
+    // Re-check the release endpoint before installing. This binds the cached
+    // package to the currently announced version and signature, preventing a
+    // stale cache entry from being applied after a newer release supersedes it.
+    let update = match app.updater() {
+        Ok(updater) => match tokio::time::timeout(Duration::from_secs(12), updater.check()).await {
+            Err(_) => {
+                // Never leave the app invisible on a captive portal or an
+                // unavailable network. The verified cache remains for a
+                // later launch, while this launch continues normally.
+                tracing::info!("defer cached update: startup check timed out");
+                return;
+            }
+            Ok(Err(e)) => {
+                // Keep a verified package for the next launch; launching the
+                // current version is preferable to making offline startup fail.
+                tracing::info!("defer cached update until network is available: {e}");
+                return;
+            }
+            Ok(Ok(Some(update))) => update,
+            Ok(Ok(None)) => {
+                // The running app is already current, so this is leftover
+                // cache from a completed install or a rolled-back release.
+                clear_persisted_update(app);
+                return;
+            }
+        },
+        Err(e) => {
+            tracing::info!("updater unavailable during startup: {e}");
+            return;
+        }
+    };
+
+    if update.version != cached.version || update.signature != cached.signature {
+        tracing::info!(
+            "discarding cached update v{}; release metadata now points to v{}",
+            cached.version,
+            update.version
+        );
+        clear_persisted_update(app);
+        return;
+    }
+
+    tracing::info!("installing persisted update v{} before launch", cached.version);
+    clear_persisted_update(app);
+    if let Err(e) = update.install(&bytes) {
+        tracing::warn!("persisted update install failed: {e:#}");
+        return;
+    }
+    // Windows' updater exits the process inside install(). macOS and Linux
+    // return after replacing the application, so restart in all returning
+    // cases to run the new binary.
+    app.restart();
+}
+
+fn reveal_interface_after_pending_update(app: &AppHandle) {
+    let config = app.state::<AppState>().config.clone();
+    let (hide_tray, show_dashboard) = {
+        let cfg = config.lock();
+        (!cfg.hide_tray, !cfg.has_api_key() || cfg.open_dashboard_on_launch)
+    };
+    if hide_tray {
+        if let Some(overlay) = app.get_webview_window("overlay") {
+            let _ = overlay.show();
+            set_webview_memory_level(&overlay, true);
+        }
+    }
+    if show_dashboard {
+        show_settings(app);
     }
 }
 
@@ -2060,12 +2306,7 @@ async fn check_for_updates(
         .download(|_chunk, _len| {}, || {})
         .await
         .map_err(|e| format!("download failed: {e}"))?;
-    *state.staged_update.lock() = Some(StagedUpdate {
-        update,
-        bytes,
-        version: version.clone(),
-    });
-    let _ = app.emit("update-staged", version.clone());
+    stage_downloaded_update(&app, &state, update, bytes);
     Ok(Some(version))
 }
 
@@ -2397,13 +2638,7 @@ async fn install_staged_update(app: AppHandle) -> Result<(), String> {
     let Some(staged) = staged else {
         return Err("no update is staged".into());
     };
-    // `install` moves the Update and the bytes. From here, the installer
-    // process is in the driver's seat.
-    staged
-        .update
-        .install(staged.bytes)
-        .map_err(|e| format!("{e}"))?;
-    Ok(())
+    install_update_and_restart(&app, staged)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2574,6 +2809,9 @@ pub fn run() {
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+            // A verified package from a previous session is given a chance to
+            // install before Bulbul exposes any of its windows.
+            let defer_interface_for_pending_update = pending_update_exists(&handle);
 
             // Let the Windows keyboard-hook thread surface hotkey-health to the
             // dashboard (it was spawned earlier, before the app handle existed).
@@ -2708,7 +2946,7 @@ pub fn run() {
             if hide_tray_on_boot {
                 hide_tray_after_grace(&handle);
             }
-            setup_overlay_window(&handle)?;
+            setup_overlay_window(&handle, !defer_interface_for_pending_update)?;
             setup_scratchpad_window(&handle)?;
             reconcile_autostart(&handle);
 
@@ -2726,13 +2964,13 @@ pub fn run() {
                     let c = cfg.lock();
                     !c.has_api_key() || c.open_dashboard_on_launch
                 };
-                if want_show {
+                if want_show && !defer_interface_for_pending_update {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
                 // Idle memory: matches whichever state the window actually
                 // starts in above (visible or hidden-until-first-open).
-                set_webview_memory_level(&window, !want_show);
+                set_webview_memory_level(&window, !want_show || defer_interface_for_pending_update);
                 let win_handle = window.clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
@@ -2782,11 +3020,20 @@ pub fn run() {
             spawn_hover_watcher(handle.clone());
             spawn_idle_working_set_trimmer();
 
-            // Mode-B auto-update: silently poll GitHub Releases on a
-            // 6-hour cadence (10s grace after boot), download new
-            // installers into AppState.staged_update, fire `update-staged`
-            // event. The UI banner and the tray Quit handler do the rest.
+            // Auto-update: silently poll GitHub Releases on a 6-hour cadence
+            // (10s grace after boot), persist verified installers, and fire
+            // `update-staged` for the immediate-install UI.
             spawn_update_watcher(handle.clone());
+
+            if defer_interface_for_pending_update {
+                let startup_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    apply_persisted_update_on_launch(&startup_handle).await;
+                    // A successful install does not return: Windows hands off
+                    // to its installer, while macOS/Linux restart below.
+                    reveal_interface_after_pending_update(&startup_handle);
+                });
+            }
 
             // Remote cleanup-model chain: lets a future Groq model rotation
             // be fixed by editing bulbultypes.xyz/models.json, not shipping
@@ -2950,7 +3197,7 @@ fn hide_tray_after_grace(app: &AppHandle) {
     });
 }
 
-fn setup_overlay_window(app: &AppHandle) -> tauri::Result<()> {
+fn setup_overlay_window(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     // Wayland has no global window positioning — set_position is a
     // no-op and the compositor drops new windows wherever it likes
     // (usually dead center). A "bottom-center pill" that actually
@@ -2979,7 +3226,7 @@ fn setup_overlay_window(app: &AppHandle) -> tauri::Result<()> {
     .resizable(false)
     .transparent(true)
     .shadow(false)
-    .visible(true)
+    .visible(visible)
     .focused(false)
     .build()?;
     let _ = overlay.set_ignore_cursor_events(true);
@@ -4034,7 +4281,7 @@ fn track_dictation_failed(app: &AppHandle, category: &str, mode: &CleanupMode) {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_slot_hotkey, resolve_slot_hotkey};
+    use super::{default_slot_hotkey, resolve_slot_hotkey, verify_update_package, write_atomically};
     use crate::hotkey::{parsed_to_shortcut, ParsedHotkey};
 
     fn same(a: &ParsedHotkey, b: &ParsedHotkey) -> bool {
@@ -4057,5 +4304,24 @@ mod tests {
         assert!(same(&resolve_slot_hotkey(Some("zzzz-not-a-key"), 2), &def), "unknown key -> default");
         assert!(same(&resolve_slot_hotkey(Some("Ctrl+Alt"), 2), &def), "modifier-only -> default");
         assert!(same(&resolve_slot_hotkey(Some("P"), 2), &def), "bare key (no modifier) -> default");
+    }
+
+    #[test]
+    fn cached_update_requires_a_valid_minisign_signature() {
+        assert!(verify_update_package(b"not an installer", "not-base64").is_err());
+    }
+
+    #[test]
+    fn atomic_update_write_replaces_a_previous_cache_entry() {
+        let dir = std::env::temp_dir().join(format!("bulbul-update-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pending-update.bin");
+
+        write_atomically(&path, b"first").unwrap();
+        write_atomically(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert!(!path.with_extension("next").exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

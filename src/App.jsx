@@ -290,7 +290,7 @@ function App() {
 
   // Desktop only — stagedUpdate is never set on Android (see the mount
   // effect above), so this never runs there. Returns only on failure; on
-  // success the installer kills this process mid-call.
+  // success the installer takes over and relaunches Bulbul.
   async function installUpdate() {
     setInstalling(true);
     try {
@@ -671,14 +671,14 @@ function App() {
           <div className="update-banner" role="status">
             <span className="update-banner-dot" aria-hidden />
             <span className="update-banner-text">
-              <strong>Bulbul v{stagedUpdate}</strong> is ready — restart to install.
+              <strong>Bulbul v{stagedUpdate}</strong> is ready — it will install automatically next time Bulbul starts.
             </span>
             <button
               className="update-banner-btn"
               onClick={installUpdate}
               disabled={installing}
             >
-              {installing ? "Installing…" : "Install & restart"}
+              {installing ? "Installing…" : "Install & restart now"}
             </button>
           </div>
         )}

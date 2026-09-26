@@ -965,7 +965,7 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup, stagedUpdate, inst
           IS_ANDROID
             ? "Play Store keeps Bulbul up to date."
             : ready
-              ? "Downloaded and ready to go."
+              ? "Downloaded. It installs automatically next time Bulbul starts."
               : "Bulbul checks GitHub releases on a schedule."
         }
         stack
@@ -973,7 +973,7 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup, stagedUpdate, inst
         <div className="row">
           {ready ? (
             <button onClick={installUpdate} disabled={installing}>
-              {installing ? "Installing…" : `Install v${stagedUpdate} & restart`}
+              {installing ? "Installing…" : `Install v${stagedUpdate} & restart now`}
             </button>
           ) : (
             <button onClick={checkUpdates} disabled={updateState.state === "checking"}>
