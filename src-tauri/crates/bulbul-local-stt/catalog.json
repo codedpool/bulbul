@@ -1,0 +1,257 @@
+{
+  "schema": 1,
+  "generated": "2026-11-13",
+  "models": [
+    {
+      "id": "moonshine-tiny-en",
+      "name": "Moonshine tiny (English)",
+      "summary": "Tiny and quick. English only, good for low-end machines.",
+      "kind": "moonshine",
+      "languages": [
+        "en"
+      ],
+      "multilingual": false,
+      "experimental": false,
+      "license": {
+        "spdx": "MIT",
+        "author": "Moonshine AI",
+        "url": "https://opensource.org/license/mit",
+        "attribution": null,
+        "converted": true
+      },
+      "source": {
+        "type": "archive",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2",
+        "size": 29858559,
+        "sha256": "9ec31b342d8fa3240c3b81b8f82e1cf7e3ac467c93ca5a999b741d5887164f8d",
+        "format": "tar_bz2",
+        "strip_prefix": "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27"
+      },
+      "layout": {
+        "encoder": "encoder_model.ort",
+        "merged_decoder": "decoder_model_merged.ort",
+        "tokens": "tokens.txt"
+      },
+      "download_bytes": 29858559,
+      "disk_bytes": 44243206
+    },
+    {
+      "id": "parakeet-tdt-110m-en",
+      "name": "Parakeet TDT 110M (English)",
+      "summary": "Very fast English on an ordinary CPU.",
+      "kind": "transducer",
+      "languages": [
+        "en"
+      ],
+      "multilingual": false,
+      "experimental": false,
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "author": "NVIDIA",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "attribution": "(c) NVIDIA, licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/). Converted to ONNX and quantised to int8 by third parties; NVIDIA does not endorse Bulbul.",
+        "converted": true
+      },
+      "source": {
+        "type": "archive",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8.tar.bz2",
+        "size": 108035095,
+        "sha256": "f628312e9fdf8686374cb01a69425c41732529d540860311f16f37cbc32cfe9b",
+        "format": "tar_bz2",
+        "strip_prefix": "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8"
+      },
+      "layout": {
+        "encoder": "encoder.int8.onnx",
+        "decoder": "decoder.int8.onnx",
+        "joiner": "joiner.int8.onnx",
+        "tokens": "tokens.txt"
+      },
+      "download_bytes": 108035095,
+      "disk_bytes": 136490421
+    },
+    {
+      "id": "whisper-small",
+      "name": "Whisper small",
+      "summary": "Small and multilingual, including Hindi.",
+      "kind": "whisper",
+      "languages": [],
+      "multilingual": true,
+      "experimental": false,
+      "license": {
+        "spdx": "Apache-2.0",
+        "author": "OpenAI",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "attribution": null,
+        "converted": true
+      },
+      "source": {
+        "type": "files",
+        "base_url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/8f3c18b358db4d1f2fc1eae49d75cd20989e4309",
+        "files": [
+          {
+            "path": "small-encoder.int8.onnx",
+            "size": 112442483,
+            "sha256": "4cbe7b22fa9026b843b60a68640c747de05bafb1a11b57edc0e66c232d9f33a9"
+          },
+          {
+            "path": "small-decoder.int8.onnx",
+            "size": 262226114,
+            "sha256": "acad50b5c782696e91b55914cc5ab4f756f1532f76e22aa6fc615f39fb69a8ee"
+          },
+          {
+            "path": "small-tokens.txt",
+            "size": 816730,
+            "sha256": "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"
+          }
+        ]
+      },
+      "layout": {
+        "encoder": "small-encoder.int8.onnx",
+        "decoder": "small-decoder.int8.onnx",
+        "tokens": "small-tokens.txt"
+      },
+      "download_bytes": 375485327,
+      "disk_bytes": 375485327
+    },
+    {
+      "id": "qwen3-asr-0.6b",
+      "name": "Qwen3-ASR 0.6B",
+      "summary": "Strong on Hindi and about 30 languages in a third-party benchmark.",
+      "kind": "qwen3_asr",
+      "languages": [],
+      "multilingual": true,
+      "experimental": false,
+      "license": {
+        "spdx": "Apache-2.0",
+        "author": "Qwen team, Alibaba Cloud",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "attribution": null,
+        "converted": true
+      },
+      "source": {
+        "type": "archive",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2",
+        "size": 878702423,
+        "sha256": "393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96",
+        "format": "tar_bz2",
+        "strip_prefix": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+      },
+      "layout": {
+        "conv_frontend": "conv_frontend.onnx",
+        "encoder": "encoder.int8.onnx",
+        "decoder": "decoder.int8.onnx",
+        "tokenizer": "tokenizer"
+      },
+      "download_bytes": 878702423,
+      "disk_bytes": 987015347
+    },
+    {
+      "id": "parakeet-tdt-0.6b-v2-en",
+      "name": "Parakeet TDT 0.6B v2 (English)",
+      "summary": "The most accurate English model offered here.",
+      "kind": "transducer",
+      "languages": [
+        "en"
+      ],
+      "multilingual": false,
+      "experimental": false,
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "author": "NVIDIA",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "attribution": "(c) NVIDIA, licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/). Converted to ONNX and quantised to int8 by third parties; NVIDIA does not endorse Bulbul.",
+        "converted": true
+      },
+      "source": {
+        "type": "archive",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+        "size": 482440461,
+        "sha256": "6fc4426b54aa549a0019b8a75b8dea59164e71790a37ac56a045ad57f915f714",
+        "format": "tar_bz2",
+        "strip_prefix": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
+      },
+      "layout": {
+        "encoder": "encoder.int8.onnx",
+        "decoder": "decoder.int8.onnx",
+        "joiner": "joiner.int8.onnx",
+        "tokens": "tokens.txt"
+      },
+      "download_bytes": 482440461,
+      "disk_bytes": 661288526
+    },
+    {
+      "id": "whisper-large-v3-turbo",
+      "name": "Whisper large-v3 turbo",
+      "summary": "Broad language coverage; the closest match to the cloud model.",
+      "kind": "whisper",
+      "languages": [],
+      "multilingual": true,
+      "experimental": false,
+      "license": {
+        "spdx": "MIT",
+        "author": "OpenAI",
+        "url": "https://opensource.org/license/mit",
+        "attribution": null,
+        "converted": true
+      },
+      "source": {
+        "type": "files",
+        "base_url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/2ca6ff69fc878651b770880507669577ac41c2ff",
+        "files": [
+          {
+            "path": "turbo-encoder.int8.onnx",
+            "size": 674716297,
+            "sha256": "b02dcdf54f348741e93fe732b67d933c8dcb6735655f710640143081db38878b"
+          },
+          {
+            "path": "turbo-decoder.int8.onnx",
+            "size": 361080764,
+            "sha256": "20accd02388482eb3a46bd615631adfdc85e1eb2c7db9ea3f02a40ffe6b81547"
+          },
+          {
+            "path": "turbo-tokens.txt",
+            "size": 816730,
+            "sha256": "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"
+          }
+        ]
+      },
+      "layout": {
+        "encoder": "turbo-encoder.int8.onnx",
+        "decoder": "turbo-decoder.int8.onnx",
+        "tokens": "turbo-tokens.txt"
+      },
+      "download_bytes": 1036613791,
+      "disk_bytes": 1036613791
+    },
+    {
+      "id": "omnilingual-asr-300m",
+      "name": "Omnilingual ASR 300M",
+      "summary": "Covers about 1,600 languages. Experimental: accuracy varies a lot by language.",
+      "kind": "omnilingual_ctc",
+      "languages": [],
+      "multilingual": true,
+      "experimental": true,
+      "license": {
+        "spdx": "Apache-2.0",
+        "author": "Meta",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "attribution": null,
+        "converted": true
+      },
+      "source": {
+        "type": "archive",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2",
+        "size": 292571207,
+        "sha256": "cdcd0559c7c73efed54209a926e321afc914d046c5fdbf3665f00dc78180e5ed",
+        "format": "tar_bz2",
+        "strip_prefix": "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12"
+      },
+      "layout": {
+        "model": "model.int8.onnx",
+        "tokens": "tokens.txt"
+      },
+      "download_bytes": 292571207,
+      "disk_bytes": 365438543
+    }
+  ]
+}

@@ -62,6 +62,7 @@ tokio = { version = "1", features = ["full"] }
 # the dependency graph small and removes a wall of compile errors from
 # crates that simply don't have an Android target.
 [target.'cfg(not(target_os = "android"))'.dependencies]
+bulbul-local-stt = { path = "crates/bulbul-local-stt" }
 cpal = "0.15"
 arboard = "3"
 tauri-plugin-global-shortcut = "2"

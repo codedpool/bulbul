@@ -20,3 +20,7 @@
 /gen/android/keystore/
 /gen/android/keystore.properties
 *.jks
+
+# Cargo output and lockfile of the workspace-less crates under crates/
+/crates/*/target/
+/crates/*/Cargo.lock

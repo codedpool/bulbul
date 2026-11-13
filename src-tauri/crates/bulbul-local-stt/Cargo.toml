@@ -1,0 +1,19 @@
+[package]
+name = "bulbul-local-stt"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "On-device speech-to-text for Bulbul: the model catalog, the local model store and the transcriber interface."
+publish = false
+
+# Deliberately free of Tauri and of Bulbul's own types so it can be lifted out
+# of this repository later. No native engine is linked here: the speech engine
+# runs in a separate worker program, behind the `Transcriber` trait.
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
