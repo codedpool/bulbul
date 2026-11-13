@@ -935,7 +935,7 @@ function PanePrivacy({ config, updateConfig }) {
     <>
       <ToggleRow
         title="Share anonymous usage stats"
-        hint="Counts, durations, error categories, mode/language. Never your transcripts, audio, dictionary, or which app you're typing into. On by default — flip off if you'd rather not share."
+        hint="Counts, durations, error categories, mode/language. Never your transcripts, audio, dictionary, or which app you're typing into. On by default — flip off if you'd rather not share. This includes which transcription option you use, and download outcomes for on-device models, never model files or folder names."
         checked={!!config.telemetry_enabled}
         onChange={(v) => updateConfig({ ...config, telemetry_enabled: v })}
       />
@@ -944,7 +944,7 @@ function PanePrivacy({ config, updateConfig }) {
           to Groq, so this is here to read, not to switch off. */}
       <Row
         title="Data sent to Groq"
-        hint="To transcribe and clean up your dictation, Bulbul sends your audio and text to Groq using your own API key. Groq's docs say API data isn't retained or used for training by default — only brief troubleshooting/abuse logs (up to 30 days), which you can disable with Zero Data Retention in your Groq account. Policies can change, so always check Groq's latest privacy policy."
+        hint="By default, to transcribe and clean up your dictation, Bulbul sends your audio and text to Groq using your own API key. If you pick an on-device model, your audio stays on this computer; with your own server or another provider it goes only to that address. Cleanup text goes to the cleanup provider you chose. About Groq: Groq's docs say API data isn't retained or used for training by default — only brief troubleshooting/abuse logs (up to 30 days), which you can disable with Zero Data Retention in your Groq account. Policies can change, so always check Groq's latest privacy policy."
         stack
       >
         <div className="row">

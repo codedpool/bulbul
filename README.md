@@ -70,6 +70,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 
 ## What's in the box
 
+- **Run it your way**: Groq by default, or transcribe on your own computer with a downloadable model (desktop), or use your own OpenAI-compatible server (Ollama, whisper.cpp, LM Studio) or another cloud provider. Cleanup can use a server you run too. Set it up in the wizard or under **Settings → Providers / Local models**.
 - **Two-step pipeline**: Whisper Large v3 Turbo (STT) → a fast cleanup LLM on Groq (Qwen 3), with an automatic fallback chain so dictation keeps working if a model is busy or retired.
 - **Cleanup modes**: Raw (just fix obvious errors), Clean (remove fillers, fix punctuation — default), Polished (rewrite for clarity).
 - **Polish hotkey**: a second hold-to-talk shortcut that forces Polished mode regardless of your global setting. Default `Shift+Alt+P`.
@@ -91,7 +92,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 
 ## Privacy posture
 
-- **Your audio is sent to Groq** — that's how transcription works. Audio is processed under Groq's privacy policy ([review it before dictating sensitive content](https://groq.com/privacy-policy)).
+- **By default your audio is sent to Groq** for transcription. Audio is processed under Groq's privacy policy ([review it before dictating sensitive content](https://groq.com/privacy-policy)). If you choose an on-device model (desktop), your audio never leaves your computer; if you choose your own server or another cloud provider, it goes only there. Cleanup sends your text to whichever cleanup provider you pick.
 - **No Bulbul-owned server.** There is no backend storing your transcripts, hotkeys, or dictionary.
 - **All your dictation history lives locally** in `%APPDATA%\Bulbul\bulbul.db` (SQLite). Delete it anytime; back it up if you care.
 - **Anonymous usage stats** (counts, durations, error categories) ship to a Supabase endpoint by default so the maintainer can see what's used and what breaks. **Never** your transcripts, audio, dictionary, or which app you're typing into. Off-toggle in **Settings → Privacy**.

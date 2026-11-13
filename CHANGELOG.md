@@ -4,6 +4,18 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Added
+
+- **On-device transcription (desktop)** — download a speech model once and dictate without the internet. Pick from seven models (Moonshine tiny, Parakeet TDT 110M and 0.6B v2, Whisper small, Whisper large-v3 turbo, Qwen3-ASR 0.6B, Omnilingual ASR 300M) in the setup wizard or under Settings → Local models. Downloads resume if interrupted, are checked against published hashes, and check free disk space first. Models run in a separate small program, so a crash there can't take Bulbul down.
+- **Use your own server for transcription and cleanup** — point Bulbul at any OpenAI-compatible server (Ollama, whisper.cpp, LM Studio, or a cloud provider) from the same dialog. Keys are never sent over plain http outside your own network.
+- **Another cloud provider for cleanup**, with an OpenAI preset.
+- **Retry on Groq** — if a non-Groq transcription fails and you have a Groq key, that dictation is retried on Groq and you're told. Switch it off in the provider dialog.
+- **Add your own on-device model** from a folder of sherpa-onnx files (advanced), and choose how long an idle model stays in memory.
+
+### Changed
+
+- Groq stays the default. Existing setups are untouched.
+
 ## [1.2.2] — 2026-09-26
 
 ### Added
