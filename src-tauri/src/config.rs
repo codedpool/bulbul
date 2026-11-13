@@ -134,6 +134,18 @@ pub enum LlmProvider {
     Groq,
 }
 
+/// A speech model the user supplied: where it is and what family it is.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CustomLocalModel {
+    /// Starts with `custom-`; this is what `local_stt_model` holds.
+    pub id: String,
+    pub name: String,
+    /// A `ModelKind` in snake_case (`whisper`, `transducer`, ...). A string so
+    /// this file builds on Android, which doesn't have the speech crate.
+    pub kind: String,
+    pub folder: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -185,6 +197,17 @@ pub struct Config {
     /// chosen yet.
     #[serde(default)]
     pub local_stt_model: String,
+
+    /// Minutes of quiet before the on-device model is unloaded to free its
+    /// memory. 0 keeps it loaded. The next dictation after an unload pays a
+    /// few seconds to load it again.
+    #[serde(default = "default_local_idle_unload_minutes")]
+    pub local_idle_unload_minutes: u32,
+
+    /// Models the user pointed Bulbul at (a folder + a model family). These
+    /// are never downloaded or hash-checked by Bulbul.
+    #[serde(default)]
+    pub local_custom_models: Vec<CustomLocalModel>,
 
     /// When the selected non-Groq provider fails and a Groq key is set, retry
     /// that one dictation on Groq. This SENDS THE AUDIO TO THE CLOUD, so the
@@ -452,6 +475,9 @@ fn default_hide_tray() -> bool {
 fn default_tap_to_talk() -> bool {
     false
 }
+fn default_local_idle_unload_minutes() -> u32 {
+    5
+}
 fn default_stt_cloud_fallback() -> bool {
     true
 }
@@ -674,6 +700,8 @@ impl Default for Config {
             stt_endpoint_model: String::new(),
             stt_endpoint_key: String::new(),
             local_stt_model: String::new(),
+            local_idle_unload_minutes: default_local_idle_unload_minutes(),
+            local_custom_models: Vec::new(),
             stt_cloud_fallback: default_stt_cloud_fallback(),
             llm_provider: LlmProvider::default(),
             llm_endpoint_url: String::new(),
@@ -709,6 +737,17 @@ impl Default for Config {
             overlay_opacity: default_overlay_opacity(),
             overlay_size: default_overlay_size(),
             overlay_snooze_minutes: default_overlay_snooze_minutes(),
+        }
+    }
+}
+
+impl SttProvider {
+    /// Stable name for telemetry and logs.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SttProvider::Groq => "groq",
+            SttProvider::OpenaiCompatible => "openai_compatible",
+            SttProvider::Local => "local",
         }
     }
 }

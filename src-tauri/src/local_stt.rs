@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
 use bulbul_local_stt::engine::{self, EngineManifest, ENGINE_ID};
+use bulbul_local_stt::ModelKind;
 use bulbul_local_stt::{
     Audio, CancelToken, Catalog, Error as SttError, Installer, LoadSpec, Phase, ProcessLauncher, Progress,
     ProgressFn, Status, Store, Supervisor, SupervisorConfig,
@@ -125,6 +126,10 @@ pub struct LocalModelInfo {
     /// For `incomplete`: how much is already on disk (so a resume is cheap).
     pub partial_bytes: u64,
     pub downloading: bool,
+    /// A model the user pointed Bulbul at, not one from the catalog.
+    pub custom: bool,
+    /// For custom models: the folder it lives in (shown, never uploaded).
+    pub folder: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -151,6 +156,14 @@ pub struct ErrorEvent {
     pub available_bytes: Option<u64>,
 }
 
+/// Counts only: a catalog model id and a failure class. Never a path, a
+/// transcript or anything the user typed (custom models are not reported).
+fn track(enabled: bool, event: &str, props: serde_json::Value) {
+    if enabled {
+        crate::telemetry::track(event, props);
+    }
+}
+
 fn phase_name(p: &Phase) -> &'static str {
     match p {
         Phase::Downloading => "downloading",
@@ -172,7 +185,7 @@ fn error_event(model_id: &str, e: &SttError) -> ErrorEvent {
 }
 
 impl LocalStt {
-    pub fn list(&self) -> Result<Vec<LocalModelInfo>> {
+    pub fn list(&self, cfg: &Config) -> Result<Vec<LocalModelInfo>> {
         let downloading = self.downloads.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::new();
         for m in &self.catalog.models {
@@ -202,6 +215,31 @@ impl LocalStt {
                 verified,
                 partial_bytes: if status == Status::Incomplete { self.store.disk_usage(&m.id).unwrap_or(0) } else { 0 },
                 downloading: downloading.contains_key(&m.id),
+                custom: false,
+                folder: None,
+            });
+        }
+        for c in &cfg.local_custom_models {
+            let ok = custom_spec(c).is_ok();
+            let family = parse_kind(&c.kind).map(bulbul_local_stt::custom::kind_label).unwrap_or("unknown");
+            out.push(LocalModelInfo {
+                id: c.id.clone(),
+                name: c.name.clone(),
+                summary: format!("Your own {family} model."),
+                languages: Vec::new(),
+                multilingual: true,
+                experimental: false,
+                license: LicenseInfo { spdx: String::new(), author: String::new(), url: String::new(), attribution: None, converted: false },
+                download_bytes: 0,
+                disk_bytes: folder_size(std::path::Path::new(&c.folder)),
+                // A moved or emptied folder reads as not installed, so the
+                // card says so instead of failing at dictation time.
+                status: if ok { "installed" } else { "not_installed" },
+                verified: false,
+                partial_bytes: 0,
+                downloading: false,
+                custom: true,
+                folder: Some(c.folder.clone()),
             });
         }
         Ok(out)
@@ -210,7 +248,7 @@ impl LocalStt {
     /// Starts downloading `id` in the background. Progress and the outcome
     /// arrive as `local-model-progress`, `local-model-done` and
     /// `local-model-error` events.
-    pub fn start_download(self: &Arc<Self>, app: AppHandle, id: &str) -> Result<()> {
+    pub fn start_download(self: &Arc<Self>, app: AppHandle, id: &str, telemetry: bool) -> Result<()> {
         let entry = self.catalog.get(id).map_err(|e| anyhow!("{e}"))?.clone();
         let token = CancelToken::new();
         {
@@ -238,11 +276,16 @@ impl LocalStt {
             this.downloads.lock().unwrap_or_else(|e| e.into_inner()).remove(&entry.id);
             match result {
                 Ok(()) => {
+                    track(telemetry, "local_model_installed", serde_json::json!({ "model": entry.id }));
                     let _ = app.emit("local-model-done", entry.id.clone());
                 }
                 Err(e) => {
                     tracing::warn!("local model {} download failed: {e}", entry.id);
-                    let _ = app.emit("local-model-error", error_event(&entry.id, &e));
+                    let event = error_event(&entry.id, &e);
+                    if event.kind != "cancelled" {
+                        track(telemetry, "local_model_failed", serde_json::json!({ "model": entry.id, "kind": event.kind }));
+                    }
+                    let _ = app.emit("local-model-error", event);
                 }
             }
         });
@@ -251,7 +294,7 @@ impl LocalStt {
 
     /// Downloads and installs the speech engine in the background, reporting
     /// through the same events as a model (under the id `engine`).
-    pub fn start_engine_install(self: &Arc<Self>, app: AppHandle) -> Result<()> {
+    pub fn start_engine_install(self: &Arc<Self>, app: AppHandle, telemetry: bool) -> Result<()> {
         let token = CancelToken::new();
         {
             let mut d = self.downloads.lock().unwrap_or_else(|e| e.into_inner());
@@ -278,11 +321,16 @@ impl LocalStt {
             this.downloads.lock().unwrap_or_else(|e| e.into_inner()).remove(ENGINE_ID);
             match result {
                 Ok(()) => {
+                    track(telemetry, "local_model_installed", serde_json::json!({ "model": ENGINE_ID }));
                     let _ = app.emit("local-model-done", ENGINE_ID.to_string());
                 }
                 Err(e) => {
                     tracing::warn!("speech engine install failed: {e}");
-                    let _ = app.emit("local-model-error", error_event(ENGINE_ID, &e));
+                    let event = error_event(ENGINE_ID, &e);
+                    if event.kind != "cancelled" {
+                        track(telemetry, "local_model_failed", serde_json::json!({ "model": ENGINE_ID, "kind": event.kind }));
+                    }
+                    let _ = app.emit("local-model-error", event);
                 }
             }
         });
@@ -315,25 +363,82 @@ impl LocalStt {
 
     /// Transcribes a WAV recording with the model selected in `cfg`.
     pub async fn transcribe(&self, cfg: &Config, wav: &[u8], language: Option<&str>) -> Result<String> {
-        let id = cfg.local_stt_model.trim();
-        let entry = self.catalog.get(id).map_err(|_| anyhow!("No on-device model is selected."))?;
-        match self.store.status(entry).map_err(|e| anyhow!("{e}"))? {
-            Status::Installed { .. } => {}
-            _ => return Err(anyhow!("{} isn't downloaded yet.", entry.name)),
-        }
+        let (name, spec) = self.spec_for(cfg)?;
         if !self.engine_installed() {
             return Err(anyhow!("The on-device speech engine isn't installed yet."));
         }
+        self.supervisor.set_idle_unload(idle_unload(cfg));
         let audio = Audio::from_wav_bytes(wav).map_err(|e| anyhow!("{e}"))?;
-        let spec = LoadSpec::from_entry(&self.store, entry, None).map_err(|e| anyhow!("{e}"))?;
         let out = self
             .supervisor
             .transcribe(&spec, &audio, language)
             .await
             .map_err(|e| anyhow!("{e}"))
-            .with_context(|| format!("transcribing with {}", entry.name))?;
-        Ok(out.text)
+            .with_context(|| format!("transcribing with {name}"))?;
+        Ok(clean_output(&out.text))
     }
+
+    /// The model selected in `cfg`, as something the worker can load.
+    fn spec_for(&self, cfg: &Config) -> Result<(String, LoadSpec)> {
+        let id = cfg.local_stt_model.trim();
+        if let Some(c) = cfg.local_custom_models.iter().find(|c| c.id == id) {
+            let spec = custom_spec(c).map_err(|e| anyhow!("{} can't be loaded: {e}", c.name))?;
+            return Ok((c.name.clone(), spec));
+        }
+        let entry = self.catalog.get(id).map_err(|_| anyhow!("No on-device model is selected."))?;
+        match self.store.status(entry).map_err(|e| anyhow!("{e}"))? {
+            Status::Installed { .. } => {}
+            _ => return Err(anyhow!("{} isn't downloaded yet.", entry.name)),
+        }
+        let spec = LoadSpec::from_entry(&self.store, entry, None).map_err(|e| anyhow!("{e}"))?;
+        Ok((entry.name.clone(), spec))
+    }
+
+    /// Whether the selected model is already in memory, so the next
+    /// dictation won't wait for it to load.
+    pub async fn is_loaded(&self, cfg: &Config) -> bool {
+        self.supervisor.loaded_model().await.as_deref() == Some(cfg.local_stt_model.trim())
+    }
+}
+
+fn parse_kind(kind: &str) -> Option<ModelKind> {
+    serde_json::from_value(serde_json::Value::String(kind.to_string())).ok()
+}
+
+fn custom_spec(c: &config::CustomLocalModel) -> std::result::Result<LoadSpec, SttError> {
+    let kind = parse_kind(&c.kind).ok_or_else(|| SttError::Engine(format!("unknown model family {}", c.kind)))?;
+    LoadSpec::from_folder(&c.id, kind, std::path::Path::new(&c.folder), None)
+}
+
+/// Checks that `folder` holds a model of `kind` Bulbul can load.
+pub fn check_custom(kind: &str, folder: &str) -> Result<()> {
+    let kind = parse_kind(kind).ok_or_else(|| anyhow!("Pick the model family."))?;
+    let dir = std::path::Path::new(folder.trim());
+    if !dir.is_dir() {
+        return Err(anyhow!("That folder doesn't exist."));
+    }
+    bulbul_local_stt::custom::detect_layout(kind, dir).map(|_| ()).map_err(|e| anyhow!("{e}"))
+}
+
+fn folder_size(dir: &std::path::Path) -> u64 {
+    let Ok(read) = std::fs::read_dir(dir) else { return 0 };
+    read.flatten()
+        .map(|e| match e.metadata() {
+            Ok(m) if m.is_dir() => folder_size(&e.path()),
+            Ok(m) => m.len(),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+fn idle_unload(cfg: &Config) -> std::time::Duration {
+    std::time::Duration::from_secs(u64::from(cfg.local_idle_unload_minutes) * 60)
+}
+
+/// Tidies a model's raw output so it reads like the cloud path's: one line,
+/// single spaces, no stray edges. Wording is never changed.
+fn clean_output(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Fetches the engine manifest and refuses it unless its signature checks out.
@@ -369,6 +474,34 @@ mod tests {
     fn the_manifest_key_is_the_one_that_signs_app_updates() {
         let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(conf["plugins"]["updater"]["pubkey"].as_str(), Some(SIGNING_PUBKEY));
+    }
+
+    #[test]
+    fn output_is_tidied_without_changing_words() {
+        assert_eq!(clean_output("  hello\n  world \t again  "), "hello world again");
+        assert_eq!(clean_output(""), "");
+    }
+
+    #[test]
+    fn custom_models_are_checked_before_they_are_saved() {
+        assert!(check_custom("nonsense", "/tmp").is_err());
+        assert!(check_custom("whisper", "/definitely/not/here").unwrap_err().to_string().contains("doesn't exist"));
+        let d = tempfile::tempdir().unwrap();
+        assert!(check_custom("whisper", d.path().to_str().unwrap()).unwrap_err().to_string().contains("missing"));
+        for f in ["model.onnx", "tokens.txt"] {
+            std::fs::write(d.path().join(f), b"x").unwrap();
+        }
+        check_custom("omnilingual_ctc", d.path().to_str().unwrap()).unwrap();
+        assert!(folder_size(d.path()) >= 2);
+    }
+
+    #[test]
+    fn the_idle_setting_converts_minutes() {
+        let mut c = Config::default();
+        c.local_idle_unload_minutes = 0;
+        assert!(idle_unload(&c).is_zero());
+        c.local_idle_unload_minutes = 7;
+        assert_eq!(idle_unload(&c).as_secs(), 420);
     }
 
     #[test]

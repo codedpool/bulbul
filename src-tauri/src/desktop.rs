@@ -1433,8 +1433,15 @@ async fn test_llm_endpoint(url: String, model: String, key: String) -> Result<()
 
 /// The on-device models Bulbul offers, with what's installed.
 #[tauri::command]
-async fn list_local_models() -> Result<Vec<local_stt::LocalModelInfo>, String> {
-    local_stt::get().and_then(|l| l.list()).map_err(|e| format!("{e:#}"))
+async fn list_local_models(state: tauri::State<'_, AppState>) -> Result<Vec<local_stt::LocalModelInfo>, String> {
+    let cfg = state.config.lock().clone();
+    local_stt::get().and_then(|l| l.list(&cfg)).map_err(|e| format!("{e:#}"))
+}
+
+/// Checks that a folder holds a model of the chosen family, before it's saved.
+#[tauri::command]
+async fn check_custom_model(kind: String, folder: String) -> Result<(), String> {
+    local_stt::check_custom(&kind, &folder).map_err(|e| format!("{e:#}"))
 }
 
 /// Whether the on-device speech engine is installed.
@@ -1447,15 +1454,17 @@ async fn local_engine_status() -> Result<local_stt::EngineStatus, String> {
 /// Downloads and installs the speech engine; progress arrives as events
 /// under the id `engine`.
 #[tauri::command]
-async fn install_local_engine(app: AppHandle) -> Result<(), String> {
-    local_stt::get().and_then(|l| l.start_engine_install(app)).map_err(|e| format!("{e:#}"))
+async fn install_local_engine(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let telemetry = state.config.lock().telemetry_enabled;
+    local_stt::get().and_then(|l| l.start_engine_install(app, telemetry)).map_err(|e| format!("{e:#}"))
 }
 
 /// Starts a background download; progress arrives as events.
 #[tauri::command]
-async fn download_local_model(app: AppHandle, id: String) -> Result<(), String> {
+async fn download_local_model(app: AppHandle, state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    let telemetry = state.config.lock().telemetry_enabled;
     local_stt::get()
-        .and_then(|l| l.start_download(app, &id))
+        .and_then(|l| l.start_download(app, &id, telemetry))
         .map_err(|e| format!("{e:#}"))
 }
 
@@ -2822,6 +2831,7 @@ pub fn run() {
             test_llm_endpoint,
             list_local_models,
             local_engine_status,
+            check_custom_model,
             install_local_engine,
             download_local_model,
             cancel_local_model_download,
@@ -3996,9 +4006,21 @@ async fn process_pipeline(
     };
     let notify_rl: &groq::RetryNotify = &on_rate_limit;
 
+    // A model that isn't in memory takes a few seconds to load; say so rather
+    // than looking stuck on "Transcribing".
+    if cfg.stt_provider == config::SttProvider::Local {
+        if let Ok(local) = local_stt::get() {
+            if !local.is_loaded(&cfg).await {
+                emit_status(&app, "processing", Some("Loading model…".into()));
+            }
+        }
+    }
+
     let t_stt_start = Instant::now();
+    let stt_fell_back: bool;
     let transcript = match stt::transcribe(&cfg, wav, &vocabulary, Some(notify_rl)).await {
         Ok(t) => {
+            stt_fell_back = t.fell_back_from.is_some();
             // The audio left this machine for Groq even though the user chose
             // something else — always say so.
             if let Some(from) = t.fell_back_from {
@@ -4314,6 +4336,9 @@ async fn process_pipeline(
             "venue_category": venue_category,
             "stt_ms_bucket": telemetry::duration_bucket(t_stt_ms),
             "cleanup_ms_bucket": telemetry::duration_bucket(t_cleanup_ms),
+            // Which speech route this took; a fallback means the audio went to Groq.
+            "stt_provider": cfg.stt_provider.as_str(),
+            "stt_fell_back": stt_fell_back,
         }))
     } else {
         None
