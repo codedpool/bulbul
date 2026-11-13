@@ -89,7 +89,9 @@
   .ps-cols { grid-template-columns: 1fr; }
 }
 
-.ps-col { min-width: 0; }
+/* A <section>, so the app-wide flex + gap for sections would otherwise add
+   10px between every child. */
+.ps-col { min-width: 0; gap: 0; }
 .ps-col h3 {
   margin: 0 0 2px;
   font-size: 13.5px;

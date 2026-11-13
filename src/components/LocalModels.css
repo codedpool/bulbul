@@ -1,0 +1,225 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Romanch Roshan Singh */
+
+/* On-device models: the Settings page, the picker in the provider modal, the
+   floating progress pill and the interrupted-download dialog. Built from the
+   app's theme tokens so light and dark follow automatically. */
+
+/* ───────────── shared bits ───────────── */
+
+.lm-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--fill);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.lm-btn:hover:not(:disabled) { background: var(--fill-active); border-color: var(--border-hover); }
+.lm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.lm-btn:focus-visible { outline: 2px solid #5ec8c0; outline-offset: 2px; }
+.lm-btn.primary {
+  background: #5ec8c0;
+  border-color: #5ec8c0;
+  color: var(--on-accent);
+}
+.lm-btn.primary:hover:not(:disabled) { background: #74d3cc; border-color: #74d3cc; }
+.lm-btn-quiet { background: transparent; border-color: transparent; color: var(--text-muted); }
+.lm-btn-quiet:hover:not(:disabled) { background: var(--fill); border-color: var(--border); color: var(--text); }
+
+.lm-tag {
+  align-self: center;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.lm-tag-accent { background: var(--accent-fill); color: var(--accent-text); border-color: var(--accent-border-strong); }
+.lm-tag-warn { color: #c9953a; border-color: rgba(201, 149, 58, 0.4); background: transparent; }
+
+.lm-err { margin: 0; font-size: 12.5px; line-height: 1.45; color: #d46b6b; }
+
+.lm-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--fill-active);
+  overflow: hidden;
+  flex: 1;
+  min-width: 60px;
+}
+.lm-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #5ec8c0;
+  transition: width 240ms ease;
+}
+@media (prefers-reduced-motion: reduce) { .lm-bar-fill { transition: none; } }
+
+.lm-empty { margin: 0; font-size: 12.5px; color: var(--text-muted); }
+
+/* ───────────── Settings page ───────────── */
+
+.lm-pane { display: flex; flex-direction: column; gap: 14px; }
+.lm-lede { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); max-width: 64ch; }
+
+.lm-engine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-1);
+}
+.lm-engine-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lm-engine-title { font-size: 13px; font-weight: 600; }
+.lm-engine-text { font-size: 12px; line-height: 1.45; color: var(--text-muted); }
+
+.lm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+
+.lm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-1);
+}
+.lm-card.in-use { border-color: var(--accent-border-strong); background: var(--accent-surface); }
+
+.lm-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lm-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.lm-card-title h4 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+}
+.lm-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.lm-summary { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-2); }
+.lm-facts {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.lm-progress { display: flex; align-items: center; gap: 12px; margin-top: 3px; }
+.lm-progress-text { font-size: 12px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lm-paused { margin: 2px 0 0; font-size: 12px; color: var(--text-muted); }
+.lm-credit { margin: 2px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
+
+/* ───────────── picker in the provider modal ───────────── */
+
+.lm-pick {
+  margin: 8px 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-1);
+}
+.lm-pick-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.lm-pick-row:first-child { border-top: 0; }
+.lm-pick-row:hover { background: var(--row-hover); }
+.lm-pick-row.selected { background: var(--accent-fill); }
+.lm-pick-row input { position: absolute; opacity: 0; width: 0; height: 0; }
+.lm-pick-dot {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-hover);
+  background: var(--field);
+  position: relative;
+}
+.lm-pick-row.selected .lm-pick-dot { border-color: #5ec8c0; }
+.lm-pick-row.selected .lm-pick-dot::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: #5ec8c0;
+}
+.lm-pick-row input:focus-visible + .lm-pick-dot { outline: 2px solid #5ec8c0; outline-offset: 2px; }
+.lm-pick-text { display: flex; flex-direction: column; gap: 0; min-width: 0; flex: 1; }
+.lm-pick-name { display: flex; align-items: baseline; gap: 7px; font-size: 12.5px; font-weight: 600; }
+.lm-pick-desc { margin: 5px 2px 0; font-size: 11.5px; line-height: 1.35; color: var(--text-muted); }
+.lm-pick-size { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* ───────────── floating progress pill ───────────── */
+
+.lm-pill {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(380px, calc(100vw - 32px));
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+.lm-pill-error { flex-direction: column; align-items: stretch; gap: 8px; border-color: rgba(212, 107, 107, 0.5); }
+.lm-pill-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.lm-pill-title { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lm-pill-sub { font-size: 11.5px; line-height: 1.4; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lm-pill-actions { display: flex; gap: 6px; justify-content: flex-end; }
+@media (prefers-reduced-motion: no-preference) {
+  .lm-pill { animation: lm-rise 180ms ease; }
+}
+@keyframes lm-rise { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ───────────── interrupted-download dialog ───────────── */
+
+.lm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.lm-dialog {
+  width: min(440px, calc(100% - 32px));
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+.lm-dialog h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.lm-dialog p { margin: 0 0 14px; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.lm-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }

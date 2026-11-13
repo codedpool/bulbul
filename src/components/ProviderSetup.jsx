@@ -5,6 +5,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { endpointKind, isPrivateHost } from "../provider.js";
+import { IS_ANDROID } from "../platform.js";
+import { ensureLocalModel, suggestedModelId } from "../localModels.js";
+import { LocalModelPicker } from "./LocalModels.jsx";
 import "./ProviderSetup.css";
 
 // Where the data goes is the real difference between the options, so every
@@ -77,7 +80,8 @@ function TestStatus({ state }) {
 // ---------- state shared by the modal and the Settings page ----------
 
 function useProviderDraft(config, updateConfig) {
-  const [choice, setChoice] = useState("groq"); // groq | self | cloud
+  const [choice, setChoice] = useState("groq"); // groq | self | cloud | local
+  const [localModel, setLocalModel] = useState("");
   const [stt, setStt] = useState({ url: "", model: "", key: "" });
   const [llmChoice, setLlmChoice] = useState("groq"); // groq | self
   const [llm, setLlm] = useState({ url: "", model: "", key: "" });
@@ -93,7 +97,10 @@ function useProviderDraft(config, updateConfig) {
   // Load the saved settings. Called when the modal opens / the page mounts.
   function load() {
     const c = config || {};
-    setChoice(c.stt_provider === "openai_compatible" ? endpointKind(c.stt_endpoint_url) : "groq");
+    setChoice(
+      c.stt_provider === "openai_compatible" ? endpointKind(c.stt_endpoint_url) : c.stt_provider === "local" && !IS_ANDROID ? "local" : "groq"
+    );
+    setLocalModel(c.local_stt_model || suggestedModelId(c.language));
     setStt({ url: c.stt_endpoint_url || "", model: c.stt_endpoint_model || "", key: c.stt_endpoint_key || "" });
     setLlmChoice(c.llm_provider === "openai_compatible" ? "self" : "groq");
     setLlm({ url: c.llm_endpoint_url || "", model: c.llm_endpoint_model || "", key: c.llm_endpoint_key || "" });
@@ -127,6 +134,10 @@ function useProviderDraft(config, updateConfig) {
   function editLlm(patch) {
     setLlm((s) => ({ ...s, ...patch }));
     setLlmTest(IDLE);
+    touch();
+  }
+  function pickLocalModel(id) {
+    setLocalModel(id);
     touch();
   }
   function editFallback(v) {
@@ -165,7 +176,8 @@ function useProviderDraft(config, updateConfig) {
   // Resolves true when saved.
   async function save() {
     let problem = "";
-    if (choice !== "groq") problem = addressProblem(stt, choice === "cloud");
+    if (choice === "local") problem = localModel ? "" : "Pick a model to download.";
+    else if (choice !== "groq") problem = addressProblem(stt, choice === "cloud");
     if (!problem && llmChoice === "self") problem = addressProblem(llm, false);
     if (problem) {
       setError(problem);
@@ -174,11 +186,12 @@ function useProviderDraft(config, updateConfig) {
     setSaving(true);
     try {
       const patch = {
-        stt_provider: choice === "groq" ? "groq" : "openai_compatible",
+        stt_provider: choice === "groq" ? "groq" : choice === "local" ? "local" : "openai_compatible",
         stt_cloud_fallback: fallback,
         llm_provider: llmChoice === "self" ? "openai_compatible" : "groq",
       };
-      if (choice !== "groq") {
+      if (choice === "local") patch.local_stt_model = localModel;
+      if (choice === "self" || choice === "cloud") {
         patch.stt_endpoint_url = stt.url.trim();
         patch.stt_endpoint_model = stt.model.trim();
         patch.stt_endpoint_key = stt.key.trim();
@@ -189,6 +202,8 @@ function useProviderDraft(config, updateConfig) {
         patch.llm_endpoint_key = llm.key.trim();
       }
       await updateConfig({ ...config, ...patch });
+      // Start fetching in the background; the progress pill shows where it is.
+      if (choice === "local") ensureLocalModel(localModel);
       setSaved(true);
       return true;
     } catch (e) {
@@ -200,8 +215,8 @@ function useProviderDraft(config, updateConfig) {
   }
 
   return {
-    choice, stt, llmChoice, llm, fallback, sttTest, llmTest, error, saving, saved, hasGroqKey,
-    load, pickChoice, pickLlm, editStt, editLlm, editFallback, save,
+    choice, localModel, stt, llmChoice, llm, fallback, sttTest, llmTest, error, saving, saved, hasGroqKey,
+    load, pickChoice, pickLocalModel, pickLlm, editStt, editLlm, editFallback, save,
     testStt: () => runTest("test_stt_endpoint", stt, setSttTest),
     testLlm: () => runTest("test_llm_endpoint", llm, setLlmTest),
   };
@@ -345,6 +360,25 @@ function ProviderForm({ d, variant }) {
     </div>
   );
 
+
+  const fallbackToggle =
+    choice !== "groq" ? (
+      <label className="toggle-row ps-fallback">
+        <span className="toggle-text">
+          <span className="toggle-label">If transcription fails, retry on Groq</span>
+          <span className="toggle-hint">
+            {d.hasGroqKey
+              ? "Sends that recording to Groq, and tells you."
+              : "Needs a Groq key; without one a failure shows an error."}
+          </span>
+        </span>
+        <span className={`toggle ${fallback ? "on" : ""}`}>
+          <input type="checkbox" checked={fallback} onChange={(e) => d.editFallback(e.target.checked)} />
+          <span className="toggle-thumb" />
+        </span>
+      </label>
+    ) : null;
+
   return (
     <div className={`ps-cols ${pane ? "ps-cols-pane" : ""}`}>
       <section className="ps-col" aria-labelledby="ps-stt-title">
@@ -373,30 +407,19 @@ function ProviderForm({ d, variant }) {
           >
             {sttForm}
           </Option>
-          <Option
-            name="ps-choice" value="local" checked={false} onChange={() => {}} disabled
-            title="A model on this computer" tag="Coming soon" showDesc={pane}
-            desc="Download a speech model once and transcribe offline."
-            where={{ icon: "chip", text: "Audio never leaves this computer." }}
-          />
+          {!IS_ANDROID && (
+            <Option
+              name="ps-choice" value="local" checked={choice === "local"} onChange={() => d.pickChoice("local")}
+              title="A model on this computer" hint="Works offline" showDesc={pane}
+              desc="Download a speech model once and transcribe without the internet."
+              where={{ icon: "chip", text: "Audio never leaves this computer. Downloads when you save." }}
+            >
+              <LocalModelPicker selected={d.localModel} onSelect={d.pickLocalModel} />
+            </Option>
+          )}
         </div>
 
-        {choice !== "groq" && (
-          <label className="toggle-row ps-fallback">
-            <span className="toggle-text">
-              <span className="toggle-label">If it fails, retry on Groq</span>
-              <span className="toggle-hint">
-                {d.hasGroqKey
-                  ? "Sends that recording to Groq, and tells you."
-                  : "Needs a Groq key; without one a failure shows an error."}
-              </span>
-            </span>
-            <span className={`toggle ${fallback ? "on" : ""}`}>
-              <input type="checkbox" checked={fallback} onChange={(e) => d.editFallback(e.target.checked)} />
-              <span className="toggle-thumb" />
-            </span>
-          </label>
-        )}
+        {pane && fallbackToggle}
       </section>
 
       <section className="ps-col" aria-labelledby="ps-clean-title">
@@ -418,6 +441,7 @@ function ProviderForm({ d, variant }) {
             {llmForm}
           </Option>
         </div>
+        {!pane && fallbackToggle}
         {noCleanup && (
           <p className="ps-note ps-note-warn">
             No cleanup service is set, so Bulbul will type your words exactly as you said them.
