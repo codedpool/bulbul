@@ -14,6 +14,7 @@
 
 pub mod catalog;
 pub mod chunk;
+pub mod custom;
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "download")]

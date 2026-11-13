@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
@@ -82,12 +83,16 @@ struct Running {
 pub struct Supervisor<L: Launcher> {
     launcher: L,
     cfg: SupervisorConfig,
+    /// Milliseconds of quiet before the worker is shut down; 0 never. Held
+    /// apart from `cfg` so a setting change takes effect without a restart.
+    idle_ms: AtomicU64,
     state: Mutex<Option<Running>>,
 }
 
 impl<L: Launcher> Supervisor<L> {
     pub fn new(launcher: L, cfg: SupervisorConfig) -> Arc<Self> {
-        Arc::new(Supervisor { launcher, cfg, state: Mutex::new(None) })
+        let idle_ms = AtomicU64::new(cfg.idle_unload.as_millis() as u64);
+        Arc::new(Supervisor { launcher, cfg, idle_ms, state: Mutex::new(None) })
     }
 
     /// Transcribes `audio` with the model in `spec`, starting the worker and
@@ -174,25 +179,46 @@ impl<L: Launcher> Supervisor<L> {
         self.state.lock().await.as_ref().and_then(|r| r.loaded.as_ref().map(|s| s.model_id.clone()))
     }
 
-    /// Background task that shuts the worker down after `idle_unload` of quiet.
-    pub fn spawn_idle_reaper(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
-        let idle = self.cfg.idle_unload;
-        if idle.is_zero() {
-            return None;
-        }
+    /// Changes how long the worker may sit unused before it is shut down to
+    /// free the model's memory. Zero keeps it loaded.
+    pub fn set_idle_unload(&self, idle: Duration) {
+        self.idle_ms.store(idle.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    fn idle(&self) -> Duration {
+        Duration::from_millis(self.idle_ms.load(Ordering::Relaxed))
+    }
+
+    /// Background task that shuts the worker down after the idle time of
+    /// quiet. Always running; it does nothing while the idle time is zero.
+    pub fn spawn_idle_reaper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let this = Arc::downgrade(self);
-        let tick = (idle / 4).clamp(Duration::from_millis(20), Duration::from_secs(30));
-        Some(tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
+                let tick = match this.upgrade() {
+                    Some(sup) => {
+                        let idle = sup.idle();
+                        if idle.is_zero() {
+                            Duration::from_secs(1)
+                        } else {
+                            (idle / 4).clamp(Duration::from_millis(20), Duration::from_secs(30))
+                        }
+                    }
+                    None => return,
+                };
                 tokio::time::sleep(tick).await;
                 let Some(sup) = this.upgrade() else { return };
+                let idle = sup.idle();
+                if idle.is_zero() {
+                    continue;
+                }
                 // Never block behind a dictation in progress: only look when free.
                 let Ok(mut state) = sup.state.try_lock() else { continue };
                 if state.as_ref().is_some_and(|r| r.last_used.elapsed() >= idle) {
                     *state = None;
                 }
             }
-        }))
+        })
     }
 }
 
@@ -478,7 +504,7 @@ mod tests {
     async fn the_worker_is_shut_down_after_an_idle_spell() {
         let cfg = SupervisorConfig { idle_unload: Duration::from_millis(120), ..quick() };
         let (s, c) = sup(Behaviour::default(), cfg);
-        let _reaper = s.spawn_idle_reaper().expect("idle unloading is on");
+        let _reaper = s.spawn_idle_reaper();
         s.transcribe(&spec("a"), &audio(), None).await.unwrap();
         assert!(s.is_running().await);
         tokio::time::sleep(Duration::from_millis(600)).await;
@@ -489,9 +515,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idle_unloading_can_be_turned_off() {
-        let (s, _) = sup(Behaviour::default(), quick());
-        assert!(s.spawn_idle_reaper().is_none());
+    async fn idle_unloading_can_be_turned_off_and_back_on() {
+        let cfg = SupervisorConfig { idle_unload: Duration::ZERO, ..quick() };
+        let (s, _) = sup(Behaviour::default(), cfg);
+        let _reaper = s.spawn_idle_reaper();
+        s.transcribe(&spec("a"), &audio(), None).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(s.is_running().await, "zero means never unload");
+
+        // Turned on at runtime, the same worker is now reaped.
+        s.set_idle_unload(Duration::from_millis(100));
+        for _ in 0..50 {
+            if !s.is_running().await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the worker should have been unloaded once idle unloading was switched on");
     }
 
     #[tokio::test]
