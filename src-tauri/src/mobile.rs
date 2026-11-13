@@ -27,6 +27,7 @@
 //     bridge is in place)
 
 mod config;
+mod local_models;
 
 use config::Config;
 use serde_json::{json, Value};
@@ -1672,6 +1673,71 @@ fn complete_onboarding(app: tauri::AppHandle) -> Result<(), String> {
     save_config(app, cfg)
 }
 
+// ---------- On-device models ----------
+//
+// The same model library the desktop uses (catalog, resumable verified
+// downloads, progress events); only the models that are fast enough on a
+// phone are offered. Kotlin runs them, in its own Android process, from the
+// files this puts under <app_data_dir>/local-stt/models.
+
+/// What a mid-range phone can run faster than real time (measured on a
+/// moto g62: Moonshine tiny 0.25 s and Parakeet 110M 0.26 s for a 5 s clip;
+/// Whisper small was slower than the audio).
+const ANDROID_LOCAL_MODELS: &[&str] = &["moonshine-tiny-en", "parakeet-tdt-110m-en"];
+
+static MODELS: std::sync::OnceLock<std::sync::Arc<local_models::ModelManager>> = std::sync::OnceLock::new();
+
+fn models(app: &tauri::AppHandle) -> Result<&'static std::sync::Arc<local_models::ModelManager>, String> {
+    if let Some(m) = MODELS.get() {
+        return Ok(m);
+    }
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("local-stt").join("models");
+    let created = local_models::ModelManager::new(dir).map_err(|e| format!("{e:#}"))?;
+    Ok(MODELS.get_or_init(|| created))
+}
+
+fn android_model_only(id: &str) -> Result<(), String> {
+    if ANDROID_LOCAL_MODELS.contains(&id) {
+        Ok(())
+    } else {
+        Err("That model isn't available on Android.".to_string())
+    }
+}
+
+#[tauri::command]
+fn list_local_models(app: tauri::AppHandle) -> Result<Vec<local_models::LocalModelInfo>, String> {
+    models(&app)?.list(Some(ANDROID_LOCAL_MODELS)).map_err(|e| format!("{e:#}"))
+}
+
+/// The engine ships inside the app on Android, so it is always there.
+#[tauri::command]
+fn local_engine_status() -> local_models::EngineStatus {
+    local_models::EngineStatus { installed: true }
+}
+
+#[tauri::command]
+fn install_local_engine() -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+fn download_local_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    android_model_only(&id)?;
+    models(&app)?.start_download(app.clone(), &id, None).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn cancel_local_model_download(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    models(&app)?.cancel(&id);
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_local_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    android_model_only(&id)?;
+    models(&app)?.delete(&id).map_err(|e| format!("{e:#}"))
+}
+
 // ---------- Entry point ----------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1694,6 +1760,12 @@ pub fn run() {
             // Startup
             get_config,
             save_config,
+            list_local_models,
+            local_engine_status,
+            install_local_engine,
+            download_local_model,
+            cancel_local_model_download,
+            delete_local_model,
             get_autostart,
             set_autostart,
             set_tray_visible,

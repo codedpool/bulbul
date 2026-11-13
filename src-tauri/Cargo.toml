@@ -76,6 +76,9 @@ tauri-plugin-single-instance = "2"
 # native TLS backend so any reqwest::Client::new() panics on the first
 # call with "No provider set". We install ring at startup in mobile.rs.
 [target.'cfg(target_os = "android")'.dependencies]
+# Android only needs the model library (catalog, downloads, hash checks); the
+# model itself runs in Kotlin, so none of the worker-process code is built.
+bulbul-local-stt = { path = "crates/bulbul-local-stt", default-features = false, features = ["download"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 # Platform-specific dependencies. Top-level [dependencies] above must
