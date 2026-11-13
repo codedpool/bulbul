@@ -543,6 +543,7 @@ function App() {
         section={settingsSection}
         onSectionChange={setSettingsSection}
       />
+      <DownloadPill />
       <TooltipProvider />
       </>
     );

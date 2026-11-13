@@ -97,7 +97,7 @@
 }
 .lm-card.in-use { border-color: var(--accent-border-strong); background: var(--accent-surface); }
 
-.lm-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lm-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
 .lm-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .lm-card-title h4 {
   margin: 0;
@@ -268,3 +268,7 @@
 
 .lm-folder { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lm-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-faint); max-width: 64ch; }
+
+/* On a phone the floating pill clears the bottom tab bar, and long facts wrap. */
+.platform-android .lm-pill { bottom: 84px; }
+.platform-android .lm-facts { gap: 2px 10px; }

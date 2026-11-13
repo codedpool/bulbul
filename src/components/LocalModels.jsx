@@ -19,6 +19,7 @@ import {
   retryEngineInstall,
   useLocalModels,
 } from "../localModels.js";
+import { IS_ANDROID } from "../platform.js";
 import "./LocalModels.css";
 
 function languagesOf(m) {
@@ -320,10 +321,22 @@ export function LocalModelsPane({ config, updateConfig }) {
   return (
     <div className="lm-pane">
       <p className="lm-lede">
-        Download a speech model once and Bulbul can turn your voice into text without the internet. Your audio never
-        leaves this computer. Cleanup is a separate step and still needs a language model, set under Providers.
+        {IS_ANDROID
+          ? "Download a speech model once and Bulbul can turn your voice into text on this phone, without the internet. Your audio never leaves the phone. Cleanup is a separate step and still uses your Groq key."
+          : "Download a speech model once and Bulbul can turn your voice into text without the internet. Your audio never leaves this computer. Cleanup is a separate step and still needs a language model, set under Providers."}
       </p>
-      <EngineRow store={store} />
+      {IS_ANDROID && config.stt_provider === "local" && (
+        <div className="lm-engine">
+          <div className="lm-engine-main">
+            <span className="lm-engine-title">Using this phone</span>
+            <span className="lm-engine-text">Dictation is transcribed on the phone. If it fails, Bulbul can retry on Groq.</span>
+          </div>
+          <button type="button" className="lm-btn" onClick={() => updateConfig({ ...config, stt_provider: "groq" })}>
+            Use Groq instead
+          </button>
+        </div>
+      )}
+      {!IS_ANDROID && <EngineRow store={store} />}
       <IdleSetting config={config} updateConfig={updateConfig} />
       {!store.loaded ? (
         <p className="lm-empty">Loading…</p>
@@ -343,7 +356,7 @@ export function LocalModelsPane({ config, updateConfig }) {
           ))}
         </ul>
       )}
-      <AddCustomModel config={config} onAdd={addCustom} />
+      {!IS_ANDROID && <AddCustomModel config={config} onAdd={addCustom} />}
       <p className="lm-note">
         Your dictionary still applies after transcription. On-device models can't be steered toward your spellings
         while they listen, the way Groq's can, so cleanup does that part.

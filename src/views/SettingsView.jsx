@@ -87,6 +87,7 @@ const CATEGORIES = [
 const M_SECTIONS = [
   { id: "general", label: "General", hint: "Cleanup mode, language, appearance" },
   { id: "account", label: "Account", hint: "Your Groq API key" },
+  { id: "local", label: "On-device model", hint: "Transcribe on this phone, offline" },
   { id: "overlay", label: "Overlay", hint: "Dictation bubble opacity and size" },
   { id: "personalization", label: "Personalization", hint: "Your name and cleanup preferences" },
   { id: "privacy", label: "Privacy", hint: "Anonymous usage stats" },
@@ -351,6 +352,8 @@ export default function SettingsView({
               setKeyState={setKeyState}
             />
           );
+        case "local":
+          return <LocalModelsPane config={config} updateConfig={updateConfig} />;
         case "overlay":
           return <PaneOverlay config={config} updateConfig={updateConfig} />;
         case "personalization":

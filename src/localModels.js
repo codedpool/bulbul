@@ -8,7 +8,6 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { IS_ANDROID } from "./platform.js";
 
 // The speech engine reports through the same events, under this id.
 export const ENGINE_ID = "engine";
@@ -35,7 +34,6 @@ function without(obj, key) {
 }
 
 export async function refreshLocalModels() {
-  if (IS_ANDROID) return;
   try {
     const [models, engine] = await Promise.all([invoke("list_local_models"), invoke("local_engine_status")]);
     set({ models, engineInstalled: engine.installed, loaded: true });
@@ -46,7 +44,7 @@ export async function refreshLocalModels() {
 
 // Starts listening once. Safe to call from every consumer.
 export function startLocalModels() {
-  if (started || IS_ANDROID) return;
+  if (started) return;
   started = true;
   listen("local-model-progress", (e) => {
     const p = e.payload;
