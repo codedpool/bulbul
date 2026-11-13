@@ -452,7 +452,7 @@ function App() {
             <button
               className="m-icon-btn m-sponsor-btn"
               aria-label="Sponsor Bulbul"
-              title="Sponsor me"
+              title="Sponsor"
               onClick={openSponsor}
             >
               <HeartIcon size={22} />
@@ -519,7 +519,7 @@ function App() {
                 </span>
                 <button type="button" className="sponsor-pill" onClick={openSponsor}>
                   <HeartIcon size={13} />
-                  <span>Sponsor me</span>
+                  <span>Sponsor</span>
                 </button>
                 <span className="muted small">v1.2.2 · GPL-3.0</span>
               </div>
@@ -577,7 +577,7 @@ function App() {
             title="Sponsor Bulbul"
           >
             <HeartIcon size={13} />
-            <span>Sponsor me</span>
+            <span>Sponsor</span>
           </button>
           <button
             className="mac-floating-theme-toggle"
@@ -783,7 +783,7 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
             title="Sponsor Bulbul"
           >
             <HeartIcon size={13} />
-            <span>Sponsor me</span>
+            <span>Sponsor</span>
           </button>
         )}
         <button
