@@ -12,6 +12,7 @@ mod inject;
 mod keyboard_hook;
 #[cfg(target_os = "windows")]
 mod mouse_hook;
+mod local_stt;
 mod model_config;
 mod stt;
 #[cfg(target_os = "linux")]
@@ -1430,6 +1431,38 @@ async fn test_llm_endpoint(url: String, model: String, key: String) -> Result<()
         .map_err(|e| format!("{e:#}"))
 }
 
+/// The on-device models Bulbul offers, with what's installed.
+#[tauri::command]
+async fn list_local_models() -> Result<Vec<local_stt::LocalModelInfo>, String> {
+    local_stt::get().and_then(|l| l.list()).map_err(|e| format!("{e:#}"))
+}
+
+/// Whether the on-device speech engine is installed.
+#[tauri::command]
+async fn local_engine_status() -> Result<local_stt::EngineStatus, String> {
+    let l = local_stt::get().map_err(|e| format!("{e:#}"))?;
+    Ok(local_stt::EngineStatus { installed: l.engine_installed() })
+}
+
+/// Starts a background download; progress arrives as events.
+#[tauri::command]
+async fn download_local_model(app: AppHandle, id: String) -> Result<(), String> {
+    local_stt::get()
+        .and_then(|l| l.start_download(app, &id))
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn cancel_local_model_download(id: String) -> Result<(), String> {
+    local_stt::get().map(|l| l.cancel_download(&id)).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn delete_local_model(id: String) -> Result<(), String> {
+    let l = local_stt::get().map_err(|e| format!("{e:#}"))?;
+    l.delete(&id).await.map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 async fn validate_api_key(api_key: String) -> Result<(), String> {
     groq::validate_key(api_key.trim())
@@ -2780,6 +2813,11 @@ pub fn run() {
             validate_api_key,
             test_stt_endpoint,
             test_llm_endpoint,
+            list_local_models,
+            local_engine_status,
+            download_local_model,
+            cancel_local_model_download,
+            delete_local_model,
             list_cerebras_models,
             complete_onboarding,
             inpage_hotkey,

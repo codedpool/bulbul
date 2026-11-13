@@ -52,7 +52,10 @@ pub async fn transcribe(
             return Ok(Transcribed { text, fell_back_from: None });
         }
         SttProvider::OpenaiCompatible => endpoint_transcribe(cfg, wav.clone(), vocabulary).await,
-        SttProvider::Local => Err(anyhow!("On-device models aren't available yet.")),
+        SttProvider::Local => match crate::local_stt::get() {
+            Ok(local) => local.transcribe(cfg, &wav, groq::language_param(cfg).as_deref()).await,
+            Err(e) => Err(e),
+        },
     };
 
     match primary {
@@ -506,12 +509,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_provider_reports_it_is_not_available_yet() {
+    async fn local_provider_without_a_downloaded_model_says_so() {
+        // Keep the test out of the real app data folder.
+        let dir = std::env::temp_dir().join(format!("bulbul-local-stt-test-{}", std::process::id()));
+        std::env::set_var("BULBUL_LOCAL_STT_DIR", &dir);
+
         let mut cfg = Config::default();
         cfg.stt_provider = SttProvider::Local;
         cfg.local_stt_model = "whisper-small".into();
         let err = transcribe(&cfg, vec![0; 8], &[], None).await.err().unwrap();
-        assert!(err.to_string().contains("aren't available yet"));
+        assert!(err.to_string().contains("isn't downloaded yet"), "{err}");
+
+        cfg.local_stt_model = String::new();
+        let err = transcribe(&cfg, vec![0; 8], &[], None).await.err().unwrap();
+        assert!(err.to_string().contains("No on-device model is selected"), "{err}");
     }
 
     #[test]
