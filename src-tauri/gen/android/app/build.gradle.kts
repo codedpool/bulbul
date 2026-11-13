@@ -60,6 +60,9 @@ android {
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
+            // `-PsideBySide` installs this build next to the Play release instead
+            // of replacing it (a different package, so no data is touched).
+            if (project.hasProperty("sideBySide")) applicationIdSuffix = ".dev"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
@@ -93,6 +96,7 @@ android {
     }
     buildFeatures {
         buildConfig = true
+        aidl = true
     }
 }
 

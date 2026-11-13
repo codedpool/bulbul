@@ -111,6 +111,13 @@
              audio; declaring it here makes the audio path (Phase 6)
              work the moment RECORD_AUDIO is granted. Not exported —
              only Bulbul's own components start it. -->
+        <!-- On-device speech runs in its own process so a native crash or an
+             out-of-memory kill there can't take the app down. -->
+        <service
+            android:name=".SttService"
+            android:exported="false"
+            android:process=":stt" />
+
         <service
             android:name=".BulbulForegroundService"
             android:exported="false"

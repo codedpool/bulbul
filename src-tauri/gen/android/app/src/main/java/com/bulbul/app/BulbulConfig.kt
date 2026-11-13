@@ -81,6 +81,22 @@ object BulbulConfig {
     fun apiKey(context: Context): String =
         read(context)?.optString("groq_api_key", "").orEmpty()
 
+    /// Which service transcribes: "groq" (default) or "local" (on-device).
+    fun sttProvider(context: Context): String =
+        read(context)?.optString("stt_provider", "groq").orEmpty().ifBlank { "groq" }
+
+    /// The selected on-device model's catalog id ("" when none is chosen).
+    fun localSttModel(context: Context): String =
+        read(context)?.optString("local_stt_model", "").orEmpty().trim()
+
+    /// Minutes of quiet before the on-device model is unloaded; 0 = never.
+    fun localIdleUnloadMinutes(context: Context): Int =
+        read(context)?.optInt("local_idle_unload_minutes", 5) ?: 5
+
+    /// Retry on Groq when the on-device model can't transcribe (needs a key).
+    fun cloudFallback(context: Context): Boolean =
+        read(context)?.optBoolean("stt_cloud_fallback", true) ?: true
+
     /// Whether the React wizard has finished the CURRENT onboarding pass
     /// (false again during a deliberate "Re-run setup wizard" replay).
     /// Gates the floating bubble in BulbulAccessibilityService — without

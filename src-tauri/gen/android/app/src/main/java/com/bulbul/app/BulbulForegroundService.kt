@@ -178,9 +178,7 @@ class BulbulForegroundService : Service() {
         val appPkg = pendingAppPackage
         thread(name = "BulbulTranscribe", isDaemon = true) {
             val apiKey = getApiKey()
-            val transcript = if (apiKey.isNotBlank()) {
-                GroqClient.transcribe(apiKey, wav)
-            } else null
+            val transcript = transcribe(wav, apiKey)
 
             if (transcript != null) {
                 val friendly = friendlyAppName(appPkg)
@@ -193,7 +191,10 @@ class BulbulForegroundService : Service() {
                 // same order as desktop. The cleanup prompt carries the per-app
                 // style + venue hints, so the old deterministic AppStyle pass is
                 // gone — the LLM handles tone now, exactly like desktop.
-                val cleaned = Cleanup.clean(this, apiKey, transcript, mode, appPkg, friendly)
+                // Without a Groq key (an on-device-only setup) there is no
+                // cleanup service, so the words are typed as spoken.
+                val cleaned = if (apiKey.isBlank()) transcript.trim()
+                else Cleanup.clean(this, apiKey, transcript, mode, appPkg, friendly)
 
                 // Apply the user's dictionary (whole-word substitutions) then
                 // expand snippets — same order as desktop — before injecting.
@@ -232,6 +233,35 @@ class BulbulForegroundService : Service() {
                 Log.w(TAG, "transcription failed; saving WAV instead")
                 writeRecording(wav)
             }
+        }
+    }
+
+    /// Speech to text with the provider the user chose. On-device first when
+    /// selected; if it can't produce text and a Groq key exists, that one
+    /// recording goes to Groq instead (and the user is told, since the audio
+    /// then leaves the phone). The setting can turn that off.
+    private fun transcribe(wav: ByteArray, apiKey: String): String? {
+        if (BulbulConfig.sttProvider(this) == "local") {
+            val local = LocalStt.transcribe(
+                this,
+                wav,
+                BulbulConfig.localSttModel(this),
+                BulbulConfig.language(this),
+                BulbulConfig.localIdleUnloadMinutes(this),
+            )
+            if (local != null) return local
+            if (apiKey.isBlank() || !BulbulConfig.cloudFallback(this)) {
+                toast("Bulbul: the on-device model couldn't transcribe this")
+                return null
+            }
+            toast("Bulbul: on-device transcription failed, so this recording went to Groq")
+        }
+        return if (apiKey.isNotBlank()) GroqClient.transcribe(apiKey, wav) else null
+    }
+
+    private fun toast(message: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
