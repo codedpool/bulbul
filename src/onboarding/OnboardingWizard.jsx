@@ -13,6 +13,7 @@ import recapAssets from "@recap-assets";
 import { applyTheme } from "../theme.js";
 import { canTranscribe, providerSummary } from "../provider.js";
 import ProviderSetupModal from "../components/ProviderSetup.jsx";
+import { PhoneModelSetupModal } from "../components/LocalModels.jsx";
 import { IS_ANDROID, IS_LINUX, IS_MAC, IS_WINDOWS, META_KEY_NAME } from "../platform.js";
 import { useInPageChordFallback } from "../inPageHotkey.js";
 import MouseButtonRecorder, { mouseButtonLabel } from "../components/MouseButtonRecorder.jsx";
@@ -861,6 +862,7 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
   const [keyError, setKeyError] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
+  const usingLocal = config.stt_provider === "local" && canTranscribe(config);
   const usingOther = config.stt_provider === "openai_compatible" || config.stt_provider === "local";
   const summary = providerSummary(config);
 
@@ -962,6 +964,33 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         )}
       </div>
 
+      {IS_ANDROID && (
+        <p className="onb-alt-method">
+          {usingLocal ? (
+            <>
+              Transcribing <strong>on this phone</strong>.{" "}
+              <button type="button" className="onb-alt-link" onClick={() => updateConfig({ ...config, stt_provider: "groq" })}>
+                Use Groq instead
+              </button>
+            </>
+          ) : (
+            <>
+              No key, or prefer to keep audio on the phone?{" "}
+              <button type="button" className="onb-alt-link" onClick={() => setProviderOpen(true)}>
+                Use a model on this phone
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      {IS_ANDROID && (
+        <PhoneModelSetupModal
+          open={providerOpen}
+          config={config}
+          updateConfig={updateConfig}
+          onClose={() => setProviderOpen(false)}
+        />
+      )}
       {!IS_ANDROID && (
         <p className="onb-alt-method">
           {usingOther ? (
@@ -985,6 +1014,12 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         />
       )}
 
+      {usingLocal ? (
+        <p className="onb-groq-privacy">
+          Your audio is transcribed on this phone and never sent anywhere. If you add a Groq key, your
+          transcript text (not the audio) is sent to Groq to clean it up.
+        </p>
+      ) : (
       <p className="onb-groq-privacy">
         Bulbul sends your audio &amp; text to Groq (with your own key) to
         transcribe and clean it. Groq's docs say API data isn't stored or used
@@ -1000,6 +1035,7 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         </a>
         .
       </p>
+      )}
 
       <div className="onb-theme-block">
         <div className="onb-theme-label">Appearance</div>
@@ -1056,7 +1092,7 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         <button
           className="onb-btn primary"
           onClick={onNext}
-          disabled={keyState !== "valid" && !(canTranscribe(config) && !IS_ANDROID)}
+          disabled={keyState !== "valid" && !usingLocal && !(canTranscribe(config) && !IS_ANDROID)}
         >
           Continue →
         </button>

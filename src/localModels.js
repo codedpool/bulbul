@@ -176,7 +176,10 @@ export function describeError(err) {
 }
 
 // The model a first-time setup should offer, given the dictation language.
-export function suggestedModelId(language) {
+export function suggestedModelId(language, phone = false) {
   const lang = String(language || "").toLowerCase();
-  return !lang || lang === "en" || lang === "auto" ? "parakeet-tdt-110m-en" : "whisper-small";
+  const english = !lang || lang === "en" || lang === "auto";
+  if (english) return "parakeet-tdt-110m-en";
+  // A phone can't run Whisper small in real time; base is the biggest that can.
+  return phone ? "whisper-base" : "whisper-small";
 }

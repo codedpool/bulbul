@@ -296,7 +296,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let m = ModelManager::new(dir.path().to_path_buf()).unwrap();
         let all = m.list(None).unwrap();
-        assert_eq!(all.len(), 7);
+        assert_eq!(all.len(), 9);
         assert!(all.iter().all(|x| x.status == "not_installed" && !x.custom));
         let some = m.list(Some(&["moonshine-tiny-en", "no-such-model"])).unwrap();
         assert_eq!(some.len(), 1);

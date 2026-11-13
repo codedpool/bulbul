@@ -1681,9 +1681,10 @@ fn complete_onboarding(app: tauri::AppHandle) -> Result<(), String> {
 // files this puts under <app_data_dir>/local-stt/models.
 
 /// What a mid-range phone can run faster than real time (measured on a
-/// moto g62: Moonshine tiny 0.25 s and Parakeet 110M 0.26 s for a 5 s clip;
-/// Whisper small was slower than the audio).
-const ANDROID_LOCAL_MODELS: &[&str] = &["moonshine-tiny-en", "parakeet-tdt-110m-en"];
+/// moto g62 for a 5 s clip: Moonshine tiny 0.25 s, Parakeet 110M 0.26 s,
+/// Whisper tiny 0.9 s, Whisper base 1.6 s; Whisper small took 6.7 s, slower
+/// than the audio, so it isn't offered).
+const ANDROID_LOCAL_MODELS: &[&str] = &["moonshine-tiny-en", "parakeet-tdt-110m-en", "whisper-tiny", "whisper-base"];
 
 static MODELS: std::sync::OnceLock<std::sync::Arc<local_models::ModelManager>> = std::sync::OnceLock::new();
 

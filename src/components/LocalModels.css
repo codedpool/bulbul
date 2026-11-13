@@ -272,3 +272,8 @@
 /* On a phone the floating pill clears the bottom tab bar, and long facts wrap. */
 .platform-android .lm-pill { bottom: 84px; }
 .platform-android .lm-facts { gap: 2px 10px; }
+.lm-dialog-wide { width: min(460px, calc(100% - 24px)); max-height: calc(100vh - 32px); overflow-y: auto; }
+.lm-dialog-wide .lm-pick { margin: 0 0 12px; }
+
+/* In the provider dialog the list scrolls inside itself so the dialog still fits a small window. */
+.ps-opt .lm-pick { max-height: 178px; overflow-y: auto; }

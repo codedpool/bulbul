@@ -16,7 +16,9 @@ import {
   percent,
   refreshLocalModels,
   phaseLabel,
+  ensureLocalModel,
   retryEngineInstall,
+  suggestedModelId,
   useLocalModels,
 } from "../localModels.js";
 import { IS_ANDROID } from "../platform.js";
@@ -552,6 +554,60 @@ export function InterruptedDownloadModal({ config, updateConfig, onChooseAnother
             }}
           >
             Use Groq instead
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ---------- choosing a model during setup (Android) ----------
+
+// A small dialog for the setup wizard: pick a model, it downloads in the
+// background while setup carries on.
+export function PhoneModelSetupModal({ open, config, updateConfig, onClose }) {
+  const [selected, setSelected] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) setSelected(config.local_stt_model || suggestedModelId(config.language, true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  async function save() {
+    setSaving(true);
+    try {
+      await updateConfig({ ...config, stt_provider: "local", local_stt_model: selected });
+      ensureLocalModel(selected);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return createPortal(
+    <div className="lm-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="lm-dialog lm-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="lm-phone-title">
+        <h2 id="lm-phone-title">Use a model on this phone</h2>
+        <p>
+          Your audio stays on the phone and works offline. The model downloads in the background while you finish setup.
+          Cleanup still needs a Groq key; without one, your words are typed as you said them.
+        </p>
+        <LocalModelPicker selected={selected} onSelect={setSelected} />
+        <div className="lm-dialog-actions">
+          <button type="button" className="lm-btn lm-btn-quiet" onClick={onClose}>Cancel</button>
+          <button type="button" className="lm-btn primary" disabled={!selected || saving} onClick={save}>
+            {saving ? "Saving…" : "Use this model"}
           </button>
         </div>
       </div>

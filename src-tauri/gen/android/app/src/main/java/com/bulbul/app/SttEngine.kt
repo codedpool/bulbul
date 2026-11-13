@@ -5,10 +5,13 @@
 // process only (see SttService); nothing in the main process touches the
 // native libraries.
 //
-// Two model families are supported here, the two that are fast enough on a
-// phone (measured on a moto g62: ~0.25 s for 5 s of audio):
+// Three model families are supported here, the ones fast enough on a phone
+// (measured on a moto g62 for ~5 s of audio: Moonshine and Parakeet ~0.25 s,
+// Whisper tiny ~0.9 s, Whisper base ~1.6 s; Whisper small was slower than the
+// audio, so it isn't offered):
 //   - Moonshine (encoder + merged decoder + tokens)
 //   - Transducer / Parakeet (encoder + decoder + joiner + tokens)
+//   - Whisper tiny and base (encoder + decoder + tokens)
 // The file names are exactly the ones the model catalog installs
 // (src-tauri/crates/bulbul-local-stt/catalog.json).
 
@@ -21,6 +24,7 @@ import com.k2fsa.sherpa.onnx.OfflineMoonshineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -33,25 +37,33 @@ object SttEngine {
     private enum class Kind(val maxChunkSeconds: Int) {
         MOONSHINE(28),
         TRANSDUCER(55),
+        WHISPER(28),
     }
 
     private fun kindOf(modelId: String): Kind? = when (modelId) {
         "moonshine-tiny-en" -> Kind.MOONSHINE
         "parakeet-tdt-110m-en" -> Kind.TRANSDUCER
+        "whisper-tiny", "whisper-base" -> Kind.WHISPER
         else -> null
     }
 
     private var recognizer: OfflineRecognizer? = null
     private var loadedId: String? = null
+    private var loadedLanguage: String = ""
+
+    /// "auto" (or nothing) lets Whisper detect the language; otherwise the
+    /// ISO code the user picked. Other model families ignore it.
+    private fun whisperLanguage(language: String?): String =
+        language?.trim()?.lowercase().orEmpty().let { if (it == "auto") "" else it }
 
     @Synchronized
-    fun transcribe(wavPath: String, modelId: String, modelDir: String): String {
+    fun transcribe(wavPath: String, modelId: String, modelDir: String, language: String?): String {
         val kind = kindOf(modelId) ?: error("This model isn't available on Android.")
         val dir = File(modelDir)
         if (!File(dir, ".complete").exists()) error("The model isn't fully downloaded.")
 
         val (samples, rate) = readWav(File(wavPath))
-        val rec = load(kind, modelId, dir)
+        val rec = load(kind, modelId, dir, whisperLanguage(language))
 
         val parts = ArrayList<String>()
         for (chunk in split(samples, rate, kind.maxChunkSeconds)) {
@@ -68,8 +80,10 @@ object SttEngine {
         return parts.joinToString(" ")
     }
 
-    private fun load(kind: Kind, modelId: String, dir: File): OfflineRecognizer {
-        recognizer?.let { if (loadedId == modelId) return it }
+    private fun load(kind: Kind, modelId: String, dir: File, language: String): OfflineRecognizer {
+        // Whisper takes its language when it is built, so a change means a rebuild.
+        val lang = if (kind == Kind.WHISPER) language else ""
+        recognizer?.let { if (loadedId == modelId && loadedLanguage == lang) return it }
         release()
 
         fun path(name: String): String {
@@ -78,13 +92,27 @@ object SttEngine {
             return f.absolutePath
         }
 
-        val model = OfflineModelConfig(numThreads = threads(), tokens = path("tokens.txt"))
+        val model = OfflineModelConfig(numThreads = threads())
         when (kind) {
-            Kind.MOONSHINE -> model.moonshine = OfflineMoonshineModelConfig(
-                encoder = path("encoder_model.ort"),
-                mergedDecoder = path("decoder_model_merged.ort"),
-            )
+            Kind.MOONSHINE -> {
+                model.tokens = path("tokens.txt")
+                model.moonshine = OfflineMoonshineModelConfig(
+                    encoder = path("encoder_model.ort"),
+                    mergedDecoder = path("decoder_model_merged.ort"),
+                )
+            }
+            Kind.WHISPER -> {
+                // Files are named after the size: tiny-encoder.int8.onnx, ...
+                val size = modelId.removePrefix("whisper-")
+                model.tokens = path("$size-tokens.txt")
+                model.whisper = OfflineWhisperModelConfig(
+                    encoder = path("$size-encoder.int8.onnx"),
+                    decoder = path("$size-decoder.int8.onnx"),
+                    language = lang,
+                )
+            }
             Kind.TRANSDUCER -> {
+                model.tokens = path("tokens.txt")
                 model.transducer = OfflineTransducerModelConfig(
                     encoder = path("encoder.int8.onnx"),
                     decoder = path("decoder.int8.onnx"),
@@ -100,6 +128,7 @@ object SttEngine {
         Log.i(TAG, "loaded $modelId in ${System.currentTimeMillis() - started} ms")
         recognizer = rec
         loadedId = modelId
+        loadedLanguage = lang
         return rec
     }
 
@@ -108,6 +137,7 @@ object SttEngine {
         recognizer?.release()
         recognizer = null
         loadedId = null
+        loadedLanguage = ""
     }
 
     /// Four threads is where the phone stops getting faster; leave a core

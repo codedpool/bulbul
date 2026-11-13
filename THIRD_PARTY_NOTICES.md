@@ -24,7 +24,7 @@ Models are downloaded on demand and are **not distributed by Bulbul**. Some are 
 
 | Model | Original author | Licence |
 |---|---|---|
-| Whisper small | OpenAI | Apache-2.0 |
+| Whisper tiny, base, small | OpenAI | Apache-2.0 |
 | Whisper large-v3 turbo | OpenAI | MIT |
 | Qwen3-ASR 0.6B | Qwen team (Alibaba Cloud) | Apache-2.0 |
 | Omnilingual ASR 300M | Meta | Apache-2.0 |

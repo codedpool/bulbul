@@ -42,7 +42,7 @@ class SttService : Service() {
             val watchdog = Runnable { endProcess("a transcription hung") }
             handler.postDelayed(watchdog, hangTimeoutMs(File(wavPath)))
             return try {
-                val text = SttEngine.transcribe(wavPath, modelId, modelDir)
+                val text = SttEngine.transcribe(wavPath, modelId, modelDir, language)
                 JSONObject().put("text", text).toString()
             } catch (t: Throwable) {
                 Log.w(TAG, "transcription failed", t)
