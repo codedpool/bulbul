@@ -480,6 +480,7 @@ dependencies = [
  "evdev",
  "futures-util",
  "hound",
+ "libc",
  "minisign-verify",
  "objc2",
  "objc2-app-kit",

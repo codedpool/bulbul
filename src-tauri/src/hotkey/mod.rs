@@ -234,6 +234,16 @@ pub fn set_mouse_mode_enabled(on: bool) {
     use std::sync::atomic::Ordering;
     MOUSE_MODE.store(on, Ordering::SeqCst);
     MOUSE_DICTATION_ACTIVE.store(false, Ordering::SeqCst);
+    // Linux only holds the mouse while Mouse mode is on, so a toggle has
+    // to start or release it (no-op until hotkeys are first registered).
+    #[cfg(target_os = "linux")]
+    linux_mouse::sync();
+}
+
+/// Whether Mouse mode is currently switched on.
+#[cfg(target_os = "linux")]
+pub fn mouse_mode_enabled() -> bool {
+    MOUSE_MODE.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Updates the currently-configured mouse button. Call at boot and on
@@ -539,17 +549,13 @@ fn re_register(
     };
 
     // Mouse mode: independent of the dictation hotkey's own path above —
-    // it reads whichever mouse devices are available regardless of
-    // whether the keyboard hotkey itself is using evdev or the portal.
-    // Observe-only (see linux_mouse.rs); registered unconditionally
-    // whenever a mouse is readable, since should_handle_mouse_click
-    // gates on the live mouse_mode/mouse_button config either way.
+    // it reads whichever plain mice are available regardless of whether
+    // the keyboard hotkey itself is using evdev or the portal. It only
+    // takes a device at all while Mouse mode is on, and re-registering
+    // while it's already running is a no-op (see linux_mouse.rs), so
+    // editing a hotkey or transform never churns the mouse grab.
     #[cfg(target_os = "linux")]
-    if linux_mouse::available() {
-        linux_mouse::register(tx.clone());
-    } else {
-        linux_mouse::stop();
-    }
+    linux_mouse::register(tx.clone());
 
     // Linux Wayland WITHOUT evdev access (pre-relogin, AppImage): fall
     // back to the GlobalShortcuts portal for dictation + polish. Neither
