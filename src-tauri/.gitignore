@@ -21,6 +21,7 @@
 /gen/android/keystore.properties
 *.jks
 
-# Cargo output and lockfile of the workspace-less crates under crates/
+# Cargo output of the standalone crates under crates/. The worker program is a
+# binary that CI builds, so its lockfile is kept; the library crate's is not.
 /crates/*/target/
-/crates/*/Cargo.lock
+/crates/bulbul-local-stt/Cargo.lock

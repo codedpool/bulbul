@@ -13,11 +13,16 @@
 //! repository later without changes.
 
 pub mod catalog;
+pub mod chunk;
+#[cfg(feature = "client")]
+pub mod client;
 #[cfg(feature = "download")]
 pub mod download;
 pub mod error;
 pub mod protocol;
 pub mod store;
+#[cfg(feature = "client")]
+pub mod supervisor;
 pub mod testing;
 pub mod transcriber;
 pub mod worker;
@@ -25,6 +30,8 @@ pub mod worker;
 pub use catalog::{ArchiveFormat, Catalog, License, ModelEntry, ModelKind, RemoteFile, Source};
 #[cfg(feature = "download")]
 pub use download::{CancelToken, Installer, Phase, Progress, ProgressFn};
+#[cfg(feature = "client")]
+pub use supervisor::{Launcher, ProcessLauncher, Supervisor, SupervisorConfig};
 pub use error::{Error, Result};
 pub use store::{Status, Store};
 pub use transcriber::{Audio, LoadSpec, TranscribeOptions, Transcriber, Transcript};

@@ -1,0 +1,23 @@
+[package]
+name = "bulbul-stt-worker"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "The program that runs Bulbul's on-device speech models, kept separate from the app so a crash here can't take the app down."
+publish = false
+
+# Not part of the app's dependency graph on purpose: the app never links the
+# speech engine. CI builds this on its own and the app downloads the result
+# when the user first chooses an on-device model.
+
+[dependencies]
+bulbul-local-stt = { path = "../bulbul-local-stt", default-features = false }
+# Exact pin: the engine's native libraries come with this version.
+sherpa-onnx = "=2.0.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
