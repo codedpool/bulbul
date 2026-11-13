@@ -176,22 +176,34 @@ def archive_info(spec, cache, digests):
         want = pub.split(":", 1)[-1]
         if want != got:
             sys.exit(f"{name}: sha256 {got} doesn't match GitHub's published {want}")
-    with tarfile.open(path, "r:bz2") as tf:
-        members = [m for m in tf.getmembers() if m.isfile()]
+
     norm = lambda n: n[2:] if n.startswith("./") else n
-    tops = {norm(m.name).split("/", 1)[0] for m in members}
-    top = tops.pop() if len(tops) == 1 else None
     keep = re.compile(spec["keep"])
-    kept = []
-    for m in members:
-        name = norm(m.name)
-        rel = name.split("/", 1)[1] if top and "/" in name else name
-        if "test_wavs" in rel or rel.lower().endswith((".md", ".wav")) or rel.startswith("."):
-            continue
-        if keep.search(rel):
-            kept.append((rel, m.size))
-    return dict(path=path, size=os.path.getsize(path), sha256=got, top=top, kept=kept,
-                all=[(norm(m.name), m.size) for m in members])
+    top = None
+    all_files, kept = [], []
+    # One streaming pass: hash every file we keep as it goes by.
+    with tarfile.open(path, "r|bz2") as tf:
+        for m in tf:
+            if not m.isfile():
+                continue
+            full = norm(m.name)
+            first = full.split("/", 1)[0]
+            if top is None:
+                top = first
+            elif first != top:
+                sys.exit(f"{name}: members don't share one top-level folder ({top!r} vs {first!r})")
+            rel = full.split("/", 1)[1] if "/" in full else full
+            all_files.append((full, m.size))
+            if "test_wavs" in rel or rel.lower().endswith((".md", ".wav")) or rel.startswith("."):
+                continue
+            if not keep.search(rel):
+                continue
+            h = hashlib.sha256()
+            f = tf.extractfile(m)
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+            kept.append((rel, m.size, h.hexdigest()))
+    return dict(path=path, size=os.path.getsize(path), sha256=got, top=top, kept=kept, all=all_files)
 
 
 def hf_files(spec):
@@ -230,15 +242,16 @@ def build(inspect, cache):
                 continue
             if not spec["layout"]:
                 sys.exit(f"{spec['id']}: fill in `layout` from --inspect first")
-            kept_names = {r for r, _ in info["kept"]}
+            kept_names = {r for r, _, _ in info["kept"]}
             for role, p in spec["layout"].items():
                 is_dir = any(n.startswith(p + "/") for n in kept_names)
                 if p not in kept_names and not is_dir:
                     sys.exit(f"{spec['id']}: layout {role} -> {p} isn't a kept file ({sorted(kept_names)})")
             source = dict(type="archive", url=GH_DOWNLOAD + spec["archive"], size=info["size"],
-                          sha256=info["sha256"], format="tar_bz2", strip_prefix=info["top"])
+                          sha256=info["sha256"], format="tar_bz2", strip_prefix=info["top"],
+                          files=[dict(path=r, size=sz, sha256=h) for r, sz, h in sorted(info["kept"])])
             download_bytes = info["size"]
-            disk_bytes = sum(s for _, s in info["kept"])
+            disk_bytes = sum(sz for _, sz, _ in info["kept"])
         else:
             if inspect:
                 continue

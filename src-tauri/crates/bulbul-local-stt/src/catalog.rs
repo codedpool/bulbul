@@ -89,6 +89,7 @@ pub enum Source {
     /// Individual files, each hashed on its own (resumable one by one).
     Files { base_url: String, files: Vec<RemoteFile> },
     /// One compressed archive, hashed as a whole and unpacked after download.
+    /// Only the listed `files` are extracted, and each is checked on its own.
     Archive {
         url: String,
         size: u64,
@@ -96,12 +97,14 @@ pub enum Source {
         format: ArchiveFormat,
         /// Leading folder inside the archive to drop when unpacking.
         strip_prefix: Option<String>,
+        /// The files to extract, as paths after `strip_prefix` is removed.
+        files: Vec<RemoteFile>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RemoteFile {
-    /// Path relative to `base_url` and to the model folder.
+    /// Path relative to `base_url` (or the archive) and to the model folder.
     pub path: String,
     pub size: u64,
     pub sha256: String,
@@ -183,52 +186,14 @@ impl ModelEntry {
         if self.layout.is_empty() {
             return bad("the layout is empty");
         }
-        for path in self.layout.values() {
-            if !is_safe_rel_path(path) {
-                return Err(Error::InvalidCatalog(format!("unsafe layout path \"{path}\"")));
-            }
-        }
         if self.disk_bytes == 0 || self.download_bytes == 0 {
             return bad("download_bytes and disk_bytes must be set");
         }
 
         match &self.source {
-            Source::Files { base_url, files } => {
+            Source::Files { base_url, .. } => {
                 if !base_url.starts_with("https://") {
                     return bad("base_url must be https");
-                }
-                if files.is_empty() {
-                    return bad("no files listed");
-                }
-                let mut total = 0u64;
-                let mut names = HashSet::new();
-                for f in files {
-                    if !is_safe_rel_path(&f.path) {
-                        return Err(Error::InvalidCatalog(format!("unsafe file path \"{}\"", f.path)));
-                    }
-                    if !names.insert(f.path.as_str()) {
-                        return Err(Error::InvalidCatalog(format!("duplicate file \"{}\"", f.path)));
-                    }
-                    if f.size == 0 {
-                        return Err(Error::InvalidCatalog(format!("file \"{}\" has no size", f.path)));
-                    }
-                    if !is_sha256(&f.sha256) {
-                        return Err(Error::InvalidCatalog(format!("file \"{}\" has a bad sha256", f.path)));
-                    }
-                    total += f.size;
-                }
-                for (role, path) in &self.layout {
-                    if !names.contains(path.as_str()) {
-                        return Err(Error::InvalidCatalog(format!(
-                            "layout role \"{role}\" points at \"{path}\", which isn't a listed file"
-                        )));
-                    }
-                }
-                if total != self.download_bytes || total != self.disk_bytes {
-                    return Err(Error::InvalidCatalog(format!(
-                        "file sizes add up to {total}, but download_bytes is {} and disk_bytes is {}",
-                        self.download_bytes, self.disk_bytes
-                    )));
                 }
             }
             Source::Archive { url, size, sha256, strip_prefix, .. } => {
@@ -248,7 +213,61 @@ impl ModelEntry {
                 }
             }
         }
+
+        let files = self.files();
+        if files.is_empty() {
+            return bad("no files listed");
+        }
+        let mut total = 0u64;
+        let mut names = HashSet::new();
+        for f in files {
+            if !is_safe_rel_path(&f.path) {
+                return Err(Error::InvalidCatalog(format!("unsafe file path \"{}\"", f.path)));
+            }
+            if !names.insert(f.path.as_str()) {
+                return Err(Error::InvalidCatalog(format!("duplicate file \"{}\"", f.path)));
+            }
+            if f.size == 0 {
+                return Err(Error::InvalidCatalog(format!("file \"{}\" has no size", f.path)));
+            }
+            if !is_sha256(&f.sha256) {
+                return Err(Error::InvalidCatalog(format!("file \"{}\" has a bad sha256", f.path)));
+            }
+            total += f.size;
+        }
+        if total != self.disk_bytes {
+            return Err(Error::InvalidCatalog(format!(
+                "file sizes add up to {total}, but disk_bytes is {}",
+                self.disk_bytes
+            )));
+        }
+        if matches!(self.source, Source::Files { .. }) && total != self.download_bytes {
+            return Err(Error::InvalidCatalog(format!(
+                "file sizes add up to {total}, but download_bytes is {}",
+                self.download_bytes
+            )));
+        }
+        // Each role must name a listed file, or a folder that holds listed files.
+        for (role, path) in &self.layout {
+            if !is_safe_rel_path(path) {
+                return Err(Error::InvalidCatalog(format!("unsafe layout path \"{path}\"")));
+            }
+            let is_file = names.contains(path.as_str());
+            let is_dir = files.iter().any(|f| f.path.starts_with(&format!("{path}/")));
+            if !is_file && !is_dir {
+                return Err(Error::InvalidCatalog(format!(
+                    "layout role \"{role}\" points at \"{path}\", which isn't a listed file"
+                )));
+            }
+        }
         Ok(())
+    }
+
+    /// Every file the model consists of once installed, however it's delivered.
+    pub fn files(&self) -> &[RemoteFile] {
+        match &self.source {
+            Source::Files { files, .. } | Source::Archive { files, .. } => files,
+        }
     }
 
     /// Whether the licence asks for credit to be shown with this model.
@@ -409,11 +428,34 @@ mod tests {
             sha256: H.into(),
             format: ArchiveFormat::TarBz2,
             strip_prefix: Some("m-dir".into()),
+            files: vec![
+                RemoteFile { path: "enc.onnx".into(), size: 100, sha256: H.into() },
+                RemoteFile { path: "tokens.txt".into(), size: 20, sha256: H.into() },
+            ],
         };
+        e.download_bytes = 5000; // compressed
+        e.disk_bytes = 120; // extracted: the listed files
+        catalog_of(vec![e.clone()]).validate().unwrap();
+        // The download size has to match the archive...
+        e.download_bytes = 4999;
+        assert!(catalog_of(vec![e.clone()]).validate().is_err());
+        // ...and the on-disk size the listed files.
         e.download_bytes = 5000;
         e.disk_bytes = 9000;
+        assert!(catalog_of(vec![e]).validate().is_err());
+    }
+
+    #[test]
+    fn a_layout_role_may_name_a_folder_of_listed_files() {
+        let mut e = files_entry("m");
+        if let Source::Files { files, .. } = &mut e.source {
+            files.push(RemoteFile { path: "tok/vocab.json".into(), size: 5, sha256: H.into() });
+        }
+        e.download_bytes = 125;
+        e.disk_bytes = 125;
+        e.layout.insert("tokenizer".into(), "tok".into());
         catalog_of(vec![e.clone()]).validate().unwrap();
-        e.download_bytes = 4999;
+        e.layout.insert("tokenizer".into(), "nothere".into());
         assert!(catalog_of(vec![e]).validate().is_err());
     }
 

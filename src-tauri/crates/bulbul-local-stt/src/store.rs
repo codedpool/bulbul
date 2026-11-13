@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::catalog::{is_safe_id, ModelEntry, Source};
+use crate::catalog::{is_safe_id, ModelEntry};
 use crate::error::{Error, Result};
 
 /// Written into a model's folder after its files were downloaded and verified.
@@ -68,14 +68,11 @@ impl Store {
         let marker = dir.join(MARKER).is_file();
 
         let layout_ok = entry.layout.values().all(|rel| dir.join(rel).exists());
-        // For per-file sources the expected sizes are known, so a truncated
-        // file is caught without re-hashing gigabytes.
-        let sizes_ok = match &entry.source {
-            Source::Files { files, .. } => files.iter().all(|f| {
-                fs::metadata(dir.join(&f.path)).map(|m| m.len() == f.size).unwrap_or(false)
-            }),
-            Source::Archive { .. } => true,
-        };
+        // The expected size of every file is known, so a truncated file is
+        // caught without re-hashing gigabytes.
+        let sizes_ok = entry.files().iter().all(|f| {
+            fs::metadata(dir.join(&f.path)).map(|m| m.len() == f.size).unwrap_or(false)
+        });
         if layout_ok && sizes_ok {
             return Ok(Status::Installed { verified: marker });
         }
@@ -129,7 +126,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{License, ModelKind, RemoteFile};
+    use crate::catalog::{License, ModelKind, RemoteFile, Source};
     use std::collections::BTreeMap;
 
     const H: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -263,20 +260,23 @@ mod tests {
     }
 
     #[test]
-    fn archive_models_use_layout_presence_only() {
+    fn archive_models_are_checked_against_their_extracted_file_sizes() {
         let tmp = tempfile::tempdir().unwrap();
         let s = Store::new(tmp.path());
         let mut e = entry();
         e.source = Source::Archive {
             url: "https://example.com/a.tar.bz2".into(),
-            size: 6,
+            size: 99,
             sha256: H.into(),
             format: crate::catalog::ArchiveFormat::TarBz2,
             strip_prefix: None,
+            files: e.files().to_vec(),
         };
         let dir = s.model_dir("tiny").unwrap();
-        put(&dir, "enc.onnx", 1234); // any size: archives carry no per-file sizes
-        put(&dir, "tokens.txt", 5);
+        put(&dir, "enc.onnx", 4);
+        put(&dir, "tokens.txt", 2);
         assert_eq!(s.status(&e).unwrap(), Status::Installed { verified: false });
+        put(&dir, "tokens.txt", 9); // wrong size
+        assert_eq!(s.status(&e).unwrap(), Status::Incomplete);
     }
 }

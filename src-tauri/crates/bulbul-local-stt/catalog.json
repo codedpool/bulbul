@@ -25,7 +25,24 @@
         "size": 29858559,
         "sha256": "9ec31b342d8fa3240c3b81b8f82e1cf7e3ac467c93ca5a999b741d5887164f8d",
         "format": "tar_bz2",
-        "strip_prefix": "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27"
+        "strip_prefix": "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27",
+        "files": [
+          {
+            "path": "decoder_model_merged.ort",
+            "size": 30412256,
+            "sha256": "cf524c4862d36e9e5ab032eddc73637efd822d70e868ac575cf1a46e1e4708a0"
+          },
+          {
+            "path": "encoder_model.ort",
+            "size": 13281600,
+            "sha256": "94e90a4654fc45cdfedb77c4c08e1739f48862998e58fada384b25118134f221"
+          },
+          {
+            "path": "tokens.txt",
+            "size": 549350,
+            "sha256": "2870d843e14c1e187bf1913a521562a63b53933814bd7f2145120468f494a049"
+          }
+        ]
       },
       "layout": {
         "encoder": "encoder_model.ort",
@@ -58,7 +75,29 @@
         "size": 108035095,
         "sha256": "f628312e9fdf8686374cb01a69425c41732529d540860311f16f37cbc32cfe9b",
         "format": "tar_bz2",
-        "strip_prefix": "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8"
+        "strip_prefix": "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8",
+        "files": [
+          {
+            "path": "decoder.int8.onnx",
+            "size": 3955863,
+            "sha256": "f7c331c5504c2e593c76ed22b728e3f554af6c4a383dde862e719ced08b1da19"
+          },
+          {
+            "path": "encoder.int8.onnx",
+            "size": 131113202,
+            "sha256": "0f35509ddeb9b39002fb077d979a9fe74f06eb0bc4dd5c34f512f82e5111d657"
+          },
+          {
+            "path": "joiner.int8.onnx",
+            "size": 1411403,
+            "sha256": "bf7dff69e9f2cdbe9943d70da358f38b361c115ba0105bae7e908e0d6ec782f6"
+          },
+          {
+            "path": "tokens.txt",
+            "size": 9953,
+            "sha256": "450e56bd2f036fe5b6aa821865838cc5aa9d8b0106134ce9a9ba0664abe6cd10"
+          }
+        ]
       },
       "layout": {
         "encoder": "encoder.int8.onnx",
@@ -134,7 +173,39 @@
         "size": 878702423,
         "sha256": "393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96",
         "format": "tar_bz2",
-        "strip_prefix": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+        "strip_prefix": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
+        "files": [
+          {
+            "path": "conv_frontend.onnx",
+            "size": 44148281,
+            "sha256": "d22dc4423e0940e49884e903d2ea2f7e5567c14fc1aed97e4e26d6b8f208ef9e"
+          },
+          {
+            "path": "decoder.int8.onnx",
+            "size": 755914231,
+            "sha256": "4f6885be5959ae26af3089d38ee7972c5fafbeeb1cf8d5e76eab6d8b61ca5771"
+          },
+          {
+            "path": "encoder.int8.onnx",
+            "size": 182491662,
+            "sha256": "60748d3e6744a57c9c91e1b17424a6c2990567e8adceb0783940c03ed98fa9d9"
+          },
+          {
+            "path": "tokenizer/merges.txt",
+            "size": 1671853,
+            "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+          },
+          {
+            "path": "tokenizer/tokenizer_config.json",
+            "size": 12487,
+            "sha256": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c"
+          },
+          {
+            "path": "tokenizer/vocab.json",
+            "size": 2776833,
+            "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+          }
+        ]
       },
       "layout": {
         "conv_frontend": "conv_frontend.onnx",
@@ -168,7 +239,29 @@
         "size": 482440461,
         "sha256": "6fc4426b54aa549a0019b8a75b8dea59164e71790a37ac56a045ad57f915f714",
         "format": "tar_bz2",
-        "strip_prefix": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
+        "strip_prefix": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+        "files": [
+          {
+            "path": "decoder.int8.onnx",
+            "size": 7257753,
+            "sha256": "4d097bae3bac5c96018d5293ba39f1b657296102b142affda40378f38b020f41"
+          },
+          {
+            "path": "encoder.int8.onnx",
+            "size": 652282309,
+            "sha256": "92a10bd9c23936ea0566c29f963bc57c2a5df4261b6a8921c39abea66557ca8b"
+          },
+          {
+            "path": "joiner.int8.onnx",
+            "size": 1739080,
+            "sha256": "77a29f3e5ac7d37074e0af465391b80f314015d5b97f0f90c6c7767f1d56f428"
+          },
+          {
+            "path": "tokens.txt",
+            "size": 9384,
+            "sha256": "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"
+          }
+        ]
       },
       "layout": {
         "encoder": "encoder.int8.onnx",
@@ -244,7 +337,19 @@
         "size": 292571207,
         "sha256": "cdcd0559c7c73efed54209a926e321afc914d046c5fdbf3665f00dc78180e5ed",
         "format": "tar_bz2",
-        "strip_prefix": "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12"
+        "strip_prefix": "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12",
+        "files": [
+          {
+            "path": "model.int8.onnx",
+            "size": 365352120,
+            "sha256": "e7c4e54ee4c4c47829cc6667d5d00ed8ea7bef1dcfeef0fce766f77752a2726c"
+          },
+          {
+            "path": "tokens.txt",
+            "size": 86423,
+            "sha256": "a7a044c52cb29cbe8b0dc1953e92cefd4ca16b0ed968177b6beab21f9a7d0b31"
+          }
+        ]
       },
       "layout": {
         "model": "model.int8.onnx",
