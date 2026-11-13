@@ -1,0 +1,323 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Romanch Roshan Singh */
+
+/* Provider setup, shown two ways: a modal during setup (two columns, sized to
+   fit the default 960x640 window without scrolling) and a page in Settings
+   (stacked). Self-contained like ConfirmDialog.css and built only from the
+   app's theme tokens (theme.css) plus its existing teal accent, so light and
+   dark follow automatically. */
+
+/* ───────────── Modal shell ───────────── */
+
+.ps-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+/* Just inside the window: wide enough for two columns, never taller than the
+   viewport. Smaller windows fall back to scrolling the body. */
+.ps-card {
+  background: var(--surface-2, #ffffff);
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.16));
+  border-radius: 12px;
+  width: min(900px, calc(100% - 32px));
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+  color: var(--text, #1a1a1a);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ps-overlay { animation: ps-fade 120ms ease; }
+  .ps-card { animation: ps-pop 140ms cubic-bezier(0.2, 0.8, 0.3, 1.2); }
+  .ps-form { animation: ps-reveal 160ms ease; }
+}
+@keyframes ps-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ps-pop { from { transform: scale(0.97); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes ps-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.ps-head { padding: 14px 22px 0; }
+.ps-head h2 {
+  margin: 0 0 3px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.ps-head p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.ps-body {
+  overflow-y: auto;
+  padding: 10px 22px 8px;
+}
+
+.ps-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 22px 12px;
+  border-top: 1px solid var(--border);
+}
+.ps-foot-err {
+  margin-right: auto;
+  max-width: 62%;
+}
+
+/* ───────────── Layout: two columns (modal) or stacked (Settings page) ───────────── */
+
+.ps-cols {
+  display: grid;
+  grid-template-columns: 1.08fr 1fr;
+  gap: 22px;
+  align-items: start;
+}
+.ps-cols-pane { grid-template-columns: 1fr; }
+@media (max-width: 860px) {
+  .ps-cols { grid-template-columns: 1fr; }
+}
+
+.ps-col { min-width: 0; }
+.ps-col h3 {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+}
+.ps-col-lede {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* ───────────── Option list ───────────── */
+
+/* One bordered container; options are divided by hairlines rather than being
+   separate cards. */
+.ps-group {
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-1, transparent);
+}
+
+.ps-opt {
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  transition: background 120ms ease;
+}
+.ps-opt:first-child { border-top: 0; }
+.ps-opt.selected { background: var(--accent-surface); }
+.ps-opt.disabled { opacity: 0.6; }
+
+.ps-opt-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  cursor: pointer;
+}
+.ps-opt.disabled .ps-opt-main { cursor: not-allowed; }
+
+/* The native radio stays in the DOM (keyboard and screen readers); the
+   visible dot is drawn beside it. */
+.ps-opt-main input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.ps-radio {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-hover);
+  background: var(--field);
+  position: relative;
+  transition: border-color 120ms ease;
+}
+.ps-radio::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: #5ec8c0;
+  transform: scale(0);
+  transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ps-opt.selected .ps-radio { border-color: #5ec8c0; }
+.ps-opt.selected .ps-radio::after { transform: scale(1); }
+.ps-opt-main input[type="radio"]:focus-visible + .ps-radio {
+  outline: 2px solid #5ec8c0;
+  outline-offset: 2px;
+}
+
+.ps-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.ps-opt-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ps-tag {
+  align-self: center;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+/* The short "for example" next to a title, in place of a full description
+   (the Settings page shows the description too). */
+.ps-opt-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ps-opt-desc {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* Where the data goes: the one line that tells the options apart. */
+.ps-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--accent-text);
+}
+.ps-where svg { flex-shrink: 0; }
+
+/* ───────────── Inline form ───────────── */
+
+.ps-form {
+  margin: 8px 0 0 27px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ps-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+@media (max-width: 520px) {
+  .ps-row { grid-template-columns: 1fr; }
+}
+
+.ps-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ps-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 18px;
+}
+.ps-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+.ps-field-hint {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+.ps-field input {
+  width: 100%;
+  background: var(--field);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+.ps-field input::placeholder { color: var(--text-placeholder); }
+.ps-field input:focus { border-color: #5ec8c0; }
+
+.ps-chip {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 1px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--fill);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.ps-chip:hover { background: var(--fill-active); }
+
+.ps-field-actions { display: inline-flex; align-items: center; gap: 6px; }
+.ps-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.ps-test-status { margin: 0; }
+.ps-ok { font-size: 12.5px; color: var(--accent-text); }
+.ps-err { font-size: 12.5px; color: #d46b6b; line-height: 1.4; }
+
+/* ───────────── Notes and toggle ───────────── */
+
+.ps-fallback { padding: 0 2px; margin-top: 6px; }
+.ps-fallback .toggle-label,
+.ps-fallback .toggle-hint { display: block; }
+.ps-fallback .toggle-hint { font-size: 11.5px; }
+
+.ps-note-warn {
+  margin: 8px 0 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--fill);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-4);
+}
+
+/* ───────────── Settings page ───────────── */
+
+.ps-pane-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.ps-pane-lede {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}

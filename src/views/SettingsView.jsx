@@ -8,6 +8,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
 import MouseButtonRecorder from "../components/MouseButtonRecorder.jsx";
+import { ProviderSetupPane } from "../components/ProviderSetup.jsx";
 import { AUTOSTART_LABEL, IS_ANDROID, IS_LINUX, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
 
 const MODES = [
@@ -71,6 +72,7 @@ const LANGUAGES = [
 const CATEGORIES = [
   { id: "general", label: "General" },
   { id: "account", label: "Account" },
+  { id: "providers", label: "Providers" },
   { id: "hotkeys", label: "Hotkeys" },
   { id: "personalization", label: "Personalization" },
   { id: "startup", label: "Startup" },
@@ -459,6 +461,9 @@ export default function SettingsView({
                 setKeyState={setKeyState}
               />
             )}
+            {active === "providers" && (
+              <ProviderSetupPane config={config} updateConfig={updateConfig} />
+            )}
             {active === "hotkeys" && (
               <PaneHotkeys
                 config={config}
@@ -575,10 +580,11 @@ function PaneGeneral({ config, updateConfig }) {
 }
 
 function PaneAccount({ config, updateConfig, hasKey, draftKey, setDraftKey, saveKey, keyState, keyError, setKeyState }) {
-  // Cleanup runs on Groq (qwen → gpt-oss-20b → gpt-oss-120b fallback chain). A
-  // second cleanup provider (Cerebras) exists in the backend but is intentionally
-  // NOT exposed in the UI, so it stays dormant — users can't reach it.
-
+  // Cleanup runs on Groq (qwen → gpt-oss-20b → gpt-oss-120b fallback chain)
+  // unless the user points it at their own server (Settings > Providers). A
+  // second cloud cleanup provider (Cerebras) exists in the backend but is
+  // intentionally NOT exposed in the UI, so it stays dormant — users can't
+  // reach it.
   return (
     <>
       <Row
@@ -1132,6 +1138,14 @@ function CategoryIcon({ id }) {
       return (
         <svg {...props}>
           <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+        </svg>
+      );
+    case "providers":
+      return (
+        <svg {...props}>
+          <rect x="3" y="4" width="18" height="6" rx="1.5" />
+          <rect x="3" y="14" width="18" height="6" rx="1.5" />
+          <path d="M7 7h.01M7 17h.01" />
         </svg>
       );
     case "hotkeys":

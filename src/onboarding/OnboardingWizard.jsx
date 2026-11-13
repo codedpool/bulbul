@@ -11,6 +11,8 @@ import onboardGroq from "../assets/onboard-groq.png";
 import onboardLanguage from "../assets/onboard-language.png";
 import recapAssets from "@recap-assets";
 import { applyTheme } from "../theme.js";
+import { canTranscribe, providerSummary } from "../provider.js";
+import ProviderSetupModal from "../components/ProviderSetup.jsx";
 import { IS_ANDROID, IS_LINUX, IS_MAC, IS_WINDOWS, META_KEY_NAME } from "../platform.js";
 import { useInPageChordFallback } from "../inPageHotkey.js";
 import MouseButtonRecorder, { mouseButtonLabel } from "../components/MouseButtonRecorder.jsx";
@@ -858,6 +860,9 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
   );
   const [keyError, setKeyError] = useState("");
   const [showKey, setShowKey] = useState(false);
+  const [providerOpen, setProviderOpen] = useState(false);
+  const usingOther = config.stt_provider === "openai_compatible" || config.stt_provider === "local";
+  const summary = providerSummary(config);
 
   async function validateAndSave(value) {
     const v = (value ?? keyValue).trim();
@@ -957,6 +962,29 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         )}
       </div>
 
+      {!IS_ANDROID && (
+        <p className="onb-alt-method">
+          {usingOther ? (
+            <>
+              Transcribing with <strong>{summary.transcription}</strong>. Cleanup: {summary.cleanup}.{" "}
+            </>
+          ) : (
+            <>Prefer not to use Groq? </>
+          )}
+          <button type="button" className="onb-alt-link" onClick={() => setProviderOpen(true)}>
+            {usingOther ? "Change" : "Choose another method"}
+          </button>
+        </p>
+      )}
+      {!IS_ANDROID && (
+        <ProviderSetupModal
+          open={providerOpen}
+          config={config}
+          updateConfig={updateConfig}
+          onClose={() => setProviderOpen(false)}
+        />
+      )}
+
       <p className="onb-groq-privacy">
         Bulbul sends your audio &amp; text to Groq (with your own key) to
         transcribe and clean it. Groq's docs say API data isn't stored or used
@@ -1028,7 +1056,7 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
         <button
           className="onb-btn primary"
           onClick={onNext}
-          disabled={keyState !== "valid"}
+          disabled={keyState !== "valid" && !(canTranscribe(config) && !IS_ANDROID)}
         >
           Continue →
         </button>

@@ -20,6 +20,7 @@ import TooltipProvider from "./components/TooltipProvider.jsx";
 import LinuxSupportBanner from "./LinuxSupportBanner.jsx";
 import HotkeyHealthBanner from "./HotkeyHealthBanner.jsx";
 import { applyTheme } from "./theme.js";
+import { canTranscribe } from "./provider.js";
 import { IS_LINUX, IS_MAC, RELAUNCH_HINT, IS_ANDROID } from "./platform.js";
 import "./App.css";
 
@@ -218,7 +219,7 @@ function App() {
       // Only nudge to Settings for a returning user missing a key — during
       // first-run the onboarding wizard collects the key, so don't also pop
       // Settings open the moment onboarding finishes.
-      if (cfg.onboarding_completed && !cfg.has_api_key && !cfg.groq_api_key)
+      if (cfg.onboarding_completed && !canTranscribe(cfg))
         setSettingsOpen(true);
     });
     invoke("get_autostart").then(setAutostart).catch(() => {});
