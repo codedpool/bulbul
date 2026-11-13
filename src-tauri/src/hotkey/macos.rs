@@ -325,7 +325,7 @@ pub fn spawn_mouse_mode_watcher(tx: Sender<HotkeyEvent>) {
                     let n = event.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
                     if let Some(btn) = mac_button_for_number(n) {
                         if super::should_handle_mouse_click(btn) {
-                            super::route_mouse_click(&tx);
+                            super::route_mouse_click(btn, &tx);
                             return CallbackResult::Drop;
                         }
                     }

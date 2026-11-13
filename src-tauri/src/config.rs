@@ -216,6 +216,23 @@ pub struct Config {
     #[serde(default = "default_stt_cloud_fallback")]
     pub stt_cloud_fallback: bool,
 
+    /// Command mode: hold the command hotkey, speak an instruction, release.
+    /// With text selected the result replaces the selection; with nothing
+    /// selected the instruction is carried out at the cursor. Needs an LLM
+    /// (the same one that runs cleanup and transforms).
+    #[serde(default = "default_command_mode_enabled")]
+    pub command_mode_enabled: bool,
+
+    /// The hold-to-talk combo for command mode (a regular key combo, like
+    /// the polish hotkey).
+    #[serde(default = "default_command_hotkey")]
+    pub command_hotkey: String,
+
+    /// Optional mouse button that toggles command mode (the way Mouse mode
+    /// toggles dictation): "" = none, otherwise "middle" | "back" | "forward".
+    #[serde(default)]
+    pub command_mouse_button: String,
+
     /// Which LLM runs cleanup, transforms and the voice profile.
     #[serde(default)]
     pub llm_provider: LlmProvider,
@@ -475,6 +492,15 @@ fn default_hide_tray() -> bool {
 fn default_tap_to_talk() -> bool {
     false
 }
+fn default_command_mode_enabled() -> bool {
+    true
+}
+fn default_command_hotkey() -> String {
+    // Shift+Alt+C: same family as the polish hotkey (Shift+Alt+P), so it
+    // never races the modifier-only dictation chord, and it isn't a common
+    // app shortcut.
+    "Shift+Alt+C".to_string()
+}
 fn default_local_idle_unload_minutes() -> u32 {
     5
 }
@@ -701,6 +727,9 @@ impl Default for Config {
             stt_endpoint_key: String::new(),
             local_stt_model: String::new(),
             local_idle_unload_minutes: default_local_idle_unload_minutes(),
+            command_mode_enabled: default_command_mode_enabled(),
+            command_hotkey: default_command_hotkey(),
+            command_mouse_button: String::new(),
             local_custom_models: Vec::new(),
             stt_cloud_fallback: default_stt_cloud_fallback(),
             llm_provider: LlmProvider::default(),

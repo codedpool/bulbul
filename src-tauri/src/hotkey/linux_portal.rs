@@ -41,6 +41,7 @@ use super::{HotkeyEvent, ParsedHotkey};
 
 const ID_DICTATION: &str = "dictation";
 const ID_POLISH: &str = "polish";
+const ID_COMMAND: &str = "command";
 
 type StopSender = tokio::sync::oneshot::Sender<()>;
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;
@@ -147,7 +148,7 @@ fn arm_release_watchdog(
 /// streams into the orchestrator channel. Replaces any previous portal
 /// registration. Failures are reported via `linux-hotkey-status` —
 /// never fatal.
-pub fn register(tx: Sender<HotkeyEvent>, dictation: ParsedHotkey, polish: ParsedHotkey) {
+pub fn register(tx: Sender<HotkeyEvent>, dictation: ParsedHotkey, polish: ParsedHotkey, command: ParsedHotkey) {
     let prev = PREV_SLOT.lock().unwrap().take();
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -159,7 +160,7 @@ pub fn register(tx: Sender<HotkeyEvent>, dictation: ParsedHotkey, polish: Parsed
             let _ = prev_stop.send(());
             let _ = tokio::time::timeout(Duration::from_secs(5), prev_handle).await;
         }
-        match run_session(tx, dictation, polish, stop_rx).await {
+        match run_session(tx, dictation, polish, command, stop_rx).await {
             Ok(()) => {}
             Err(e) => {
                 tracing::warn!("GlobalShortcuts portal unavailable: {e:#}");
@@ -181,6 +182,7 @@ async fn run_session(
     tx: Sender<HotkeyEvent>,
     dictation: ParsedHotkey,
     polish: ParsedHotkey,
+    command: ParsedHotkey,
     stop_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), ashpd::Error> {
     // Attach our app id first. GNOME's portal rejects bind_shortcuts
@@ -193,12 +195,20 @@ async fn run_session(
 
     let dictation_trigger = preferred_trigger(&dictation);
     let polish_trigger = preferred_trigger(&polish);
-    let wanted = vec![
+    let command_trigger = preferred_trigger(&command);
+    let mut wanted = vec![
         NewShortcut::new(ID_DICTATION, "Bulbul — hold to dictate")
             .preferred_trigger(dictation_trigger.as_deref()),
         NewShortcut::new(ID_POLISH, "Bulbul — hold to dictate (polished rewrite)")
             .preferred_trigger(polish_trigger.as_deref()),
     ];
+    // Only ask for the command shortcut when command mode has a combo.
+    if command_trigger.is_some() {
+        wanted.push(
+            NewShortcut::new(ID_COMMAND, "Bulbul — hold to speak a command")
+                .preferred_trigger(command_trigger.as_deref()),
+        );
+    }
 
     let request = portal
         .bind_shortcuts(&session, &wanted, None, Default::default())
@@ -246,6 +256,8 @@ async fn run_session(
     let polish_active = Arc::new(AtomicBool::new(false));
     let mut dict_cancel: Option<tokio::sync::oneshot::Sender<()>> = None;
     let mut polish_cancel: Option<tokio::sync::oneshot::Sender<()>> = None;
+    let command_active = Arc::new(AtomicBool::new(false));
+    let mut command_cancel: Option<tokio::sync::oneshot::Sender<()>> = None;
 
     loop {
         tokio::select! {
@@ -286,6 +298,20 @@ async fn run_session(
                             ));
                         }
                     }
+                    ID_COMMAND => {
+                        if command_active.swap(true, Ordering::SeqCst) {
+                            if let Some(c) = command_cancel.take() { let _ = c.send(()); }
+                            command_active.store(false, Ordering::SeqCst);
+                            let _ = tx.send(HotkeyEvent::CommandReleased);
+                        } else {
+                            let _ = tx.send(HotkeyEvent::CommandPressed);
+                            command_cancel = Some(arm_release_watchdog(
+                                tx.clone(),
+                                HotkeyEvent::CommandReleased,
+                                command_active.clone(),
+                            ));
+                        }
+                    }
                     other => tracing::debug!("portal activated unknown id: {other}"),
                 }
             }
@@ -301,6 +327,11 @@ async fn run_session(
                         if let Some(c) = polish_cancel.take() { let _ = c.send(()); }
                         polish_active.store(false, Ordering::SeqCst);
                         let _ = tx.send(HotkeyEvent::PolishDictationReleased);
+                    }
+                    ID_COMMAND => {
+                        if let Some(c) = command_cancel.take() { let _ = c.send(()); }
+                        command_active.store(false, Ordering::SeqCst);
+                        let _ = tx.send(HotkeyEvent::CommandReleased);
                     }
                     _ => {}
                 }

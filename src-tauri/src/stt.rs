@@ -646,6 +646,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn commands_run_on_a_self_hosted_llm_with_the_selection() {
+        let (port, server) = serve_once("200 OK", CHAT_REPLY).await;
+        let out = groq::execute_command(&llm_cfg_for(port), "make it formal", Some("hey there"))
+            .await
+            .unwrap();
+        assert_eq!(out, "Hello, world.");
+        let req = server.await.unwrap();
+        assert!(req.starts_with("POST /v1/chat/completions"));
+        assert!(req.contains("make it formal"));
+        assert!(req.contains("hey there"));
+        assert!(req.contains("selected_text"));
+    }
+
+    #[tokio::test]
+    async fn commands_without_a_selection_still_reach_the_llm() {
+        let (port, server) = serve_once("200 OK", CHAT_REPLY).await;
+        let out = groq::execute_command(&llm_cfg_for(port), "write a short greeting", None)
+            .await
+            .unwrap();
+        assert_eq!(out, "Hello, world.");
+        let req = server.await.unwrap();
+        assert!(req.contains("write a short greeting"));
+        assert!(req.contains("Nothing is selected"));
+    }
+
+    #[tokio::test]
+    async fn a_failing_server_surfaces_a_command_error() {
+        let (port, _s) = serve_once("500 Internal Server Error", "boom").await;
+        assert!(groq::execute_command(&llm_cfg_for(port), "make it formal", Some("hey")).await.is_err());
+    }
+
+    #[tokio::test]
     async fn transforms_surface_a_failed_self_hosted_server() {
         let (port, _s) = serve_once("500 Internal Server Error", "boom").await;
         assert!(groq::execute_transform(&llm_cfg_for(port), "Make it formal.", "hey", None)

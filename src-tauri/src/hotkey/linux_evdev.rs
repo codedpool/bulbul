@@ -102,7 +102,7 @@ fn chord_held(spec: &Spec, held: &HashSet<u16>) -> bool {
         && held.contains(&spec.key)
 }
 
-/// Register dictation + polish + transform slots for direct reading.
+/// Register dictation + polish + command + transform slots for direct reading.
 /// Replaces any previous registration. Returns the transform ids that
 /// resolved to a watchable chord, so the caller can report slot status to
 /// the UI (the evdev reader replaces the global-shortcut plugin on
@@ -113,6 +113,7 @@ pub fn register(
     tx: Sender<HotkeyEvent>,
     dictation: ParsedHotkey,
     polish: ParsedHotkey,
+    command: ParsedHotkey,
     transforms: &[(i64, ParsedHotkey)],
 ) -> Vec<i64> {
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
@@ -129,6 +130,14 @@ pub fn register(
         &polish,
         HotkeyEvent::PolishDictationPressed,
         Some(HotkeyEvent::PolishDictationReleased),
+    ) {
+        specs.push(s);
+    }
+    // Command mode (an empty combo resolves to nothing and is skipped).
+    if let Some(s) = resolve(
+        &command,
+        HotkeyEvent::CommandPressed,
+        Some(HotkeyEvent::CommandReleased),
     ) {
         specs.push(s);
     }

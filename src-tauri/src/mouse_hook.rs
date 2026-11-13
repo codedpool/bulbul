@@ -136,7 +136,7 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
     if let Some(btn) = btn {
         if hotkey::should_handle_mouse_click(btn) {
             if let Some(tx) = event_tx_slot().lock().unwrap().as_ref() {
-                hotkey::route_mouse_click(tx);
+                hotkey::route_mouse_click(btn, tx);
             }
             return LRESULT(1);
         }

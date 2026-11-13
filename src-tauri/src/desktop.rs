@@ -12,6 +12,7 @@ mod inject;
 mod keyboard_hook;
 #[cfg(target_os = "windows")]
 mod mouse_hook;
+mod command_mode;
 mod local_models;
 mod local_stt;
 mod model_config;
@@ -239,6 +240,9 @@ struct PendingDictation {
     foreground_app_display: Option<String>,
     language: String,
     mode: CleanupMode,
+    /// Started from the command hotkey: on release the recording is run as a
+    /// command (command_mode::run) instead of being transcribed as dictation.
+    command: bool,
 }
 
 struct IconVariants {
@@ -1239,6 +1243,7 @@ fn save_config(
         prev_mouse_mode,
         prev_mouse_button,
         prev_overlay_position,
+        prev_command,
     ) = {
         let cfg = state.config.lock();
         (
@@ -1253,6 +1258,7 @@ fn save_config(
             cfg.mouse_mode,
             cfg.mouse_button.clone(),
             cfg.overlay_position.clone(),
+            (cfg.command_mode_enabled, cfg.command_hotkey.clone(), cfg.command_mouse_button.clone()),
         )
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
@@ -1263,6 +1269,9 @@ fn save_config(
     let next_mouse_mode = new_cfg.mouse_mode;
     let next_mouse_button = new_cfg.mouse_button.clone();
     let next_overlay_position = new_cfg.overlay_position.clone();
+    let next_command = (new_cfg.command_mode_enabled, new_cfg.command_hotkey.clone(), new_cfg.command_mouse_button.clone());
+    let next_command_parsed = command_mode::hotkey(&new_cfg);
+    let next_command_mouse = command_mode::mouse_button(&new_cfg);
     let next_theme = new_cfg.theme.clone();
     let next_mode = new_cfg.mode.as_str().to_string();
     let next_telemetry = new_cfg.telemetry_enabled;
@@ -1314,11 +1323,18 @@ fn save_config(
     if prev_overlay_position != next_overlay_position {
         position_overlay(&app);
     }
-    if prev_hotkey != next_hotkey || prev_pol != next_pol {
+    if prev_command != next_command {
+        hotkey::set_command_mouse_button(next_command_mouse);
+        if next_telemetry {
+            telemetry::track("settings_changed", serde_json::json!({"field": "command_mode", "value": next_command.0}));
+        }
+    }
+    if prev_hotkey != next_hotkey || prev_pol != next_pol || prev_command.0 != next_command.0 || prev_command.1 != next_command.1 {
         {
             let mut set = state.hotkeys.lock();
             set.dictation = ParsedHotkey::parse(&next_hotkey);
             set.polish_dictation = ParsedHotkey::parse(&next_pol);
+            set.command = next_command_parsed;
         }
         hotkey::install_global_shortcuts(&app, state.hotkeys.clone(), state.hotkey_tx.clone());
     }
@@ -2740,6 +2756,7 @@ pub fn run() {
     let initial_set = HotkeySet {
         dictation: ParsedHotkey::parse(&initial_config.hotkey),
         polish_dictation: ParsedHotkey::parse(&initial_config.polish_hotkey),
+        command: command_mode::hotkey(&initial_config),
         transform_bindings: Vec::new(),
     };
     let hotkey_mutex = Arc::new(Mutex::new(initial_set));
@@ -2748,6 +2765,7 @@ pub fn run() {
     hotkey::set_tap_to_talk_enabled(initial_config.tap_to_talk);
     hotkey::set_mouse_mode_enabled(initial_config.mouse_mode);
     hotkey::set_mouse_button(hotkey::MouseButton::parse(&initial_config.mouse_button));
+    hotkey::set_command_mouse_button(command_mode::mouse_button(&initial_config));
 
     // Install the global low-level keyboard hook BEFORE any Tauri plugin
     // touches the shortcut subsystem. The hook is what makes modifier-only
@@ -3478,7 +3496,7 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
         let mut active: Option<(Recorder, PendingDictation)> = None;
         for evt in rx {
             match evt {
-                HotkeyEvent::DictationPressed | HotkeyEvent::PolishDictationPressed => {
+                HotkeyEvent::DictationPressed | HotkeyEvent::PolishDictationPressed | HotkeyEvent::CommandPressed => {
                     let press_received_at = Instant::now();
                     tracing::debug!("orchestrator: received DictationPressed");
                     // Cross-key race guard: only one recording in flight at
@@ -3497,6 +3515,19 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                         show_settings(&handle);
                         continue;
                     }
+                    let is_command = matches!(evt, HotkeyEvent::CommandPressed);
+                    // A command needs an LLM as well as speech-to-text: say so
+                    // up front rather than after the user has spoken.
+                    if is_command && !cfg.can_clean_up() {
+                        let hint = cfg.llm_setup_hint();
+                        emit_status(&handle, "error", Some(hint.into()));
+                        notify(&handle, "Bulbul command mode", hint);
+                        show_settings(&handle);
+                        continue;
+                    }
+                    if is_command && !cfg.command_mode_enabled {
+                        continue;
+                    }
                     let cleanup_mode = if matches!(evt, HotkeyEvent::PolishDictationPressed) {
                         CleanupMode::Polished
                     } else {
@@ -3511,7 +3542,11 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                                 pre_recorder.duration_since(press_received_at).as_micros(),
                                 recorder_ready.duration_since(pre_recorder).as_millis(),
                             );
-                            emit_status(&handle, "listening", None);
+                            emit_status(
+                                &handle,
+                                "listening",
+                                if is_command { Some("Listening for a command".to_string()) } else { None },
+                            );
                             let after_emit = Instant::now();
                             tracing::debug!(
                                 "orchestrator: emit_status(listening) took {}µs; total press→listening={}ms",
@@ -3525,6 +3560,7 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                                 foreground_app_display: app.and_then(|a| a.display),
                                 language: cfg.language.clone(),
                                 mode: cleanup_mode,
+                                command: is_command,
                             };
                             active = Some((rec, meta));
                         }
@@ -3535,7 +3571,7 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                         }
                     }
                 }
-                HotkeyEvent::DictationReleased | HotkeyEvent::PolishDictationReleased => {
+                HotkeyEvent::DictationReleased | HotkeyEvent::PolishDictationReleased | HotkeyEvent::CommandReleased => {
                     let Some((rec, meta)) = active.take() else {
                         continue;
                     };
@@ -3610,12 +3646,28 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                         continue;
                     }
                     let duration_ms = meta.started_at.elapsed().as_millis() as u64;
-                    emit_status(&handle, "processing", None);
                     let handle_for_task = handle.clone();
                     let wav = result.wav;
-                    tauri::async_runtime::spawn(async move {
-                        process_pipeline(handle_for_task, cfg, wav, meta, duration_ms).await;
-                    });
+                    if meta.command {
+                        emit_status(&handle, "processing", Some("Working on it…".to_string()));
+                        tauri::async_runtime::spawn(async move {
+                            command_mode::run(
+                                handle_for_task,
+                                cfg,
+                                wav,
+                                meta.foreground_app,
+                                meta.foreground_app_display,
+                                meta.language,
+                                duration_ms,
+                            )
+                            .await;
+                        });
+                    } else {
+                        emit_status(&handle, "processing", None);
+                        tauri::async_runtime::spawn(async move {
+                            process_pipeline(handle_for_task, cfg, wav, meta, duration_ms).await;
+                        });
+                    }
                 }
                 HotkeyEvent::TransformTriggered(transform_id) => {
                     tracing::info!("TransformTriggered received: id={}", transform_id);

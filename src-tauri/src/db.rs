@@ -380,6 +380,43 @@ pub fn log_dictation_with_hits(
     Ok(())
 }
 
+/// Records a command-mode run in the same history table, marked `command`. The
+/// stored text is the spoken instruction (raw) and the generated result
+/// (cleaned). Word counts reflect what the user SPOKE, so generated essays
+/// don't inflate "words dictated", and no fixes are counted.
+pub fn log_command(
+    db: &Db,
+    instruction: &str,
+    result: &str,
+    language: &str,
+    foreground_app: Option<String>,
+    foreground_app_display: Option<String>,
+    duration_ms: u64,
+) -> Result<()> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = db.lock();
+    conn.execute(
+        "INSERT INTO dictations
+            (ts, raw_text, cleaned_text, mode, language, foreground_app, foreground_app_display, duration_ms, word_count, fix_count)
+         VALUES (?, ?, ?, 'command', ?, ?, ?, ?, ?, 0)",
+        params![
+            ts,
+            instruction,
+            result,
+            language,
+            foreground_app,
+            foreground_app_display,
+            duration_ms as i64,
+            count_words(instruction) as i64,
+        ],
+    )
+    .context("inserting command in history")?;
+    Ok(())
+}
+
 fn count_words(text: &str) -> usize {
     text.split_whitespace().filter(|w| !w.is_empty()).count()
 }

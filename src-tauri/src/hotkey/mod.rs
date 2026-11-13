@@ -58,6 +58,10 @@ pub enum HotkeyEvent {
     DictationReleased,
     PolishDictationPressed,
     PolishDictationReleased,
+    /// Command mode: hold, speak an instruction, release. The instruction is
+    /// applied to the selected text (or carried out at the cursor).
+    CommandPressed,
+    CommandReleased,
     TransformTriggered(i64),
 }
 
@@ -101,6 +105,7 @@ pub enum HotkeyEvent {
 static TAP_TO_TALK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static DICTATION_TAP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static POLISH_TAP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static COMMAND_TAP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Updates the shared "Tap to talk" flag every physical producer reads.
 /// Call at boot (from the loaded config) and whenever Settings saves a
@@ -112,6 +117,7 @@ pub fn set_tap_to_talk_enabled(on: bool) {
     TAP_TO_TALK.store(on, Ordering::SeqCst);
     DICTATION_TAP_ACTIVE.store(false, Ordering::SeqCst);
     POLISH_TAP_ACTIVE.store(false, Ordering::SeqCst);
+    COMMAND_TAP_ACTIVE.store(false, Ordering::SeqCst);
 }
 
 /// Whether "Tap to talk" is currently on. Used by keyboard_hook.rs's
@@ -147,6 +153,13 @@ pub fn route_physical_event(evt: HotkeyEvent, tx: &Sender<HotkeyEvent>) {
             tx,
         ),
         HotkeyEvent::PolishDictationReleased => {}
+        HotkeyEvent::CommandPressed => toggle_forward(
+            &COMMAND_TAP_ACTIVE,
+            HotkeyEvent::CommandPressed,
+            HotkeyEvent::CommandReleased,
+            tx,
+        ),
+        HotkeyEvent::CommandReleased => {}
         other => {
             let _ = tx.send(other);
         }
@@ -225,6 +238,31 @@ impl MouseButton {
 static MOUSE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static MOUSE_BUTTON: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 static MOUSE_DICTATION_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+// Command mode's own mouse button. 255 = none. Independent of Mouse mode: it
+// works whether or not Mouse mode is on.
+const NO_COMMAND_BUTTON: u8 = 255;
+static COMMAND_MOUSE_BUTTON: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(NO_COMMAND_BUTTON);
+static MOUSE_COMMAND_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sets (or clears, with `None`) the mouse button that toggles command mode.
+/// Call at boot and on every save_config.
+pub fn set_command_mouse_button(btn: Option<MouseButton>) {
+    use std::sync::atomic::Ordering;
+    COMMAND_MOUSE_BUTTON.store(btn.map_or(NO_COMMAND_BUTTON, MouseButton::as_u8), Ordering::SeqCst);
+    MOUSE_COMMAND_ACTIVE.store(false, Ordering::SeqCst);
+    // Linux holds the mouse only while some mouse binding needs it.
+    #[cfg(target_os = "linux")]
+    linux_mouse::sync();
+}
+
+fn command_mouse_matches(btn: MouseButton) -> bool {
+    COMMAND_MOUSE_BUTTON.load(std::sync::atomic::Ordering::SeqCst) == btn.as_u8()
+}
+
+fn dictation_mouse_matches(btn: MouseButton) -> bool {
+    use std::sync::atomic::Ordering;
+    MOUSE_MODE.load(Ordering::SeqCst) && MouseButton::from_u8(MOUSE_BUTTON.load(Ordering::SeqCst)) == btn
+}
 
 /// Updates the shared "Mouse mode" on/off flag. Call at boot (from the
 /// loaded config) and whenever Settings saves a change to it. Resets the
@@ -240,10 +278,12 @@ pub fn set_mouse_mode_enabled(on: bool) {
     linux_mouse::sync();
 }
 
-/// Whether Mouse mode is currently switched on.
+/// Whether any mouse binding is live (Mouse mode, or a command-mode button),
+/// i.e. whether the Linux watcher needs to hold the mouse at all.
 #[cfg(target_os = "linux")]
 pub fn mouse_mode_enabled() -> bool {
     MOUSE_MODE.load(std::sync::atomic::Ordering::SeqCst)
+        || COMMAND_MOUSE_BUTTON.load(std::sync::atomic::Ordering::SeqCst) != NO_COMMAND_BUTTON
 }
 
 /// Updates the currently-configured mouse button. Call at boot and on
@@ -261,21 +301,31 @@ pub fn set_mouse_button(btn: MouseButton) {
 /// both whether to react at all, and (Windows only) whether to suppress
 /// the click.
 pub fn should_handle_mouse_click(btn: MouseButton) -> bool {
-    use std::sync::atomic::Ordering;
-    MOUSE_MODE.load(Ordering::SeqCst) && MouseButton::from_u8(MOUSE_BUTTON.load(Ordering::SeqCst)) == btn
+    dictation_mouse_matches(btn) || command_mouse_matches(btn)
 }
 
 /// Toggles dictation on a mouse-mode click: the first click starts
 /// (forwards Pressed), the next stops (forwards Released). Always
 /// toggles — unlike route_physical_event, this doesn't consult
 /// "Tap to talk" at all, since a mouse click is never a hold.
-pub fn route_mouse_click(tx: &Sender<HotkeyEvent>) {
-    toggle_forward(
-        &MOUSE_DICTATION_ACTIVE,
-        HotkeyEvent::DictationPressed,
-        HotkeyEvent::DictationReleased,
-        tx,
-    );
+pub fn route_mouse_click(btn: MouseButton, tx: &Sender<HotkeyEvent>) {
+    // If both were ever set to the same button, dictation wins (the Settings
+    // page prevents it, this just makes the outcome defined).
+    if dictation_mouse_matches(btn) {
+        toggle_forward(
+            &MOUSE_DICTATION_ACTIVE,
+            HotkeyEvent::DictationPressed,
+            HotkeyEvent::DictationReleased,
+            tx,
+        );
+    } else if command_mouse_matches(btn) {
+        toggle_forward(
+            &MOUSE_COMMAND_ACTIVE,
+            HotkeyEvent::CommandPressed,
+            HotkeyEvent::CommandReleased,
+            tx,
+        );
+    }
 }
 
 /// Thin public entry point for desktop.rs's boot sequence — `macos` is a
@@ -353,6 +403,9 @@ impl ParsedHotkey {
 pub struct HotkeySet {
     pub dictation: ParsedHotkey,
     pub polish_dictation: ParsedHotkey,
+    /// Command mode's hold-to-talk combo. Left at the default (no key) when
+    /// command mode is off, which registers nothing.
+    pub command: ParsedHotkey,
     /// Per-transform slot bindings (transform_id, parsed hotkey).
     pub transform_bindings: Vec<(i64, ParsedHotkey)>,
 }
@@ -541,6 +594,7 @@ fn re_register(
             tx.clone(),
             snapshot.dictation.clone(),
             snapshot.polish_dictation.clone(),
+            snapshot.command.clone(),
             &snapshot.transform_bindings,
         )
     } else {
@@ -572,6 +626,7 @@ fn re_register(
             tx.clone(),
             snapshot.dictation.clone(),
             snapshot.polish_dictation.clone(),
+            snapshot.command.clone(),
         );
     } else {
         // No portal when evdev drives (or on X11) — stop any prior task.
@@ -708,6 +763,58 @@ fn re_register(
                 "registered polish-dictation shortcut: {:?}",
                 snapshot.polish_dictation
             );
+        }
+    }
+
+    // Command-mode hotkey: hold to record an instruction, release to run it.
+    // Same press / release-poller pattern as polish. On Linux the evdev or
+    // portal registration above already covers it. A command hotkey must have
+    // a non-modifier key (a modifier-only chord can't be registered here).
+    if evdev_driving || wayland_portal {
+        // Handled by evdev / portal above.
+    } else if let Some(cmd_sc) = parsed_to_shortcut(&snapshot.command) {
+        let tx_cmd = tx.clone();
+        let cmd_parsed = snapshot.command.clone();
+        let cmd_active = Arc::new(Mutex::new(false));
+        let last_fire = Arc::new(Mutex::new(None::<Instant>));
+        let handler = move |_app: &AppHandle, sc: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent| {
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            {
+                let mut active = cmd_active.lock();
+                if *active {
+                    return;
+                }
+                let mut last = last_fire.lock();
+                let cooled = last.map_or(true, |t: Instant| {
+                    t.elapsed().as_millis() >= FIRE_COOLDOWN_MS
+                });
+                if !cooled {
+                    return;
+                }
+                *active = true;
+                *last = Some(Instant::now());
+            }
+            tracing::debug!("global-shortcut command pressed: {:?}", sc);
+            route_physical_event(HotkeyEvent::CommandPressed, &tx_cmd);
+
+            let tx_release = tx_cmd.clone();
+            let parsed = cmd_parsed.clone();
+            let cmd_active_clone = cmd_active.clone();
+            thread::spawn(move || {
+                let (poll_tx, poll_rx) = mpsc::channel();
+                native::spawn_release_poller(poll_tx, parsed, HotkeyEvent::CommandReleased);
+                if let Ok(evt) = poll_rx.recv() {
+                    route_physical_event(evt, &tx_release);
+                }
+                *cmd_active_clone.lock() = false;
+            });
+        };
+        if let Err(e) = gs.on_shortcut(cmd_sc, handler) {
+            tracing::warn!("register command hotkey failed: {e:#}");
+        } else {
+            tracing::info!("registered command shortcut: {:?}", snapshot.command);
         }
     }
 

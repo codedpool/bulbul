@@ -405,7 +405,7 @@ fn grabbed_loop(
                     match ev.value() {
                         1 if super::should_handle_mouse_click(btn) => {
                             swallowed_code = Some(code);
-                            super::route_mouse_click(tx);
+                            super::route_mouse_click(btn, tx);
                             continue; // drop the down edge — don't forward
                         }
                         0 if swallowed_code == Some(code) => {
@@ -466,7 +466,7 @@ fn observe_only_loop(
                     if !was_held {
                         if let Some(btn) = button_for_code(code) {
                             if super::should_handle_mouse_click(btn) {
-                                super::route_mouse_click(tx);
+                                super::route_mouse_click(btn, tx);
                             }
                         }
                     }
