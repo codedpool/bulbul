@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { createPortal } from "react-dom";
+import Combobox from "./Combobox.jsx";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import {
   ENGINE_ID,
@@ -178,28 +179,26 @@ const IDLE_CHOICES = [
   [30, "After 30 minutes"],
   [60, "After 1 hour"],
 ];
+const toOptions = (pairs) => pairs.map(([code, label]) => ({ code: String(code), label }));
 
 function IdleSetting({ config, updateConfig }) {
   const value = config.local_idle_unload_minutes ?? 5;
   const choices = IDLE_CHOICES.some(([v]) => v === value) ? IDLE_CHOICES : [...IDLE_CHOICES, [value, `After ${value} minutes`]];
   return (
     <div className="lm-setting">
-      <label htmlFor="lm-idle" className="lm-setting-text">
+      <div className="lm-setting-text">
         <span className="lm-engine-title">Free memory</span>
         <span className="lm-engine-text">
           Unloads the model when you haven't dictated for a while. The next dictation takes a few seconds to load it again.
         </span>
-      </label>
-      <select
-        id="lm-idle"
-        className="lm-select"
-        value={value}
-        onChange={(e) => updateConfig({ ...config, local_idle_unload_minutes: Number(e.target.value) })}
-      >
-        {choices.map(([v, label]) => (
-          <option key={v} value={v}>{label}</option>
-        ))}
-      </select>
+      </div>
+      <Combobox
+        value={String(value)}
+        options={toOptions(choices)}
+        onChange={(v) => updateConfig({ ...config, local_idle_unload_minutes: Number(v) })}
+        width={170}
+        ariaLabel="Unload the model after"
+      />
     </div>
   );
 }
@@ -264,12 +263,8 @@ function AddCustomModel({ config, onAdd }) {
         <input id="lm-c-name" type="text" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" />
       </div>
       <div className="lm-custom-row">
-        <label htmlFor="lm-c-kind">Model family</label>
-        <select id="lm-c-kind" className="lm-select" value={kind} onChange={(e) => setKind(e.target.value)}>
-          {FAMILIES.map(([v, label]) => (
-            <option key={v} value={v}>{label}</option>
-          ))}
-        </select>
+        <span id="lm-c-kind-label">Model family</span>
+        <Combobox value={kind} options={toOptions(FAMILIES)} onChange={setKind} width={240} ariaLabel="Model family" />
       </div>
       <div className="lm-custom-row">
         <label htmlFor="lm-c-folder">Folder</label>

@@ -238,7 +238,6 @@
 }
 .lm-setting-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; cursor: pointer; }
 
-.lm-select,
 .lm-custom input[type="text"] {
   font: inherit;
   font-size: 12.5px;
@@ -248,8 +247,6 @@
   background: var(--field);
   color: var(--text);
 }
-.lm-select { flex-shrink: 0; cursor: pointer; }
-.lm-select:focus-visible,
 .lm-custom input[type="text"]:focus-visible { outline: 2px solid #5ec8c0; outline-offset: 1px; }
 
 .lm-add { align-self: flex-start; }
@@ -265,7 +262,8 @@
 }
 .lm-custom h4 { margin: 0; font-size: 13.5px; font-weight: 600; letter-spacing: normal; text-transform: none; color: var(--text); }
 .lm-custom-row { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 10px; }
-.lm-custom-row label { font-size: 12.5px; color: var(--text-2); }
+.lm-custom-row label,
+.lm-custom-row > span { font-size: 12.5px; color: var(--text-2); }
 .lm-custom-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
 .lm-folder { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
