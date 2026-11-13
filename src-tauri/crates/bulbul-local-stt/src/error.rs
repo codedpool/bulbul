@@ -44,6 +44,12 @@ pub enum Error {
     #[error("couldn't unpack the download: {0}")]
     Archive(String),
 
+    #[error("the speech worker stopped unexpectedly: {0}")]
+    WorkerGone(String),
+
+    #[error("the speech worker took too long: {0}")]
+    Timeout(String),
+
     #[error("the audio can't be used: {0}")]
     BadAudio(String),
 
