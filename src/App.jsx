@@ -8,6 +8,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import HomeView from "./views/HomeView.jsx";
 import SettingsView from "./views/SettingsView.jsx";
+import { DownloadPill, InterruptedDownloadModal } from "./components/LocalModels.jsx";
 import DictionaryView from "./views/DictionaryView.jsx";
 import InsightsView from "./views/InsightsView.jsx";
 import SnippetsView from "./views/SnippetsView.jsx";
@@ -114,6 +115,7 @@ function App() {
   // a routed page. The sidebar's Settings button toggles this; the
   // modal owns its own internal category sidebar + content pane.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] = useState(null);
   // Which settings section is drilled into on Android (null = the section
   // list). Lifted here so the hardware-back handler can treat it as its own
   // navigation level.
@@ -384,6 +386,7 @@ function App() {
             updateConfig({ ...config, onboarding_completed: true, onboarding_ever_completed: true })
           }
         />
+        <DownloadPill />
         <TooltipProvider />
       </>
     );
@@ -722,7 +725,10 @@ function App() {
     </div>
     <SettingsView
       open={settingsOpen}
-      onClose={() => setSettingsOpen(false)}
+      onClose={() => {
+        setSettingsOpen(false);
+        setSettingsCategory(null);
+      }}
       config={config}
       updateConfig={updateConfig}
       autostart={autostart}
@@ -732,7 +738,19 @@ function App() {
       stagedUpdate={stagedUpdate}
       installUpdate={installUpdate}
       installing={installing}
+      openCategory={settingsCategory}
     />
+    <DownloadPill />
+    {!IS_ANDROID && (
+      <InterruptedDownloadModal
+        config={config}
+        updateConfig={updateConfig}
+        onChooseAnother={() => {
+          setSettingsCategory("local");
+          setSettingsOpen(true);
+        }}
+      />
+    )}
     <TooltipProvider />
     </>
   );

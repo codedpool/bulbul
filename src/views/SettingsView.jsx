@@ -9,6 +9,7 @@ import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
 import MouseButtonRecorder from "../components/MouseButtonRecorder.jsx";
 import { ProviderSetupPane } from "../components/ProviderSetup.jsx";
+import { LocalModelsPane } from "../components/LocalModels.jsx";
 import { AUTOSTART_LABEL, IS_ANDROID, IS_LINUX, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
 
 const MODES = [
@@ -73,6 +74,7 @@ const CATEGORIES = [
   { id: "general", label: "General" },
   { id: "account", label: "Account" },
   { id: "providers", label: "Providers" },
+  { id: "local", label: "Local models" },
   { id: "hotkeys", label: "Hotkeys" },
   { id: "personalization", label: "Personalization" },
   { id: "startup", label: "Startup" },
@@ -116,8 +118,13 @@ export default function SettingsView({
   // step through it. null = the section list; a section id = its detail.
   section: mSection = null,
   onSectionChange: setMSection = () => {},
+  // Desktop: ask the popup to open on a given category (e.g. "local").
+  openCategory = null,
 }) {
   const [active, setActive] = useState("general");
+  useEffect(() => {
+    if (open && openCategory) setActive(openCategory);
+  }, [open, openCategory]);
   const [draftKey, setDraftKey] = useState(config?.groq_api_key || "");
   const [keyState, setKeyState] = useState("idle");
   const [keyError, setKeyError] = useState("");
@@ -463,6 +470,9 @@ export default function SettingsView({
             )}
             {active === "providers" && (
               <ProviderSetupPane config={config} updateConfig={updateConfig} />
+            )}
+            {active === "local" && (
+              <LocalModelsPane config={config} updateConfig={updateConfig} />
             )}
             {active === "hotkeys" && (
               <PaneHotkeys
@@ -1146,6 +1156,13 @@ function CategoryIcon({ id }) {
           <rect x="3" y="4" width="18" height="6" rx="1.5" />
           <rect x="3" y="14" width="18" height="6" rx="1.5" />
           <path d="M7 7h.01M7 17h.01" />
+        </svg>
+      );
+    case "local":
+      return (
+        <svg {...props}>
+          <rect x="6" y="6" width="12" height="12" rx="2" />
+          <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
         </svg>
       );
     case "hotkeys":
