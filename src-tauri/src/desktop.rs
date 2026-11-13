@@ -12,6 +12,7 @@ mod inject;
 mod keyboard_hook;
 #[cfg(target_os = "windows")]
 mod mouse_hook;
+mod local_models;
 mod local_stt;
 mod model_config;
 mod stt;
@@ -1433,7 +1434,7 @@ async fn test_llm_endpoint(url: String, model: String, key: String) -> Result<()
 
 /// The on-device models Bulbul offers, with what's installed.
 #[tauri::command]
-async fn list_local_models(state: tauri::State<'_, AppState>) -> Result<Vec<local_stt::LocalModelInfo>, String> {
+async fn list_local_models(state: tauri::State<'_, AppState>) -> Result<Vec<local_models::LocalModelInfo>, String> {
     let cfg = state.config.lock().clone();
     local_stt::get().and_then(|l| l.list(&cfg)).map_err(|e| format!("{e:#}"))
 }
@@ -1446,9 +1447,9 @@ async fn check_custom_model(kind: String, folder: String) -> Result<(), String> 
 
 /// Whether the on-device speech engine is installed.
 #[tauri::command]
-async fn local_engine_status() -> Result<local_stt::EngineStatus, String> {
+async fn local_engine_status() -> Result<local_models::EngineStatus, String> {
     let l = local_stt::get().map_err(|e| format!("{e:#}"))?;
-    Ok(local_stt::EngineStatus { installed: l.engine_installed() })
+    Ok(l.engine_status())
 }
 
 /// Downloads and installs the speech engine; progress arrives as events
