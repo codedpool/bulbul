@@ -7,10 +7,12 @@
 //! app (and the worker, on its side of the pipe) code against, so the engine
 //! can be swapped, or faked in tests, without touching callers.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
-use crate::catalog::ModelEntry;
+use crate::catalog::{ModelEntry, ModelKind};
 use crate::error::{Error, Result};
+use crate::store::Store;
 
 /// Mono audio as floats in -1.0..=1.0.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,10 +80,36 @@ impl Audio {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct LoadOptions {
+/// Everything an engine needs to load a model: its family, and where each of
+/// its files is. Deliberately independent of the catalog, so the worker
+/// program never needs one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadSpec {
+    /// Catalog id, for reporting.
+    pub model_id: String,
+    pub kind: ModelKind,
+    /// Role (`encoder`, `tokens`, ...) to absolute path.
+    pub paths: BTreeMap<String, PathBuf>,
     /// CPU threads for inference. `None` lets the engine decide.
     pub num_threads: Option<u32>,
+}
+
+impl LoadSpec {
+    /// Builds the spec for an installed catalog model.
+    pub fn from_entry(store: &Store, entry: &ModelEntry, num_threads: Option<u32>) -> Result<LoadSpec> {
+        let mut paths = BTreeMap::new();
+        for role in entry.layout.keys() {
+            paths.insert(role.clone(), store.path_for(entry, role)?);
+        }
+        Ok(LoadSpec { model_id: entry.id.clone(), kind: entry.kind, paths, num_threads })
+    }
+
+    /// The path for `role`, or a clear error if the spec doesn't have it.
+    pub fn path(&self, role: &str) -> Result<&PathBuf> {
+        self.paths
+            .get(role)
+            .ok_or_else(|| Error::Engine(format!("{} has no \"{role}\" file", self.model_id)))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -100,9 +128,8 @@ pub struct Transcript {
 }
 
 pub trait Transcriber: Send {
-    /// Loads `entry` from `dir` (its folder in the model store), replacing any
-    /// model already loaded.
-    fn load(&mut self, entry: &ModelEntry, dir: &Path, opts: &LoadOptions) -> Result<()>;
+    /// Loads the model described by `spec`, replacing any model already loaded.
+    fn load(&mut self, spec: &LoadSpec) -> Result<()>;
 
     /// Catalog id of the loaded model, if any.
     fn loaded_model(&self) -> Option<&str>;

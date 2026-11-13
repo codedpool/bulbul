@@ -4,11 +4,8 @@
 //! A stand-in transcriber for tests, so code that depends on [`Transcriber`]
 //! can be exercised without a model or an engine.
 
-use std::path::Path;
-
-use crate::catalog::ModelEntry;
 use crate::error::{Error, Result};
-use crate::transcriber::{Audio, LoadOptions, TranscribeOptions, Transcriber, Transcript};
+use crate::transcriber::{Audio, LoadSpec, TranscribeOptions, Transcriber, Transcript};
 
 #[derive(Debug, Default)]
 pub struct FakeTranscriber {
@@ -30,11 +27,11 @@ impl FakeTranscriber {
 }
 
 impl Transcriber for FakeTranscriber {
-    fn load(&mut self, entry: &ModelEntry, _dir: &Path, _opts: &LoadOptions) -> Result<()> {
+    fn load(&mut self, spec: &LoadSpec) -> Result<()> {
         if let Some(msg) = self.fail_next.take() {
             return Err(Error::Engine(msg));
         }
-        self.loaded = Some(entry.id.clone());
+        self.loaded = Some(spec.model_id.clone());
         Ok(())
     }
 
@@ -62,10 +59,15 @@ impl Transcriber for FakeTranscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::Catalog;
+    use crate::catalog::{Catalog, ModelKind};
+    use std::collections::BTreeMap;
 
     fn audio() -> Audio {
         Audio { sample_rate: 16_000, samples: vec![0.0; 160] }
+    }
+
+    fn spec(id: &str) -> LoadSpec {
+        LoadSpec { model_id: id.into(), kind: ModelKind::Whisper, paths: BTreeMap::new(), num_threads: None }
     }
 
     #[test]
@@ -73,10 +75,11 @@ mod tests {
         let cat = Catalog::bundled().unwrap();
         let entry = &cat.models[0];
         let mut t = FakeTranscriber::replying("hello there");
+        let spec = spec(&entry.id);
 
         assert!(matches!(t.transcribe(&audio(), &Default::default()), Err(Error::NotLoaded)));
 
-        t.load(entry, Path::new("/unused"), &LoadOptions::default()).unwrap();
+        t.load(&spec).unwrap();
         assert_eq!(t.loaded_model(), Some(entry.id.as_str()));
 
         let opts = TranscribeOptions { language: Some("hi".into()), hotwords: vec!["Bulbul".into()] };
@@ -93,11 +96,10 @@ mod tests {
 
     #[test]
     fn can_be_told_to_fail_once() {
-        let cat = Catalog::bundled().unwrap();
         let mut t = FakeTranscriber::replying("ok");
         t.fail_next = Some("device lost".into());
-        assert!(t.load(&cat.models[0], Path::new("/x"), &LoadOptions::default()).is_err());
-        t.load(&cat.models[0], Path::new("/x"), &LoadOptions::default()).unwrap();
+        assert!(t.load(&spec("m")).is_err());
+        t.load(&spec("m")).unwrap();
         t.fail_next = Some("boom".into());
         assert!(t.transcribe(&audio(), &Default::default()).is_err());
         assert!(t.transcribe(&audio(), &Default::default()).is_ok());

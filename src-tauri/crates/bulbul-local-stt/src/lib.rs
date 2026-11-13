@@ -16,13 +16,15 @@ pub mod catalog;
 #[cfg(feature = "download")]
 pub mod download;
 pub mod error;
+pub mod protocol;
 pub mod store;
 pub mod testing;
 pub mod transcriber;
+pub mod worker;
 
 pub use catalog::{ArchiveFormat, Catalog, License, ModelEntry, ModelKind, RemoteFile, Source};
 #[cfg(feature = "download")]
 pub use download::{CancelToken, Installer, Phase, Progress, ProgressFn};
 pub use error::{Error, Result};
 pub use store::{Status, Store};
-pub use transcriber::{Audio, LoadOptions, TranscribeOptions, Transcriber, Transcript};
+pub use transcriber::{Audio, LoadSpec, TranscribeOptions, Transcriber, Transcript};
