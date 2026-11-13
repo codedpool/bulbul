@@ -30,6 +30,11 @@
       "name": "sherpa-onnx-v2.0.1-linux-aarch64-static-lib.tar.bz2",
       "size": 21076492,
       "sha256": "b6c6090e40fd18d6812f04fe21260602cd1223d7b5e83ad39dab87ad7c1c031d"
+    },
+    "android": {
+      "name": "sherpa-onnx-v2.0.1-android.tar.bz2",
+      "size": 45300379,
+      "sha256": "39003753ec293425ed56723ea9b972b98841a490af3311670c3060548d654330"
     }
   }
 }

@@ -25,6 +25,8 @@ ARCHIVES = {
     "macos-x86_64": f"sherpa-onnx-v{VERSION}-osx-x64-static-lib.tar.bz2",
     "linux-x86_64": f"sherpa-onnx-v{VERSION}-linux-x64-static-lib.tar.bz2",
     "linux-aarch64": f"sherpa-onnx-v{VERSION}-linux-aarch64-static-lib.tar.bz2",
+    # The Android app loads these through JNI (jniLibs/<abi>/).
+    "android": f"sherpa-onnx-v{VERSION}-android.tar.bz2",
 }
 
 
