@@ -29,6 +29,21 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[error("couldn't download {what}: {message}")]
+    Network { what: String, message: String },
+
+    #[error("the download was cancelled")]
+    Cancelled,
+
+    #[error("{file} didn't match its expected checksum, so it was discarded")]
+    HashMismatch { file: String },
+
+    #[error("not enough free disk space: {needed} bytes needed, {available} available")]
+    NotEnoughSpace { needed: u64, available: u64 },
+
+    #[error("couldn't unpack the download: {0}")]
+    Archive(String),
+
     #[error("the audio can't be used: {0}")]
     BadAudio(String),
 
