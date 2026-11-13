@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import HomeView from "./views/HomeView.jsx";
 import SettingsView from "./views/SettingsView.jsx";
 import DictionaryView from "./views/DictionaryView.jsx";
@@ -21,6 +22,17 @@ import HotkeyHealthBanner from "./HotkeyHealthBanner.jsx";
 import { applyTheme } from "./theme.js";
 import { IS_LINUX, IS_MAC, RELAUNCH_HINT, IS_ANDROID } from "./platform.js";
 import "./App.css";
+
+const SPONSOR_URL = "https://bulbultypes.xyz/sponsor";
+const openSponsor = () => { openUrl(SPONSOR_URL).catch(() => {}); };
+
+function HeartIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden style={{ display: "block", overflow: "visible" }}>
+      <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+    </svg>
+  );
+}
 
 const ICONS = {
   home: (
@@ -436,23 +448,33 @@ function App() {
             <img src={bulbulMark} alt="" className="m-brand-mark" aria-hidden />
             <span className="m-brand-text">bulbul</span>
           </div>
-          <button
-            className="m-icon-btn"
-            aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            title={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
-            onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
-          >
-            {resolvedTheme === "dark" ? (
-              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-              </svg>
-            ) : (
-              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-              </svg>
-            )}
-          </button>
+          <div className="m-appbar-actions">
+            <button
+              className="m-icon-btn m-sponsor-btn"
+              aria-label="Sponsor Bulbul"
+              title="Sponsor me"
+              onClick={openSponsor}
+            >
+              <HeartIcon size={22} />
+            </button>
+            <button
+              className="m-icon-btn"
+              aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+              onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+            >
+              {resolvedTheme === "dark" ? (
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+                </svg>
+              ) : (
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+              )}
+            </button>
+          </div>
         </header>
         <main className="content m-content">{mainView}</main>
 
@@ -495,6 +517,10 @@ function App() {
                   <img src={bulbulMark} alt="" className="m-sheet-brand-mark" aria-hidden />
                   <span className="m-sheet-brand-text">bulbul</span>
                 </span>
+                <button type="button" className="sponsor-pill" onClick={openSponsor}>
+                  <HeartIcon size={13} />
+                  <span>Sponsor me</span>
+                </button>
                 <span className="muted small">v1.2.2 · GPL-3.0</span>
               </div>
             </div>
@@ -545,6 +571,14 @@ function App() {
           {/* Theme toggle lives at the far top-right on mac, mirroring the
               Win/Linux titlebar placement — independent of sidebar state
               so it's always reachable, collapsed or not. */}
+          <button
+            className="sponsor-pill mac-floating-sponsor"
+            onClick={openSponsor}
+            title="Sponsor Bulbul"
+          >
+            <HeartIcon size={13} />
+            <span>Sponsor me</span>
+          </button>
           <button
             className="mac-floating-theme-toggle"
             onClick={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
@@ -742,6 +776,16 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
       </div>
       <div className="titlebar-spacer" data-tauri-drag-region />
       <div className="titlebar-controls">
+        {!IS_MAC && (
+          <button
+            className="sponsor-pill tb-sponsor"
+            onClick={openSponsor}
+            title="Sponsor Bulbul"
+          >
+            <HeartIcon size={13} />
+            <span>Sponsor me</span>
+          </button>
+        )}
         <button
           className="tb-btn"
           aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}

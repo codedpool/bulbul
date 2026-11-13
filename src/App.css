@@ -3748,7 +3748,7 @@ html.platform-android .m-shell {
    on it. ── */
 html.platform-android .m-appbar {
   display: grid;
-  grid-template-columns: 52px 1fr 52px;
+  grid-template-columns: 104px 1fr 104px;
   align-items: center;
   /* Edge-to-edge draws under the status bar and Android's WebView usually
      reports safe-area-inset-top as 0, so the brand was crammed against the
@@ -4567,3 +4567,44 @@ html.platform-android table { display: block; overflow-x: auto; }
   padding: 0 4px;
 }
 .hhb-dismiss:hover { opacity: 1; }
+
+/* ── Sponsor button ── */
+.sponsor-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 11px 0 9px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 100ms ease, color 100ms ease;
+}
+.sponsor-pill:active { background: var(--fill-active); }
+.sponsor-pill svg { color: #e0527a; flex-shrink: 0; }
+.sponsor-pill:hover { background: var(--fill-active); color: var(--text); }
+.tb-sponsor { align-self: center; margin-right: 4px; -webkit-app-region: no-drag; }
+.mac-floating-sponsor { display: none; }
+.platform-mac .mac-floating-sponsor {
+  display: inline-flex;
+  position: fixed;
+  top: 6px;
+  right: 46px;
+  z-index: 10;
+}
+html.platform-android .m-appbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+html.platform-android .m-sponsor-btn svg { color: #e0527a; }
+html.platform-android .m-sheet-foot .sponsor-pill {
+  height: 28px;
+  font-size: 13px;
+}
