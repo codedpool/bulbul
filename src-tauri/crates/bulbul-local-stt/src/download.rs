@@ -79,6 +79,7 @@ pub struct Installer {
     free_space: Arc<SpaceFn>,
     allow_http: bool,
     retry_delay: Duration,
+    pub(crate) skip_smoke_test: bool,
 }
 
 impl Installer {
@@ -94,6 +95,7 @@ impl Installer {
             free_space: Arc::new(|p| fs4::available_space(p)),
             allow_http: false,
             retry_delay: Duration::from_secs(1),
+            skip_smoke_test: false,
         })
     }
 
@@ -109,6 +111,13 @@ impl Installer {
     pub fn allow_insecure_http_for_testing(mut self) -> Self {
         self.allow_http = true;
         self.retry_delay = Duration::from_millis(10);
+        self
+    }
+
+    /// Test hook: don't run a freshly installed worker (the test payload isn't a program).
+    #[doc(hidden)]
+    pub fn skip_engine_smoke_test_for_testing(mut self) -> Self {
+        self.skip_smoke_test = true;
         self
     }
 
@@ -138,6 +147,31 @@ impl Installer {
         }
     }
 
+    /// Fails with exact numbers when `dir` doesn't have `needed` bytes free
+    /// (plus the usual margin).
+    pub(crate) fn ensure_space(&self, dir: &Path, needed: u64) -> Result<()> {
+        let available = (self.free_space)(dir).map_err(|e| Error::io(dir, e))?;
+        if available < needed.saturating_add(SPACE_MARGIN) {
+            return Err(Error::NotEnoughSpace { needed: needed + SPACE_MARGIN, available });
+        }
+        Ok(())
+    }
+
+    /// Downloads one file to `dest`, resuming and retrying, and checks its
+    /// size and sha256. Used for things that aren't catalog models.
+    pub(crate) async fn download_verified(
+        &self,
+        url: &str,
+        dest: &Path,
+        file: &RemoteFile,
+        cancel: &CancelToken,
+        label: &str,
+        on_progress: ProgressFn,
+    ) -> Result<()> {
+        let report = Reporter::new(label, on_progress);
+        self.fetch_verified(url, dest, file, cancel, &report, 0, file.size).await
+    }
+
     /// Downloads and verifies `entry`, then marks it complete. Returns at once
     /// if it's already installed and verified.
     pub async fn install(
@@ -152,11 +186,7 @@ impl Installer {
         let dir = self.store.model_dir(&entry.id)?;
         fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
 
-        let needed = self.bytes_needed(entry)?;
-        let available = (self.free_space)(&dir).map_err(|e| Error::io(&dir, e))?;
-        if available < needed.saturating_add(SPACE_MARGIN) {
-            return Err(Error::NotEnoughSpace { needed: needed + SPACE_MARGIN, available });
-        }
+        self.ensure_space(&dir, self.bytes_needed(entry)?)?;
 
         let report = Reporter::new(&entry.id, on_progress);
         match &entry.source {
@@ -330,7 +360,7 @@ fn is_transient(e: &Error) -> bool {
 // No logging dependency here on purpose: callers watch progress, not logs.
 fn tracing_hint(_msg: &str) {}
 
-fn part_path(dest: &Path) -> PathBuf {
+pub(crate) fn part_path(dest: &Path) -> PathBuf {
     let mut s = dest.as_os_str().to_os_string();
     s.push(".part");
     PathBuf::from(s)
@@ -345,7 +375,7 @@ fn file_len(p: &Path) -> Option<u64> {
     fs::metadata(p).ok().map(|m| m.len())
 }
 
-fn sha256_file(path: &Path, cancel: &CancelToken) -> Result<String> {
+pub(crate) fn sha256_file(path: &Path, cancel: &CancelToken) -> Result<String> {
     let mut f = fs::File::open(path).map_err(|e| Error::io(path, e))?;
     let mut h = Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
@@ -362,7 +392,7 @@ fn sha256_file(path: &Path, cancel: &CancelToken) -> Result<String> {
     Ok(hex(&h.finalize()))
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     const D: &[u8; 16] = b"0123456789abcdef";
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -401,10 +431,10 @@ impl Reporter {
 }
 
 /// Writes through to `inner` while hashing what passes.
-struct HashWriter<W: Write> {
-    inner: W,
-    hasher: Sha256,
-    written: u64,
+pub(crate) struct HashWriter<W: Write> {
+    pub(crate) inner: W,
+    pub(crate) hasher: Sha256,
+    pub(crate) written: u64,
 }
 
 impl<W: Write> Write for HashWriter<W> {
@@ -501,10 +531,9 @@ fn unpack_tar_bz2(
 mod tests {
     use super::*;
     use crate::catalog::{ArchiveFormat, License, ModelKind};
+    use crate::test_server::{serve, Behaviour};
     use std::collections::{BTreeMap, HashMap};
     use std::sync::Mutex;
-    use tokio::io::AsyncReadExt;
-    use tokio::net::TcpListener;
 
     fn sha(bytes: &[u8]) -> String {
         hex(&Sha256::digest(bytes))
@@ -513,93 +542,6 @@ mod tests {
     /// Deterministic filler so every file has distinct, checkable content.
     fn blob(seed: u8, len: usize) -> Vec<u8> {
         (0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)).collect()
-    }
-
-    #[derive(Clone, Default)]
-    struct Behaviour {
-        /// Answer 200 with the whole file even when a range was asked for.
-        ignore_range: bool,
-        /// On the very first request, send this many body bytes and hang up.
-        drop_first_after: Option<usize>,
-    }
-
-    struct Server {
-        port: u16,
-        /// (path, range start) for every request received.
-        requests: Arc<Mutex<Vec<(String, Option<u64>)>>>,
-    }
-
-    impl Server {
-        fn count(&self) -> usize {
-            self.requests.lock().unwrap().len()
-        }
-    }
-
-    async fn serve(files: HashMap<String, Vec<u8>>, b: Behaviour) -> Server {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let requests: Arc<Mutex<Vec<(String, Option<u64>)>>> = Arc::default();
-        let reqs = requests.clone();
-        tokio::spawn(async move {
-            let mut first = true;
-            loop {
-                let Ok((mut sock, _)) = listener.accept().await else { return };
-                let files = files.clone();
-                let b = b.clone();
-                let reqs = reqs.clone();
-                let drop_this = std::mem::replace(&mut first, false) && b.drop_first_after.is_some();
-                tokio::spawn(async move {
-                    let mut buf = Vec::new();
-                    let mut chunk = [0u8; 4096];
-                    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                        let n = sock.read(&mut chunk).await.unwrap_or(0);
-                        if n == 0 {
-                            return;
-                        }
-                        buf.extend_from_slice(&chunk[..n]);
-                    }
-                    let head = String::from_utf8_lossy(&buf).to_string();
-                    let path = head.split_whitespace().nth(1).unwrap_or("/").to_string();
-                    let range = head.lines().find_map(|l| {
-                        let l = l.to_ascii_lowercase();
-                        l.strip_prefix("range: bytes=")
-                            .and_then(|v| v.trim_end_matches('-').trim().parse::<u64>().ok())
-                    });
-                    reqs.lock().unwrap().push((path.clone(), range));
-                    let Some(data) = files.get(&path) else {
-                        let _ = sock
-                            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nnot found")
-                            .await;
-                        return;
-                    };
-                    let (status, body, extra) = match range {
-                        Some(start) if !b.ignore_range && (start as usize) < data.len() => (
-                            "206 Partial Content",
-                            &data[start as usize..],
-                            format!("Content-Range: bytes {start}-{}/{}\r\n", data.len() - 1, data.len()),
-                        ),
-                        _ => ("200 OK", &data[..], String::new()),
-                    };
-                    let header = format!(
-                        "HTTP/1.1 {status}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n",
-                        body.len()
-                    );
-                    let _ = sock.write_all(header.as_bytes()).await;
-                    if drop_this {
-                        let k = b.drop_first_after.unwrap().min(body.len());
-                        let _ = sock.write_all(&body[..k]).await;
-                        return; // hang up mid-body
-                    }
-                    for piece in body.chunks(16 * 1024) {
-                        if sock.write_all(piece).await.is_err() {
-                            return;
-                        }
-                    }
-                    let _ = sock.shutdown().await;
-                });
-            }
-        });
-        Server { port, requests }
     }
 
     fn license() -> License {

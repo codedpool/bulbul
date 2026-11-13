@@ -18,12 +18,16 @@ pub mod chunk;
 pub mod client;
 #[cfg(feature = "download")]
 pub mod download;
+#[cfg(feature = "download")]
+pub mod engine;
 pub mod error;
 pub mod protocol;
 pub mod store;
 #[cfg(feature = "client")]
 pub mod supervisor;
 pub mod testing;
+#[cfg(all(test, feature = "download"))]
+mod test_server;
 pub mod transcriber;
 pub mod worker;
 
