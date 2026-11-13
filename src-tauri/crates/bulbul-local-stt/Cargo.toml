@@ -14,7 +14,7 @@ publish = false
 default = ["download", "client"]
 # The model downloader (HTTP, hashing, archive unpacking, free-space check).
 # Off, the crate is just the catalog, the store and the trait.
-download = ["dep:reqwest", "dep:tokio", "dep:sha2", "dep:tar", "dep:bzip2", "dep:fs4"]
+download = ["dep:reqwest", "dep:tokio", "dep:sha2", "dep:tar", "dep:bzip2", "dep:fs4", "dep:flate2", "dep:minisign-verify", "dep:base64"]
 # The async client and supervisor that talk to the worker program.
 client = ["dep:tokio"]
 
@@ -28,6 +28,9 @@ sha2 = { version = "0.10", optional = true }
 tar = { version = "0.4", optional = true }
 bzip2 = { version = "0.6", optional = true }
 fs4 = { version = "1", optional = true }
+flate2 = { version = "1", optional = true }
+minisign-verify = { version = "0.2", optional = true }
+base64 = { version = "0.22", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
