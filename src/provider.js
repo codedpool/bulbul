@@ -72,7 +72,7 @@ export function providerSummary(cfg) {
   let cleanup;
   if (cfg?.llm_provider === "openai_compatible") {
     const host = endpointHost(cfg.llm_endpoint_url) || "your server";
-    cleanup = `Your server (${host})`;
+    cleanup = endpointKind(cfg.llm_endpoint_url) === "self" ? `Your server (${host})` : host;
   } else {
     cleanup = has(cfg?.groq_api_key) ? "Groq" : "Off (words are typed as spoken)";
   }

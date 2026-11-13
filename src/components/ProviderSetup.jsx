@@ -13,6 +13,7 @@ import "./ProviderSetup.css";
 // Where the data goes is the real difference between the options, so every
 // one says it in plain words.
 const OPENAI_PRESET = { url: "https://api.openai.com/v1", model: "whisper-1" };
+const OPENAI_CHAT_PRESET = { url: "https://api.openai.com/v1", model: "gpt-4o-mini" };
 
 const icon = {
   cloud: (
@@ -83,7 +84,7 @@ function useProviderDraft(config, updateConfig) {
   const [choice, setChoice] = useState("groq"); // groq | self | cloud | local
   const [localModel, setLocalModel] = useState("");
   const [stt, setStt] = useState({ url: "", model: "", key: "" });
-  const [llmChoice, setLlmChoice] = useState("groq"); // groq | self
+  const [llmChoice, setLlmChoice] = useState("groq"); // groq | self | cloud
   const [llm, setLlm] = useState({ url: "", model: "", key: "" });
   const [fallback, setFallback] = useState(true);
   const [sttTest, setSttTest] = useState(IDLE);
@@ -102,7 +103,7 @@ function useProviderDraft(config, updateConfig) {
     );
     setLocalModel(c.local_stt_model || suggestedModelId(c.language));
     setStt({ url: c.stt_endpoint_url || "", model: c.stt_endpoint_model || "", key: c.stt_endpoint_key || "" });
-    setLlmChoice(c.llm_provider === "openai_compatible" ? "self" : "groq");
+    setLlmChoice(c.llm_provider === "openai_compatible" ? endpointKind(c.llm_endpoint_url) : "groq");
     setLlm({ url: c.llm_endpoint_url || "", model: c.llm_endpoint_model || "", key: c.llm_endpoint_key || "" });
     setFallback(c.stt_cloud_fallback !== false);
     setSttTest(IDLE);
@@ -178,7 +179,7 @@ function useProviderDraft(config, updateConfig) {
     let problem = "";
     if (choice === "local") problem = localModel ? "" : "Pick a model to download.";
     else if (choice !== "groq") problem = addressProblem(stt, choice === "cloud");
-    if (!problem && llmChoice === "self") problem = addressProblem(llm, false);
+    if (!problem && llmChoice !== "groq") problem = addressProblem(llm, llmChoice === "cloud");
     if (problem) {
       setError(problem);
       return false;
@@ -188,7 +189,7 @@ function useProviderDraft(config, updateConfig) {
       const patch = {
         stt_provider: choice === "groq" ? "groq" : choice === "local" ? "local" : "openai_compatible",
         stt_cloud_fallback: fallback,
-        llm_provider: llmChoice === "self" ? "openai_compatible" : "groq",
+        llm_provider: llmChoice === "groq" ? "groq" : "openai_compatible",
       };
       if (choice === "local") patch.local_stt_model = localModel;
       if (choice === "self" || choice === "cloud") {
@@ -196,7 +197,7 @@ function useProviderDraft(config, updateConfig) {
         patch.stt_endpoint_model = stt.model.trim();
         patch.stt_endpoint_key = stt.key.trim();
       }
-      if (llmChoice === "self") {
+      if (llmChoice !== "groq") {
         patch.llm_endpoint_url = llm.url.trim();
         patch.llm_endpoint_model = llm.model.trim();
         patch.llm_endpoint_key = llm.key.trim();
@@ -318,6 +319,15 @@ function ProviderForm({ d, variant }) {
         label="Server address"
         extra={
           <span className="ps-field-actions">
+            {llmChoice === "cloud" && (
+              <button
+                type="button"
+                className="ps-chip"
+                onClick={() => d.editLlm({ url: OPENAI_CHAT_PRESET.url, model: OPENAI_CHAT_PRESET.model })}
+              >
+                Use OpenAI
+              </button>
+            )}
             <TestButton state={d.llmTest} disabled={!llm.url.trim() || !llm.model.trim()} onTest={d.testLlm} />
           </span>
         }
@@ -326,7 +336,7 @@ function ProviderForm({ d, variant }) {
           id="ps-llm-url"
           type="text"
           value={llm.url}
-          placeholder="http://localhost:1234/v1"
+          placeholder={llmChoice === "cloud" ? "https://api.openai.com/v1" : "http://localhost:1234/v1"}
           onChange={(e) => d.editLlm({ url: e.target.value })}
           spellCheck={false}
           autoComplete="off"
@@ -338,18 +348,18 @@ function ProviderForm({ d, variant }) {
             id="ps-llm-model"
             type="text"
             value={llm.model}
-            placeholder="qwen2.5-7b-instruct"
+            placeholder={llmChoice === "cloud" ? "gpt-4o-mini" : "qwen2.5-7b-instruct"}
             onChange={(e) => d.editLlm({ model: e.target.value })}
             spellCheck={false}
             autoComplete="off"
           />
         </Field>
-        <Field id="ps-llm-key" label="API key" hint="optional">
+        <Field id="ps-llm-key" label="API key" hint={llmChoice === "cloud" ? "" : "optional"}>
           <input
             id="ps-llm-key"
             type="password"
             value={llm.key}
-            placeholder="If your server asks"
+            placeholder={llmChoice === "cloud" ? "sk-…" : "If your server asks"}
             onChange={(e) => d.editLlm({ key: e.target.value })}
             spellCheck={false}
             autoComplete="off"
@@ -437,6 +447,14 @@ function ProviderForm({ d, variant }) {
             title="A server I run" hint="Ollama, LM Studio…" showDesc={pane}
             desc="Any OpenAI-compatible chat server."
             where={{ icon: "network", text: "Text goes only to the address you enter." }}
+          >
+            {llmForm}
+          </Option>
+          <Option
+            name="ps-llm" value="cloud" checked={llmChoice === "cloud"} onChange={() => d.pickLlm("cloud")}
+            title="Another cloud provider" hint="OpenAI, OpenRouter…" showDesc={pane}
+            desc="Any service with an OpenAI-style chat API."
+            where={{ icon: "cloud", text: "Your transcript text is sent to that provider." }}
           >
             {llmForm}
           </Option>
