@@ -125,6 +125,9 @@ export default function Overlay() {
   // keep `status` (true backend state) untouched.
   const effectiveState = transientReject ? transientReject.kind : status.state;
   const effectiveMessage = transientReject ? transientReject.message : status.message;
+  // States whose message replaces the usual label ("Loading model…" while an
+  // on-device model starts up, the backoff time on a rate limit).
+  const showsMessage = effectiveState === "rate_limited" || (effectiveState === "processing" && !!effectiveMessage);
 
   // Close dropdown when cursor leaves or a dictation starts.
   useEffect(() => {
@@ -240,7 +243,7 @@ export default function Overlay() {
           // decorative state name.
           title={
             vertical && expanded && effectiveState !== "idle"
-              ? (effectiveState === "rate_limited" ? (effectiveMessage || "Rate limited…") : label(effectiveState))
+              ? (showsMessage ? (effectiveMessage || "Rate limited…") : label(effectiveState))
               : undefined
           }
         >
@@ -251,7 +254,7 @@ export default function Overlay() {
               <span className="pill-icon">{renderIcon(effectiveState, hovered)}</span>
               {expanded && effectiveState !== "idle" && !vertical && (
                 <span className="pill-label">
-                  {effectiveState === "rate_limited"
+                  {showsMessage
                     ? (effectiveMessage || "Rate limited…")
                     : label(effectiveState)}
                 </span>

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Romanch Roshan Singh
 
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { createPortal } from "react-dom";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import {
@@ -12,6 +13,7 @@ import {
   formatBytes,
   pauseLocalModel,
   percent,
+  refreshLocalModels,
   phaseLabel,
   retryEngineInstall,
   useLocalModels,
@@ -82,9 +84,14 @@ function ModelCard({ m, store, inUse, onUse, onDelete }) {
           {st.kind === "installed" && !inUse && <span className="lm-tag">Ready</span>}
         </div>
         <div className="lm-actions">
-          {st.kind === "idle" && (
+          {st.kind === "idle" && !m.custom && (
             <button type="button" className="lm-btn primary" onClick={() => downloadLocalModel(m.id)}>
               Download
+            </button>
+          )}
+          {st.kind === "idle" && m.custom && (
+            <button type="button" className="lm-btn lm-btn-quiet" onClick={() => onDelete(m)}>
+              Remove
             </button>
           )}
           {st.kind === "downloading" && (
@@ -110,7 +117,7 @@ function ModelCard({ m, store, inUse, onUse, onDelete }) {
                 </button>
               )}
               <button type="button" className="lm-btn lm-btn-quiet" onClick={() => onDelete(m)}>
-                Delete
+                {m.custom ? "Remove" : "Delete"}
               </button>
             </>
           )}
@@ -118,12 +125,22 @@ function ModelCard({ m, store, inUse, onUse, onDelete }) {
       </div>
 
       <p className="lm-summary">{m.summary}</p>
-      <p className="lm-facts">
-        <span>{languagesOf(m)}</span>
-        <span>{formatBytes(m.download_bytes)} download</span>
-        <span>{formatBytes(m.disk_bytes)} on disk</span>
-        <span>{m.license.spdx}</span>
-      </p>
+      {m.custom ? (
+        <p className="lm-facts">
+          <span className="lm-folder" title={m.folder}>{m.folder}</span>
+          <span>{formatBytes(m.disk_bytes)}</span>
+        </p>
+      ) : (
+        <p className="lm-facts">
+          <span>{languagesOf(m)}</span>
+          <span>{formatBytes(m.download_bytes)} download</span>
+          <span>{formatBytes(m.disk_bytes)} on disk</span>
+          <span title="A rough estimate: while it is loaded, a model uses about as much memory as its size on disk.">
+            about {formatBytes(m.disk_bytes)} of memory in use
+          </span>
+          <span>{m.license.spdx}</span>
+        </p>
+      )}
 
       {st.kind === "downloading" && (
         <div className="lm-progress">
@@ -141,10 +158,137 @@ function ModelCard({ m, store, inUse, onUse, onDelete }) {
       )}
       {err && <p className="lm-err" role="alert">{describeError(err)}</p>}
       {m.license.attribution && <p className="lm-credit">{m.license.attribution}</p>}
+      {m.custom && st.kind === "idle" && (
+        <p className="lm-err" role="alert">Bulbul can't find a usable model in that folder any more. Move it back or remove this entry.</p>
+      )}
       {st.kind === "installed" && !m.verified && (
-        <p className="lm-credit">These files were added by hand, so Bulbul hasn't checked them.</p>
+        <p className="lm-credit">
+          {m.custom ? "You added this one yourself, so Bulbul can't verify it." : "These files were added by hand, so Bulbul hasn't checked them."}
+        </p>
       )}
     </li>
+  );
+}
+
+const IDLE_CHOICES = [
+  [0, "Keep it loaded"],
+  [1, "After 1 minute"],
+  [5, "After 5 minutes"],
+  [15, "After 15 minutes"],
+  [30, "After 30 minutes"],
+  [60, "After 1 hour"],
+];
+
+function IdleSetting({ config, updateConfig }) {
+  const value = config.local_idle_unload_minutes ?? 5;
+  const choices = IDLE_CHOICES.some(([v]) => v === value) ? IDLE_CHOICES : [...IDLE_CHOICES, [value, `After ${value} minutes`]];
+  return (
+    <div className="lm-setting">
+      <label htmlFor="lm-idle" className="lm-setting-text">
+        <span className="lm-engine-title">Free memory</span>
+        <span className="lm-engine-text">
+          Unloads the model when you haven't dictated for a while. The next dictation takes a few seconds to load it again.
+        </span>
+      </label>
+      <select
+        id="lm-idle"
+        className="lm-select"
+        value={value}
+        onChange={(e) => updateConfig({ ...config, local_idle_unload_minutes: Number(e.target.value) })}
+      >
+        {choices.map(([v, label]) => (
+          <option key={v} value={v}>{label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+const FAMILIES = [
+  ["whisper", "Whisper"],
+  ["transducer", "Transducer (Parakeet-style)"],
+  ["nemo_ctc", "NeMo CTC"],
+  ["moonshine", "Moonshine"],
+  ["qwen3_asr", "Qwen3-ASR"],
+  ["omnilingual_ctc", "Omnilingual CTC"],
+];
+
+// Advanced: point Bulbul at a folder of sherpa-onnx model files.
+function AddCustomModel({ config, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState("whisper");
+  const [folder, setFolder] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setError("");
+    if (!name.trim()) return setError("Give it a name.");
+    if (!folder.trim()) return setError("Enter the folder the model files are in.");
+    setBusy(true);
+    try {
+      await invoke("check_custom_model", { kind, folder: folder.trim() });
+      const taken = new Set((config.local_custom_models || []).map((c) => c.id));
+      let id;
+      do id = `custom-${Math.random().toString(36).slice(2, 8)}`;
+      while (taken.has(id));
+      await onAdd({ id, name: name.trim(), kind, folder: folder.trim() });
+      setName("");
+      setFolder("");
+      setOpen(false);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="lm-btn lm-add" onClick={() => setOpen(true)}>
+        Add your own model
+      </button>
+    );
+  }
+  return (
+    <form className="lm-custom" onSubmit={submit}>
+      <h4>Add your own model</h4>
+      <p className="lm-engine-text">
+        For a folder of sherpa-onnx model files you've already downloaded. Bulbul can't verify files you add yourself, so
+        only use models from sources you trust.
+      </p>
+      <div className="lm-custom-row">
+        <label htmlFor="lm-c-name">Name</label>
+        <input id="lm-c-name" type="text" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" />
+      </div>
+      <div className="lm-custom-row">
+        <label htmlFor="lm-c-kind">Model family</label>
+        <select id="lm-c-kind" className="lm-select" value={kind} onChange={(e) => setKind(e.target.value)}>
+          {FAMILIES.map(([v, label]) => (
+            <option key={v} value={v}>{label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="lm-custom-row">
+        <label htmlFor="lm-c-folder">Folder</label>
+        <input
+          id="lm-c-folder"
+          type="text"
+          value={folder}
+          placeholder="C:\models\my-whisper"
+          onChange={(e) => setFolder(e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+        />
+      </div>
+      {error && <p className="lm-err" role="alert">{error}</p>}
+      <div className="lm-custom-actions">
+        <button type="button" className="lm-btn lm-btn-quiet" onClick={() => setOpen(false)}>Cancel</button>
+        <button type="submit" className="lm-btn primary" disabled={busy}>{busy ? "Checking…" : "Check and add"}</button>
+      </div>
+    </form>
   );
 }
 
@@ -157,11 +301,25 @@ export function LocalModelsPane({ config, updateConfig }) {
   }
 
   async function remove(m) {
-    // Deleting the model in use leaves nothing to transcribe with locally.
-    if (config.stt_provider === "local" && config.local_stt_model === m.id) {
-      await updateConfig({ ...config, stt_provider: "groq" });
+    const inUse = config.stt_provider === "local" && config.local_stt_model === m.id;
+    if (m.custom) {
+      // Only the entry goes; the user's files are never touched.
+      await updateConfig({
+        ...config,
+        ...(inUse ? { stt_provider: "groq" } : {}),
+        local_custom_models: (config.local_custom_models || []).filter((c) => c.id !== m.id),
+      });
+      refreshLocalModels();
+      return;
     }
+    // Deleting the model in use leaves nothing to transcribe with locally.
+    if (inUse) await updateConfig({ ...config, stt_provider: "groq" });
     await deleteLocalModel(m.id);
+  }
+
+  async function addCustom(entry) {
+    await updateConfig({ ...config, local_custom_models: [...(config.local_custom_models || []), entry] });
+    refreshLocalModels();
   }
 
   return (
@@ -171,6 +329,7 @@ export function LocalModelsPane({ config, updateConfig }) {
         leaves this computer. Cleanup is a separate step and still needs a language model, set under Providers.
       </p>
       <EngineRow store={store} />
+      <IdleSetting config={config} updateConfig={updateConfig} />
       {!store.loaded ? (
         <p className="lm-empty">Loading…</p>
       ) : store.models.length === 0 ? (
@@ -184,11 +343,16 @@ export function LocalModelsPane({ config, updateConfig }) {
               store={store}
               inUse={config.stt_provider === "local" && config.local_stt_model === m.id}
               onUse={use}
-              onDelete={(model) => (model.status === "installed" ? setToDelete(model) : remove(model))}
+              onDelete={(model) => (model.status === "installed" && !model.custom ? setToDelete(model) : remove(model))}
             />
           ))}
         </ul>
       )}
+      <AddCustomModel config={config} onAdd={addCustom} />
+      <p className="lm-note">
+        Your dictionary still applies after transcription. On-device models can't be steered toward your spellings
+        while they listen, the way Groq's can, so cleanup does that part.
+      </p>
       <ConfirmDialog
         open={!!toDelete}
         title={toDelete ? `Delete ${toDelete.name}?` : ""}
@@ -230,10 +394,11 @@ export function LocalModelPicker({ selected, onSelect }) {
               <span className="lm-pick-name">
                 {m.name}
                 {m.experimental && <span className="lm-tag lm-tag-warn">Experimental</span>}
+                {m.custom && <span className="lm-tag">Yours</span>}
               </span>
             </span>
             <span className="lm-pick-size">
-              {st.kind === "installed" ? "Ready" : st.kind === "paused" ? "Partly downloaded" : formatBytes(m.download_bytes)}
+              {st.kind === "installed" ? "Ready" : st.kind === "paused" ? "Partly downloaded" : m.custom ? "Folder missing" : formatBytes(m.download_bytes)}
             </span>
           </label>
         );
