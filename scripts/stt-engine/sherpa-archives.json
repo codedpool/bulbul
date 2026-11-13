@@ -1,0 +1,35 @@
+{
+  "sherpa_onnx_version": "2.0.1",
+  "archives": {
+    "windows-x86_64": {
+      "name": "sherpa-onnx-v2.0.1-win-x64-static-MT-Release-lib.tar.bz2",
+      "size": 122863596,
+      "sha256": "23e7b986b197eda0bbc47ff3d7d5c87afd6ef2b9077214ba26b0f1ec52ef0e66"
+    },
+    "windows-aarch64": {
+      "name": "sherpa-onnx-v2.0.1-win-arm64-static-MT-Release-lib.tar.bz2",
+      "size": 140877151,
+      "sha256": "ef118817dcf0a585974159855ff8b2a0f4c8069a158766dfd92a5f702b0173be"
+    },
+    "macos-aarch64": {
+      "name": "sherpa-onnx-v2.0.1-osx-arm64-static-lib.tar.bz2",
+      "size": 20829454,
+      "sha256": "d7a9b14f337958e7373c8c650f046df33d210bbaff2f33cb8322dda663ee5e1c"
+    },
+    "macos-x86_64": {
+      "name": "sherpa-onnx-v2.0.1-osx-x64-static-lib.tar.bz2",
+      "size": 20415061,
+      "sha256": "6a3cb3c14104d3a02e7b2a6cd5621f590b14892cce7d0bc0935f7655ef518938"
+    },
+    "linux-x86_64": {
+      "name": "sherpa-onnx-v2.0.1-linux-x64-static-lib.tar.bz2",
+      "size": 22694241,
+      "sha256": "55cfadf65ba50d0afc1a802b7a337942819e51c94a5b5a384def1978f7c70871"
+    },
+    "linux-aarch64": {
+      "name": "sherpa-onnx-v2.0.1-linux-aarch64-static-lib.tar.bz2",
+      "size": 21076492,
+      "sha256": "b6c6090e40fd18d6812f04fe21260602cd1223d7b5e83ad39dab87ad7c1c031d"
+    }
+  }
+}
