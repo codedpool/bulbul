@@ -94,7 +94,14 @@ object GroqClient {
     /// selected text to transform. Returns the model's output, or null on any
     /// failure (no key, network, non-2xx, empty completion) so the caller can
     /// surface a toast instead of silently replacing the selection with junk.
-    fun chat(apiKey: String, systemPrompt: String, userText: String, model: String, temperature: Double = 0.3): String? {
+    fun chat(
+        apiKey: String,
+        systemPrompt: String,
+        userText: String,
+        model: String,
+        temperature: Double = 0.3,
+        maxTokens: Int? = null,
+    ): String? {
         if (apiKey.isBlank()) {
             Log.w(TAG, "no API key set; not transforming")
             return null
@@ -104,6 +111,7 @@ object GroqClient {
                 put("model", model)
                 put("temperature", temperature)
                 reasoningEffortFor(model)?.let { put("reasoning_effort", it) }
+                if (maxTokens != null) put("max_tokens", maxTokens)
                 put("messages", JSONArray().apply {
                     put(JSONObject().put("role", "system").put("content", systemPrompt))
                     put(JSONObject().put("role", "user").put("content", userText))
@@ -114,7 +122,8 @@ object GroqClient {
                 requestMethod = "POST"
                 doOutput = true
                 connectTimeout = 10_000
-                readTimeout = 30_000
+                // Short for cleanup; a command asking for an essay needs longer.
+                readTimeout = if (maxTokens != null && maxTokens > 800) 90_000 else 30_000
                 setRequestProperty("Authorization", "Bearer $apiKey")
                 setRequestProperty("Content-Type", "application/json")
             }
@@ -149,14 +158,21 @@ object GroqClient {
     /// fallback order comes from BulbulConfig.cachedCleanupChain when a
     /// remote fetch has ever succeeded (see Cleanup.cleanupChain), else the
     /// embedded CHAT_FALLBACK seed.
-    fun chatWithFallback(context: Context, apiKey: String, systemPrompt: String, userText: String, primaryModel: String): String? {
+    fun chatWithFallback(
+        context: Context,
+        apiKey: String,
+        systemPrompt: String,
+        userText: String,
+        primaryModel: String,
+        maxTokens: Int? = null,
+    ): String? {
         val chain = ArrayList<String>()
         val p = primaryModel.trim()
         if (p.isNotEmpty()) chain.add(p)
         val fallback = BulbulConfig.cachedCleanupChain(context) ?: CHAT_FALLBACK
         for (m in fallback) if (!chain.contains(m)) chain.add(m)
         for (model in chain) {
-            val out = chat(apiKey, systemPrompt, userText, model)
+            val out = chat(apiKey, systemPrompt, userText, model, maxTokens = maxTokens)
             if (out != null) return out
             Log.w(TAG, "transform model $model failed; trying next in chain")
         }

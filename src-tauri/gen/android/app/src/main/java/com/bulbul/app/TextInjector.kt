@@ -121,6 +121,93 @@ object TextInjector {
         }
     }
 
+    /// What a field holds at one moment, for command mode: its text without
+    /// the placeholder, and where the selection (or just the cursor) is.
+    data class FieldSnapshot(val text: String, val selStart: Int, val selEnd: Int) {
+        /// The highlighted text, or null when only a cursor is placed.
+        val selectedText: String?
+            get() = if (selEnd > selStart && selStart >= 0 && selEnd <= text.length) text.substring(selStart, selEnd) else null
+    }
+
+    /// The real text of [node]: empty when it is only showing its hint.
+    /// (A cursor at position 0 is NOT taken as "placeholder" here, unlike
+    /// inject(): a command splices into the text, so misreading real content
+    /// as a placeholder would delete it.)
+    private fun realText(node: AccessibilityNodeInfo): String {
+        if (android.os.Build.VERSION.SDK_INT >= 26 && node.isShowingHintText) return ""
+        val text = node.text?.toString() ?: ""
+        if (text.isEmpty()) return ""
+        val hint = if (android.os.Build.VERSION.SDK_INT >= 26) node.hintText?.toString() else null
+        if (hint != null && text.trim().equals(hint.trim(), ignoreCase = true)) return ""
+        return text
+    }
+
+    /// Reads the focused editable field (never a password field). Null when
+    /// there isn't one or the accessibility service isn't connected.
+    fun readField(): FieldSnapshot? {
+        val svc = serviceRef?.get() ?: return null
+        val node = findTarget(svc) ?: return null
+        try {
+            val text = realText(node)
+            var start = node.textSelectionStart
+            var end = node.textSelectionEnd
+            // No cursor information: treat as a cursor at the end, the same
+            // place a dictation would add its text.
+            if (start < 0 || end < 0) {
+                start = text.length
+                end = text.length
+            }
+            if (start > end) { val t = start; start = end; end = t }
+            start = start.coerceIn(0, text.length)
+            end = end.coerceIn(0, text.length)
+            return FieldSnapshot(text, start, end)
+        } finally {
+            node.recycle()
+        }
+    }
+
+    /// Puts [result] where the snapshot's selection was (or at its cursor) and
+    /// leaves the cursor after it. If the field changed since the snapshot,
+    /// nothing is overwritten from the snapshot: the result is pasted at the
+    /// current cursor instead.
+    fun replaceSelection(snapshot: FieldSnapshot, result: String): Boolean {
+        val svc = serviceRef?.get()
+        if (svc == null) {
+            Log.w(TAG, "no accessibility service bound; cannot replace")
+            return false
+        }
+        val node = findTarget(svc) ?: run {
+            Log.w(TAG, "no editable target found for the command result")
+            return false
+        }
+        return try {
+            if (realText(node) != snapshot.text) {
+                Log.w(TAG, "field changed while the command ran; pasting at the cursor instead")
+                return pasteInto(svc, node, result)
+            }
+            val spliced = snapshot.text.substring(0, snapshot.selStart) + result + snapshot.text.substring(snapshot.selEnd)
+            val args = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, spliced)
+            }
+            var ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            if (ok) {
+                // SET_TEXT moves the cursor to the end; put it after the result.
+                val caret = snapshot.selStart + result.length
+                val sel = Bundle().apply {
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, caret)
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, caret)
+                }
+                node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
+            } else {
+                // Fields that refuse SET_TEXT: paste over the still-active selection.
+                ok = pasteInto(svc, node, result)
+            }
+            ok
+        } finally {
+            node.recycle()
+        }
+    }
+
     /// Focused-editable discovery, most-reliable first:
     ///   1. service findFocus  2. per-window-root findFocus
     ///   3. DFS for a focused editable  4. DFS for any editable.

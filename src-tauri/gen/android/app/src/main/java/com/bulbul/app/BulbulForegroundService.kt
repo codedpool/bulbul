@@ -125,8 +125,12 @@ class BulbulForegroundService : Service() {
         val r = recorder ?: return
         if (r.isRecording()) {
             val wav = r.stop()
+            val wasCommand = commandRecording
+            commandRecording = false
             bubbleView?.setRecording(false)
-            if (wav != null) processCapturedAudio(wav)
+            if (wav != null) {
+                if (wasCommand) processCommandAudio(wav) else processCapturedAudio(wav)
+            }
         } else {
             val ok = r.start()
             if (ok) {
@@ -164,8 +168,81 @@ class BulbulForegroundService : Service() {
         val r = recorder ?: return
         if (r.isRecording()) {
             val wav = r.stop()
+            val wasCommand = commandRecording
+            commandRecording = false
             bubbleView?.setRecording(false)
-            if (wav != null) processCapturedAudio(wav)
+            if (wav != null) {
+                if (wasCommand) processCommandAudio(wav) else processCapturedAudio(wav)
+            }
+        }
+    }
+
+    /// True while the current recording is a command (started by a
+    /// double-tap), so whichever gesture stops it runs it as one.
+    @Volatile private var commandRecording = false
+
+    /// Double-tap: start listening for a command. Tap once to finish. A
+    /// double-tap did nothing before, so this takes no existing gesture.
+    private fun onBubbleDoubleTap() {
+        val r = recorder ?: return
+        if (r.isRecording() || !BulbulConfig.commandModeEnabled(this)) return
+        if (getApiKey().isBlank()) {
+            // The model that runs a command is Groq on Android for now.
+            toast("Bulbul: command mode needs a Groq key (Settings, Account)")
+            return
+        }
+        if (r.start()) {
+            pendingAppPackage = BulbulAccessibilityService.targetPackage
+            commandRecording = true
+            bubbleView?.setRecording(true, command = true)
+            restoreNormalNotification()
+        } else {
+            Log.w(TAG, "recorder failed to start for a command — RECORD_AUDIO probably not granted")
+            showPermissionRecovery("Microphone is off")
+        }
+    }
+
+    /// Off-main-thread: read the field, transcribe the instruction, run it on
+    /// the selection (or at the cursor), and put the result in. The field's
+    /// text is only replaced once a result has arrived; any failure leaves it
+    /// alone.
+    private fun processCommandAudio(wav: ByteArray) {
+        val appPkg = pendingAppPackage
+        thread(name = "BulbulCommand", isDaemon = true) {
+            val started = System.currentTimeMillis()
+            val apiKey = getApiKey()
+            // Read the field first: it is exactly as the user left it when they
+            // tapped to finish.
+            val field = TextInjector.readField()
+            if (field == null) {
+                toast("Bulbul: tap into a text field first")
+                return@thread
+            }
+            val instruction = transcribe(wav, apiKey)?.trim().orEmpty()
+            if (instruction.isEmpty()) {
+                toast("Bulbul: couldn't hear a command")
+                return@thread
+            }
+            val selected = field.selectedText
+            if (selected != null && selected.length > Command.MAX_SELECTION_CHARS) {
+                toast("Bulbul: that selection is too long for a command")
+                return@thread
+            }
+            toast("Bulbul: working on it…")
+            val result = Command.run(this, apiKey, instruction, selected)
+            if (result == null) {
+                toast("Bulbul: the command didn't work, and your text wasn't changed")
+                return@thread
+            }
+            val injected = TextInjector.replaceSelection(field, result)
+            if (!injected) clipboardFallback(result)
+            val durationMs = wavDurationMs(wav)
+            recordHistory(instruction, result, "command", durationMs, 0, friendlyAppName(appPkg))
+            Log.i(TAG, "command done in ${System.currentTimeMillis() - started} ms (selection=${selected?.length ?: 0} chars, injected=$injected)")
+            Telemetry.track(this, "command_completed", org.json.JSONObject().apply {
+                put("had_selection", selected != null)
+                put("duration_bucket", Telemetry.durationBucket(durationMs))
+            })
         }
     }
 
@@ -580,6 +657,7 @@ class BulbulForegroundService : Service() {
             onTap = ::onBubbleTap,
             onLongPressDown = ::onBubbleLongPress,
             onLongPressUp = ::onBubbleHoldReleased,
+            onDoubleTap = ::onBubbleDoubleTap,
             onDragStart = ::showSnoozeTarget,
             onDragMove = ::onBubbleDragMove,
             onDragEnd = ::onBubbleDragEnd,
@@ -801,6 +879,7 @@ private data class BubbleCallbacks(
     val onTap: () -> Unit,
     val onLongPressDown: () -> Unit,
     val onLongPressUp: () -> Unit,
+    val onDoubleTap: () -> Unit,
     val onDragStart: () -> Unit,
     val onDragMove: (x: Int, y: Int) -> Unit,
     val onDragEnd: (x: Int, y: Int) -> Unit,
@@ -876,6 +955,11 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
             inLongPress = true
             cb.onLongPressDown()
         }
+
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            if (!inLongPress && !dragging) cb.onDoubleTap()
+            return true
+        }
     })
 
     fun bind(p: WindowManager.LayoutParams, w: WindowManager) {
@@ -886,9 +970,12 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     /// Flip the fill colour so the user can see when capture is active.
     /// Posted to the view's handler so it's safe to call from any
     /// thread (the recorder lives off the main thread).
-    fun setRecording(active: Boolean) {
+    fun setRecording(active: Boolean, command: Boolean = false) {
         post {
             recording = active
+            // A different colour while listening for a command, so it's clear
+            // that this isn't a dictation.
+            pulsePaint.color = if (command) COLOR_COMMAND else COLOR_RECORDING
             pulser?.cancel(); pulser = null
             if (active) {
                 pulser = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
@@ -1003,6 +1090,8 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
         // Cherry red for the recording border, so a glance tells you
         // whether audio is live.
         private val COLOR_RECORDING = Color.parseColor("#EF4444")
+        // Teal (the app's accent) while a command is being spoken.
+        private val COLOR_COMMAND = Color.parseColor("#2DD4BF")
     }
 }
 

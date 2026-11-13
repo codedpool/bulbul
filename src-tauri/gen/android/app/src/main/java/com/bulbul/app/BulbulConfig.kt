@@ -81,6 +81,14 @@ object BulbulConfig {
     fun apiKey(context: Context): String =
         read(context)?.optString("groq_api_key", "").orEmpty()
 
+    /// Command mode on/off (double-tap the bubble). Defaults on, like desktop.
+    fun commandModeEnabled(context: Context): Boolean =
+        read(context)?.optBoolean("command_mode_enabled", true) ?: true
+
+    /// The name the user gave in setup, used when a command signs a letter.
+    fun displayName(context: Context): String =
+        read(context)?.optString("display_name", "").orEmpty()
+
     /// Which service transcribes: "groq" (default) or "local" (on-device).
     fun sttProvider(context: Context): String =
         read(context)?.optString("stt_provider", "groq").orEmpty().ifBlank { "groq" }

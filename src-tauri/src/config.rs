@@ -979,6 +979,14 @@ mod tests {
     use super::{friendly_app_name, mapped_app_name, Config, LlmProvider, SttProvider};
 
     #[test]
+    fn config_from_before_command_mode_gets_the_defaults() {
+        let cfg: Config = serde_json::from_str(r#"{"groq_api_key":"gsk_x"}"#).unwrap();
+        assert!(cfg.command_mode_enabled, "command mode is on by default");
+        assert_eq!(cfg.command_hotkey, "Shift+Alt+C");
+        assert_eq!(cfg.command_mouse_button, "", "no mouse button until one is chosen");
+    }
+
+    #[test]
     fn config_from_before_stt_providers_loads_as_groq() {
         // A config.json written by an older build has none of the new fields.
         let cfg: Config = serde_json::from_str(r#"{"groq_api_key":"gsk_abc"}"#).unwrap();

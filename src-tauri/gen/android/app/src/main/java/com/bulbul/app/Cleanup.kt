@@ -217,7 +217,7 @@ object Cleanup {
     // ---------------------------------------------------------------------
 
     // groq.rs strip_reasoning(): drop a leading <think>…</think> block.
-    private fun stripReasoning(text: String): String {
+    fun stripReasoning(text: String): String {
         val t = text.trimStart()
         if (t.startsWith("<think>")) {
             val rest = t.removePrefix("<think>")

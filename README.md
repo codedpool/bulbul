@@ -81,6 +81,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 - **Dictionary**: word substitutions (e.g. "groq" → "Groq") that fire after cleanup.
 - **Snippets**: triggers that expand (e.g. "my email" → real email address).
 - **Transforms**: per-text rewrites — Polish, Make Formal, Translate, Bulletize, or your own custom prompts. Bind to `Alt+1` through `Alt+9` by default, or record your own custom combo per transform.
+- **Command mode**: hold a separate hotkey and speak an instruction. With text selected it rewrites the selection; with nothing selected it writes what you ask at the cursor. Android: double-tap the bubble.
 - **Tap to talk**: an alternative to holding the hotkey — one press starts recording, the next stops it.
 - **Mouse mode**: bind a mouse button (middle-click by default) to start and stop dictation, independent of any keyboard hotkey.
 - **Pill position** *(desktop)*: pin the floating overlay to the bottom-left, bottom-center, or bottom-right of the screen.

@@ -576,6 +576,14 @@ function PaneGeneral({ config, updateConfig }) {
           ariaLabel="Language"
         />
       </Row>
+      {IS_ANDROID && (
+        <ToggleRow
+          title="Command mode"
+          hint="Double-tap the bubble, say what you want, then tap once to run it. With text selected it rewrites the selection (“make this friendlier”, “translate to Hindi”). With nothing selected it writes what you ask at the cursor. Needs your Groq key; the selected text and your instruction go to Groq."
+          checked={config.command_mode_enabled !== false}
+          onChange={(v) => updateConfig({ ...config, command_mode_enabled: v })}
+        />
+      )}
       <Row title="Appearance" hint={THEME_FOLLOW_HINT}>
         <div className="segmented">
           {THEMES.map((t) => (
