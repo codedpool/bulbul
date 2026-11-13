@@ -99,6 +99,41 @@ pub struct AppOverride {
     pub category: String,
 }
 
+/// Which backend turns recorded speech into text. Groq stays the default;
+/// the others are opt-in.
+///
+/// `#[serde(other)]` on `Groq` means a value written by a newer build that
+/// this one doesn't know about reads back as Groq instead of failing the
+/// whole config load.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SttProvider {
+    /// Any server speaking the OpenAI `/audio/transcriptions` API (a local
+    /// Ollama, a whisper server, OpenAI itself, ...).
+    OpenaiCompatible,
+    /// A model downloaded and run on this computer.
+    Local,
+    /// Last on purpose: serde requires the `other` catch-all to be the final
+    /// variant.
+    #[default]
+    #[serde(other)]
+    Groq,
+}
+
+/// Which LLM handles the text stages: cleanup, transforms, voice profile.
+/// Independent of the transcription provider.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmProvider {
+    /// Any server speaking the OpenAI `/chat/completions` API (Ollama,
+    /// LM Studio, ...).
+    OpenaiCompatible,
+    /// Last on purpose: serde's `other` catch-all must be the final variant.
+    #[default]
+    #[serde(other)]
+    Groq,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -124,6 +159,57 @@ pub struct Config {
 
     #[serde(default = "default_stt_model")]
     pub stt_model: String,
+
+    /// Which backend transcribes speech. Everything below is only consulted
+    /// for the matching provider; Groq users never touch it.
+    #[serde(default)]
+    pub stt_provider: SttProvider,
+
+    /// `OpenaiCompatible`: base URL up to and including the version segment,
+    /// e.g. `http://localhost:11434/v1`. The request goes to
+    /// `{url}/audio/transcriptions`.
+    #[serde(default)]
+    pub stt_endpoint_url: String,
+
+    /// `OpenaiCompatible`: the model name the server expects.
+    #[serde(default)]
+    pub stt_endpoint_model: String,
+
+    /// `OpenaiCompatible`: bearer token, if the server wants one. Empty for
+    /// local servers that don't. Stays on this machine and is only ever sent
+    /// to `stt_endpoint_url`.
+    #[serde(default)]
+    pub stt_endpoint_key: String,
+
+    /// `Local`: catalog id of the selected on-device model. Empty = none
+    /// chosen yet.
+    #[serde(default)]
+    pub local_stt_model: String,
+
+    /// When the selected non-Groq provider fails and a Groq key is set, retry
+    /// that one dictation on Groq. This SENDS THE AUDIO TO THE CLOUD, so the
+    /// user is always told when it happens and can turn it off. Never applies
+    /// to the Groq provider itself.
+    #[serde(default = "default_stt_cloud_fallback")]
+    pub stt_cloud_fallback: bool,
+
+    /// Which LLM runs cleanup, transforms and the voice profile.
+    #[serde(default)]
+    pub llm_provider: LlmProvider,
+
+    /// `OpenaiCompatible`: base URL up to the version segment, e.g.
+    /// `http://localhost:1234/v1`. Requests go to `{url}/chat/completions`.
+    #[serde(default)]
+    pub llm_endpoint_url: String,
+
+    /// `OpenaiCompatible`: the chat model name the server expects.
+    #[serde(default)]
+    pub llm_endpoint_model: String,
+
+    /// `OpenaiCompatible`: bearer token, if the server wants one. Only ever
+    /// sent to `llm_endpoint_url`.
+    #[serde(default)]
+    pub llm_endpoint_key: String,
 
     #[serde(default = "default_chat_model")]
     pub chat_model: String,
@@ -366,6 +452,9 @@ fn default_hide_tray() -> bool {
 fn default_tap_to_talk() -> bool {
     false
 }
+fn default_stt_cloud_fallback() -> bool {
+    true
+}
 fn default_mouse_mode() -> bool {
     true
 }
@@ -580,6 +669,16 @@ impl Default for Config {
             hotkey: default_hotkey(),
             polish_hotkey: default_polish_hotkey(),
             stt_model: default_stt_model(),
+            stt_provider: SttProvider::default(),
+            stt_endpoint_url: String::new(),
+            stt_endpoint_model: String::new(),
+            stt_endpoint_key: String::new(),
+            local_stt_model: String::new(),
+            stt_cloud_fallback: default_stt_cloud_fallback(),
+            llm_provider: LlmProvider::default(),
+            llm_endpoint_url: String::new(),
+            llm_endpoint_model: String::new(),
+            llm_endpoint_key: String::new(),
             chat_model: default_chat_model(),
             cerebras_api_key: String::new(),
             cerebras_model: String::new(),
@@ -650,8 +749,59 @@ impl Config {
 }
 
 impl Config {
+    /// True when a Groq key is set. This is about Groq specifically; use
+    /// [`Config::can_transcribe`] to ask whether dictation can run at all.
     pub fn has_api_key(&self) -> bool {
         !self.groq_api_key.trim().is_empty()
+    }
+
+    /// Whether the selected transcription provider is configured well enough
+    /// to try. Doesn't prove it works (a server may be down, a model may
+    /// still be downloading) — it only stops dictation from starting with
+    /// nothing configured.
+    pub fn can_transcribe(&self) -> bool {
+        match self.stt_provider {
+            SttProvider::Groq => self.has_api_key(),
+            SttProvider::OpenaiCompatible => {
+                !self.stt_endpoint_url.trim().is_empty() && !self.stt_endpoint_model.trim().is_empty()
+            }
+            SttProvider::Local => !self.local_stt_model.trim().is_empty(),
+        }
+    }
+
+    /// Short, user-facing nudge for whatever is missing from the selected
+    /// transcription provider. Shown when dictation can't start.
+    pub fn transcribe_setup_hint(&self) -> &'static str {
+        match self.stt_provider {
+            SttProvider::Groq => "Set your Groq API key in Settings first.",
+            SttProvider::OpenaiCompatible => {
+                "Finish setting up your transcription server in Settings first."
+            }
+            SttProvider::Local => "Choose a local model in Settings first.",
+        }
+    }
+
+    /// Whether the selected LLM is configured well enough to try for the text
+    /// stages. Transcription and cleanup are separate: a user running a local
+    /// or self-hosted speech model with no LLM still dictates, just without
+    /// the AI cleanup pass (the transcript is used as-is).
+    pub fn can_clean_up(&self) -> bool {
+        match self.llm_provider {
+            LlmProvider::Groq => self.has_api_key(),
+            LlmProvider::OpenaiCompatible => {
+                !self.llm_endpoint_url.trim().is_empty() && !self.llm_endpoint_model.trim().is_empty()
+            }
+        }
+    }
+
+    /// Short, user-facing nudge for whatever is missing from the selected LLM.
+    pub fn llm_setup_hint(&self) -> &'static str {
+        match self.llm_provider {
+            LlmProvider::Groq => "Set your Groq API key in Settings first.",
+            LlmProvider::OpenaiCompatible => {
+                "Finish setting up your cleanup server in Settings first."
+            }
+        }
     }
 
     /// True when a Cerebras key is configured. When set, the cleanup /
@@ -758,7 +908,104 @@ pub fn save(cfg: &Config) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{friendly_app_name, mapped_app_name};
+    use super::{friendly_app_name, mapped_app_name, Config, LlmProvider, SttProvider};
+
+    #[test]
+    fn config_from_before_stt_providers_loads_as_groq() {
+        // A config.json written by an older build has none of the new fields.
+        let cfg: Config = serde_json::from_str(r#"{"groq_api_key":"gsk_abc"}"#).unwrap();
+        assert_eq!(cfg.stt_provider, SttProvider::Groq);
+        assert!(cfg.has_api_key());
+        assert!(cfg.can_transcribe());
+        assert!(cfg.local_stt_model.is_empty());
+        assert!(cfg.stt_cloud_fallback, "fallback defaults on, always with a notice");
+    }
+
+    #[test]
+    fn unknown_provider_from_a_newer_build_reads_as_groq() {
+        let cfg: Config =
+            serde_json::from_str(r#"{"groq_api_key":"k","stt_provider":"some_future_thing"}"#).unwrap();
+        assert_eq!(cfg.stt_provider, SttProvider::Groq);
+    }
+
+    #[test]
+    fn provider_round_trips_as_snake_case() {
+        let mut cfg = Config::default();
+        cfg.stt_provider = SttProvider::OpenaiCompatible;
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains(r#""stt_provider":"openai_compatible""#));
+        let back: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.stt_provider, SttProvider::OpenaiCompatible);
+    }
+
+    #[test]
+    fn can_transcribe_checks_the_selected_provider_only() {
+        let mut cfg = Config::default();
+        assert!(!cfg.can_transcribe(), "fresh config: Groq with no key");
+
+        // Groq: needs the Groq key, and a leftover endpoint config is irrelevant.
+        cfg.stt_endpoint_url = "http://localhost:11434/v1".into();
+        cfg.stt_endpoint_model = "whisper".into();
+        assert!(!cfg.can_transcribe());
+        cfg.groq_api_key = "  gsk_abc  ".into();
+        assert!(cfg.can_transcribe());
+
+        // OpenAI-compatible: needs URL and model, not the Groq key.
+        cfg.groq_api_key.clear();
+        cfg.stt_provider = SttProvider::OpenaiCompatible;
+        assert!(cfg.can_transcribe());
+        cfg.stt_endpoint_model = "   ".into();
+        assert!(!cfg.can_transcribe(), "blank model is not configured");
+        cfg.stt_endpoint_model = "whisper".into();
+        cfg.stt_endpoint_url.clear();
+        assert!(!cfg.can_transcribe(), "missing URL is not configured");
+
+        // Local: needs a chosen model.
+        cfg.stt_provider = SttProvider::Local;
+        assert!(!cfg.can_transcribe());
+        cfg.local_stt_model = "whisper-small".into();
+        assert!(cfg.can_transcribe());
+    }
+
+    #[test]
+    fn cleanup_availability_is_independent_of_the_transcription_provider() {
+        let mut cfg = Config::default();
+        cfg.stt_provider = SttProvider::Local;
+        cfg.local_stt_model = "whisper-small".into();
+        assert!(cfg.can_transcribe());
+        assert!(!cfg.can_clean_up(), "local speech model, no LLM configured");
+        cfg.groq_api_key = "gsk_abc".into();
+        assert!(cfg.can_clean_up());
+    }
+
+    #[test]
+    fn llm_provider_defaults_to_groq_and_checks_its_own_fields() {
+        let cfg: Config = serde_json::from_str(r#"{"groq_api_key":"k"}"#).unwrap();
+        assert_eq!(cfg.llm_provider, LlmProvider::Groq);
+
+        let mut cfg = Config::default();
+        cfg.llm_provider = LlmProvider::OpenaiCompatible;
+        cfg.groq_api_key = "gsk_abc".into(); // irrelevant for a self-hosted LLM
+        assert!(!cfg.can_clean_up());
+        cfg.llm_endpoint_url = "http://localhost:1234/v1".into();
+        assert!(!cfg.can_clean_up(), "model still missing");
+        cfg.llm_endpoint_model = "qwen2.5-7b".into();
+        assert!(cfg.can_clean_up());
+        assert!(cfg.llm_setup_hint().contains("cleanup server"));
+
+        let bad: Config = serde_json::from_str(r#"{"llm_provider":"from_the_future"}"#).unwrap();
+        assert_eq!(bad.llm_provider, LlmProvider::Groq);
+    }
+
+    #[test]
+    fn setup_hint_names_the_selected_provider() {
+        let mut cfg = Config::default();
+        assert!(cfg.transcribe_setup_hint().contains("Groq"));
+        cfg.stt_provider = SttProvider::OpenaiCompatible;
+        assert!(cfg.transcribe_setup_hint().contains("server"));
+        cfg.stt_provider = SttProvider::Local;
+        assert!(cfg.transcribe_setup_hint().contains("local model"));
+    }
 
     #[test]
     fn mapped_name_covers_all_platform_id_shapes() {

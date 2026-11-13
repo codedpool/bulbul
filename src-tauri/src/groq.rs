@@ -122,6 +122,64 @@ pub fn chat_endpoint(cfg: &Config) -> (&'static str, &str, &str) {
     }
 }
 
+/// Where the text stages (cleanup, transforms, voice profile) send their chat
+/// completions. Groq by default; a self-hosted OpenAI-compatible server when
+/// the user chose one.
+pub(crate) struct LlmTarget {
+    pub url: String,
+    pub key: String,
+    /// Models to try in order. Groq gets its fallback chain; a self-hosted
+    /// server gets the single model the user named.
+    pub chain: Vec<String>,
+    /// The `reasoning_effort` tuning is Groq-specific; other servers may
+    /// reject the field.
+    tuned_for_groq: bool,
+}
+
+impl LlmTarget {
+    pub fn reasoning_effort(&self, model: &str) -> Option<&'static str> {
+        if self.tuned_for_groq {
+            reasoning_effort_for(model)
+        } else {
+            None
+        }
+    }
+
+    pub fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.key.is_empty() {
+            rb
+        } else {
+            rb.bearer_auth(&self.key)
+        }
+    }
+}
+
+pub(crate) fn llm_target(cfg: &Config) -> Result<LlmTarget> {
+    match cfg.llm_provider {
+        crate::config::LlmProvider::Groq => Ok(LlmTarget {
+            url: format!("{BASE_URL}/chat/completions"),
+            key: cfg.groq_api_key.trim().to_string(),
+            chain: cleanup_chain(cfg),
+            tuned_for_groq: true,
+        }),
+        crate::config::LlmProvider::OpenaiCompatible => {
+            let url = crate::stt::endpoint_url_for(&cfg.llm_endpoint_url, "/chat/completions")?;
+            let key = cfg.llm_endpoint_key.trim().to_string();
+            crate::stt::check_key_transport(&url, !key.is_empty())?;
+            let model = cfg.llm_endpoint_model.trim();
+            if model.is_empty() {
+                return Err(anyhow!("No model name set for your cleanup server."));
+            }
+            Ok(LlmTarget {
+                url: url.to_string(),
+                key,
+                chain: vec![model.to_string()],
+                tuned_for_groq: false,
+            })
+        }
+    }
+}
+
 /// Strip a leading `<think>…</think>` reasoning block that some models (GLM,
 /// Qwen3, DeepSeek-R1, …) emit inline before the answer. Left in place, the
 /// think trace inflates the word count and trips the cleanup expansion guard,
@@ -260,6 +318,32 @@ pub fn is_likely_hallucination(text: &str) -> bool {
     HALLUCINATION_DENYLIST.iter().any(|d| *d == stripped)
 }
 
+/// The `language` form field for a transcription request: the user's ISO-639-1
+/// pick, or None for "auto" so the model detects it. Whisper auto-detects when
+/// the field is omitted; pass it only when a specific language was chosen.
+pub(crate) fn language_param(cfg: &Config) -> Option<String> {
+    let lang = cfg.language.trim();
+    if !lang.is_empty() && lang != "auto" {
+        Some(lang.to_string())
+    } else {
+        None
+    }
+}
+
+/// Dictionary entries become a `prompt` hint so Whisper biases toward the
+/// user's preferred spellings ("Groq", "GitHub", "iOS"). Capped under
+/// Whisper's 224-token limit.
+pub(crate) fn vocab_prompt(vocabulary: &[String]) -> Option<String> {
+    if vocabulary.is_empty() {
+        return None;
+    }
+    let mut joined = vocabulary.join(", ");
+    if joined.chars().count() > 600 {
+        joined = joined.chars().take(600).collect();
+    }
+    Some(joined)
+}
+
 pub async fn transcribe(
     cfg: &Config,
     wav_bytes: Vec<u8>,
@@ -274,26 +358,8 @@ pub async fn transcribe(
     let url = format!("{BASE_URL}/audio/transcriptions");
     let chain = stt_chain(cfg);
 
-    // Whisper auto-detects language when the field is omitted; pass it only when
-    // the user picked a specific ISO-639-1 code. Same for every model attempt.
-    let lang = cfg.language.trim();
-    let lang = if !lang.is_empty() && lang != "auto" {
-        Some(lang.to_string())
-    } else {
-        None
-    };
-    // Dictionary entries become a `prompt` hint so Whisper biases toward the
-    // user's preferred spellings ("Groq", "GitHub", "iOS"). Capped under
-    // Whisper's 224-token limit.
-    let vocab_prompt = if vocabulary.is_empty() {
-        None
-    } else {
-        let mut joined = vocabulary.join(", ");
-        if joined.chars().count() > 600 {
-            joined = joined.chars().take(600).collect();
-        }
-        Some(joined)
-    };
+    let lang = language_param(cfg);
+    let vocab_prompt = vocab_prompt(vocabulary);
 
     // Try each Whisper model in turn. A failure — a decommissioned model, a
     // rate limit, a 5xx, a network blip — falls straight through to the next
@@ -495,6 +561,11 @@ pub async fn cleanup(
     if transcript.trim().is_empty() {
         return Ok(String::new());
     }
+    // Speech may come from a local/self-hosted model with no LLM configured;
+    // use the transcript as-is instead of firing a request that can only fail.
+    if !cfg.can_clean_up() {
+        return Ok(transcript.to_string());
+    }
 
     let style_block = style_extra
         .map(|s| format!("\n\n{}", s))
@@ -536,8 +607,15 @@ pub async fn cleanup(
 
     let user_content = format!("Raw transcript:\n{transcript}");
     let client = shared_client();
-    let url = format!("{BASE_URL}/chat/completions");
-    let chain = cleanup_chain(cfg);
+    let target = match llm_target(cfg) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("cleanup: LLM not usable ({e:#}); using the raw transcript");
+            return Ok(transcript.to_string());
+        }
+    };
+    let url = target.url.clone();
+    let chain = target.chain.clone();
     let _ = notify; // the chain fails fast to the next model; no backoff to report
 
     // Try each model in the fallback chain (user-selected primary first). A
@@ -555,7 +633,7 @@ pub async fn cleanup(
                 ChatMessage { role: "user", content: user_content.clone() },
             ],
             temperature: 0.2,
-            reasoning_effort: reasoning_effort_for(model),
+            reasoning_effort: target.reasoning_effort(model),
             // Cleanup normalizes already-spoken text — output tracks input
             // length and is often shorter (filler removal), never
             // drastically longer. 400 comfortably covers a long dictation
@@ -563,12 +641,7 @@ pub async fn cleanup(
             // 1000/min ceiling for more dictations in the same minute.
             max_tokens: Some(400),
         };
-        let make = || {
-            client
-                .post(url.as_str())
-                .bearer_auth(&cfg.groq_api_key)
-                .json(&request)
-        };
+        let make = || target.auth(client.post(url.as_str()).json(&request));
 
         // TEMP(v1.2.0-eval): time the cleanup call to compare candidate models
         // on real dictation. Strip before shipping.
@@ -731,8 +804,8 @@ pub async fn execute_transform(
     text: &str,
     notify: Option<&RetryNotify<'_>>,
 ) -> Result<String> {
-    if cfg.groq_api_key.trim().is_empty() {
-        return Err(anyhow!("No API key set"));
+    if !cfg.can_clean_up() {
+        return Err(anyhow!(cfg.llm_setup_hint()));
     }
     if text.trim().is_empty() {
         return Ok(String::new());
@@ -759,14 +832,15 @@ pub async fn execute_transform(
     let augmented_system = format!("{}{}", system_prompt, user_context);
 
     let client = shared_client();
-    let url = format!("{BASE_URL}/chat/completions");
+    let target = llm_target(cfg)?;
+    let url = target.url.clone();
     // Same qwen -> gpt-oss-20b -> gpt-oss-120b fallback chain as cleanup: if the
     // primary (chat_model) is rate-limited or decommissioned, fall through to the
     // next model rather than failing the transform (each has its own Groq rate
     // bucket, so trying the next beats a backoff). Unlike cleanup there is NO raw
     // floor — a transform has no meaningful "unchanged" output — so if every
     // model fails the last error surfaces to the caller.
-    let chain = cleanup_chain(cfg);
+    let chain = target.chain.clone();
     let _ = notify; // the chain fails fast to the next model; no backoff to report
     let mut last_err: Option<anyhow::Error> = None;
 
@@ -787,7 +861,7 @@ pub async fn execute_transform(
             temperature: 0.3,
             // qwen must get "none" or it dumps a <think> block into the rewrite;
             // gpt-oss gets "low". Same per-model policy as cleanup.
-            reasoning_effort: reasoning_effort_for(model),
+            reasoning_effort: target.reasoning_effort(model),
             // Transforms can legitimately ask for more text than they're
             // given (expand, translate, make more formal), so this gets a
             // more generous cap than cleanup's — still comfortably under
@@ -795,12 +869,7 @@ pub async fn execute_transform(
             // minute.
             max_tokens: Some(800),
         };
-        let make = || {
-            client
-                .post(url.as_str())
-                .bearer_auth(cfg.groq_api_key.trim())
-                .json(&request)
-        };
+        let make = || target.auth(client.post(url.as_str()).json(&request));
         let body = match send_once(make).await {
             Ok(b) => b,
             Err(e) => {
@@ -852,10 +921,21 @@ pub async fn generate_voice_profile(
     stats_summary: &str,
     samples: &str,
 ) -> Result<(String, String)> {
-    let (base, key, model) = chat_endpoint(cfg);
-    if key.is_empty() {
-        return Err(anyhow!("No API key set"));
-    }
+    // A self-hosted LLM, if chosen; otherwise Groq (or Cerebras when its key
+    // is set - see chat_endpoint).
+    let (url, key, model, tuned) =
+        if matches!(cfg.llm_provider, crate::config::LlmProvider::OpenaiCompatible) {
+            let t = llm_target(cfg)?;
+            let model = t.chain.first().cloned().unwrap_or_default();
+            (t.url, t.key, model, false)
+        } else {
+            let (base, key, model) = chat_endpoint(cfg);
+            if key.is_empty() {
+                return Err(anyhow!("No API key set"));
+            }
+            (format!("{base}/chat/completions"), key.to_string(), model.to_string(), true)
+        };
+    let model = model.as_str();
 
     let user_content = format!(
         "Quick stats:\n{stats_summary}\n\nDictation samples:\n{samples}",
@@ -876,18 +956,19 @@ pub async fn generate_voice_profile(
             },
         ],
         temperature: 0.4,
-        reasoning_effort: reasoning_effort_for(model),
+        reasoning_effort: if tuned { reasoning_effort_for(model) } else { None },
         // A short profile summary + blurb — same reasoning as cleanup's cap.
         max_tokens: Some(400),
     };
 
     let client = shared_client();
-    let url = format!("{base}/chat/completions");
     let make = || {
-        client
-            .post(url.as_str())
-            .bearer_auth(key)
-            .json(&request)
+        let rb = client.post(url.as_str()).json(&request);
+        if key.is_empty() {
+            rb
+        } else {
+            rb.bearer_auth(&key)
+        }
     };
     // Background task — no UI notifier, but it still benefits from retry.
     let body = send_with_retry(make, "voice profile", None).await?;

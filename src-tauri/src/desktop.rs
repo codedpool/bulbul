@@ -13,6 +13,7 @@ mod keyboard_hook;
 #[cfg(target_os = "windows")]
 mod mouse_hook;
 mod model_config;
+mod stt;
 #[cfg(target_os = "linux")]
 mod linux_env;
 mod telemetry;
@@ -1045,7 +1046,7 @@ fn reveal_interface_after_pending_update(app: &AppHandle) {
     let config = app.state::<AppState>().config.clone();
     let (hide_tray, show_dashboard) = {
         let cfg = config.lock();
-        (!cfg.hide_tray, !cfg.has_api_key() || cfg.open_dashboard_on_launch)
+        (!cfg.hide_tray, !cfg.can_transcribe() || cfg.open_dashboard_on_launch)
     };
     if hide_tray {
         if let Some(overlay) = app.get_webview_window("overlay") {
@@ -1205,7 +1206,7 @@ fn set_tray_activity(app: &AppHandle, state: &str) {
         let _ = tray.set_tooltip(Some(tooltip));
     } else {
         // Back to rest: restore the correct idle icon (normal / no-key).
-        let has_key = app.state::<AppState>().config.lock().has_api_key();
+        let has_key = app.state::<AppState>().config.lock().can_transcribe();
         update_tray_icon(app, has_key);
     }
 }
@@ -1239,7 +1240,7 @@ fn save_config(
     ) = {
         let cfg = state.config.lock();
         (
-            cfg.has_api_key(),
+            cfg.can_transcribe(),
             cfg.hotkey.clone(),
             cfg.polish_hotkey.clone(),
             cfg.theme.clone(),
@@ -1253,7 +1254,7 @@ fn save_config(
         )
     };
     config::save(&new_cfg).map_err(|e| format!("{e:#}"))?;
-    let next_has_key = new_cfg.has_api_key();
+    let next_has_key = new_cfg.can_transcribe();
     let next_hotkey = new_cfg.hotkey.clone();
     let next_pol = new_cfg.polish_hotkey.clone();
     let next_tap_to_talk = new_cfg.tap_to_talk;
@@ -1413,6 +1414,22 @@ fn refresh_transform_bindings(app: &AppHandle, state: &AppState) {
     *state.transform_slot_statuses.lock() = statuses;
 }
 
+/// Settings/wizard "Test connection" for a transcription server.
+#[tauri::command]
+async fn test_stt_endpoint(url: String, model: String, key: String) -> Result<(), String> {
+    stt::test_transcription_endpoint(url.trim(), model.trim(), key.trim())
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Settings/wizard "Test connection" for a cleanup (chat) server.
+#[tauri::command]
+async fn test_llm_endpoint(url: String, model: String, key: String) -> Result<(), String> {
+    stt::test_chat_endpoint(url.trim(), model.trim(), key.trim())
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 async fn validate_api_key(api_key: String) -> Result<(), String> {
     groq::validate_key(api_key.trim())
@@ -1528,7 +1545,7 @@ fn get_insights_usage(state: tauri::State<'_, AppState>) -> Result<db::UsageStat
 
 #[tauri::command]
 fn get_voice_stats(state: tauri::State<'_, AppState>) -> Result<db::VoiceStats, String> {
-    let has_key = state.config.lock().has_api_key();
+    let has_key = state.config.lock().can_clean_up();
     let mut stats = db::voice_stats(&state.db, has_key).map_err(|e| format!("{e:#}"))?;
     // Same raw→friendly resolution as get_recent_dictations: show the readable
     // app name in the "peak app" stat rather than the raw exe/bundle-id/WM_CLASS.
@@ -1577,7 +1594,7 @@ const VOICE_AUTO_REFRESH_AFTER: i64 = 100;
 /// generation stays a deliberate manual action so we never spend the user's
 /// Groq quota unprompted.
 fn maybe_auto_refresh_voice(app: &AppHandle, cfg: &Config, db: &db::Db) {
-    if !cfg.has_api_key() {
+    if !cfg.can_clean_up() {
         return;
     }
     // Cheap timestamp lookup — never the full voice_stats aggregation on the
@@ -1610,8 +1627,8 @@ async fn refresh_voice_narrative(app: AppHandle) -> Result<db::VoiceStats, Strin
     let state = app.state::<AppState>();
     let cfg = state.config.lock().clone();
     let db = state.db.clone();
-    if !cfg.has_api_key() {
-        return Err("Set your Groq API key in Settings first.".into());
+    if !cfg.can_clean_up() {
+        return Err(cfg.llm_setup_hint().into());
     }
     regenerate_voice_narrative(&cfg, &db)
         .await
@@ -1783,8 +1800,8 @@ async fn run_transform_on_text(
         let db = state.db.clone();
         (cfg, db)
     };
-    if !cfg.has_api_key() {
-        return Err("Set your Groq API key in Settings first.".into());
+    if !cfg.can_clean_up() {
+        return Err(cfg.llm_setup_hint().into());
     }
     if text.trim().is_empty() {
         return Ok(text);
@@ -2244,7 +2261,7 @@ fn set_tray_visible(
             // Defensive fallback — the tray is now always built at startup
             // (see setup()), so this shouldn't normally be reached. Kept in
             // case that ever changes: build it now, visible.
-            let has_key = { app.state::<AppState>().config.lock().has_api_key() };
+            let has_key = { app.state::<AppState>().config.lock().can_transcribe() };
             setup_tray(&app, has_key).map_err(|e| format!("{e}"))?;
         }
     } else if let Some(tray) = app.tray_by_id("bulbul-tray") {
@@ -2669,7 +2686,7 @@ pub fn run() {
         .try_init();
 
     let initial_config = config::load();
-    let has_key_on_boot = initial_config.has_api_key();
+    let has_key_on_boot = initial_config.can_transcribe();
     let initial_set = HotkeySet {
         dictation: ParsedHotkey::parse(&initial_config.hotkey),
         polish_dictation: ParsedHotkey::parse(&initial_config.polish_hotkey),
@@ -2761,6 +2778,8 @@ pub fn run() {
             get_config,
             save_config,
             validate_api_key,
+            test_stt_endpoint,
+            test_llm_endpoint,
             list_cerebras_models,
             complete_onboarding,
             inpage_hotkey,
@@ -2962,7 +2981,7 @@ pub fn run() {
                 let cfg = handle.state::<AppState>().config.clone();
                 let want_show = {
                     let c = cfg.lock();
-                    !c.has_api_key() || c.open_dashboard_on_launch
+                    !c.can_transcribe() || c.open_dashboard_on_launch
                 };
                 if want_show && !defer_interface_for_pending_update {
                     let _ = window.show();
@@ -3414,13 +3433,10 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                     }
                     let cfg_arc = handle.state::<AppState>().config.clone();
                     let cfg = cfg_arc.lock().clone();
-                    if !cfg.has_api_key() {
-                        emit_status(
-                            &handle,
-                            "error",
-                            Some("Set your Groq API key in Settings first.".into()),
-                        );
-                        notify(&handle, "Bulbul", "Set your Groq API key in Settings first.");
+                    if !cfg.can_transcribe() {
+                        let hint = cfg.transcribe_setup_hint();
+                        emit_status(&handle, "error", Some(hint.into()));
+                        notify(&handle, "Bulbul", hint);
                         show_settings(&handle);
                         continue;
                     }
@@ -3563,13 +3579,10 @@ fn spawn_orchestrator(handle: AppHandle, rx: std::sync::mpsc::Receiver<HotkeyEve
                     }
                     let state = handle.state::<AppState>();
                     let cfg = state.config.lock().clone();
-                    if !cfg.has_api_key() {
-                        emit_status(
-                            &handle,
-                            "error",
-                            Some("Set your Groq API key in Settings first.".into()),
-                        );
-                        notify(&handle, "Bulbul", "Set your Groq API key in Settings first.");
+                    if !cfg.can_clean_up() {
+                        let hint = cfg.llm_setup_hint();
+                        emit_status(&handle, "error", Some(hint.into()));
+                        notify(&handle, "Bulbul", hint);
                         show_settings(&handle);
                         continue;
                     }
@@ -3938,8 +3951,22 @@ async fn process_pipeline(
     let notify_rl: &groq::RetryNotify = &on_rate_limit;
 
     let t_stt_start = Instant::now();
-    let transcript = match groq::transcribe(&cfg, wav, &vocabulary, Some(notify_rl)).await {
-        Ok(t) => t,
+    let transcript = match stt::transcribe(&cfg, wav, &vocabulary, Some(notify_rl)).await {
+        Ok(t) => {
+            // The audio left this machine for Groq even though the user chose
+            // something else — always say so.
+            if let Some(from) = t.fell_back_from {
+                notify(
+                    &app,
+                    "Bulbul used Groq for this dictation",
+                    &format!(
+                        "{} didn't work, so this recording was sent to Groq.                          You can turn this off in Settings.",
+                        stt::provider_label(from)
+                    ),
+                );
+            }
+            t.text
+        }
         Err(e) => {
             tracing::error!("STT failed: {e:#}");
             emit_status(&app, "error", Some(format!("STT: {e:#}")));
