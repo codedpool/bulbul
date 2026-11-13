@@ -516,8 +516,11 @@ dependencies = [
 name = "bulbul-local-stt"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bzip2",
+ "flate2",
  "fs4",
+ "minisign-verify",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

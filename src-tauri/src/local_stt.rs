@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
+use bulbul_local_stt::engine::{self, EngineManifest, ENGINE_ID};
 use bulbul_local_stt::{
     Audio, CancelToken, Catalog, Error as SttError, Installer, LoadSpec, Phase, ProcessLauncher, Progress,
     ProgressFn, Status, Store, Supervisor, SupervisorConfig,
@@ -30,11 +31,20 @@ const WORKER_ENV: &str = "BULBUL_STT_WORKER";
 /// Developer/test override for where models and the engine are kept.
 const ROOT_ENV: &str = "BULBUL_LOCAL_STT_DIR";
 
+/// Where the signed engine manifest is published (the signature sits beside it).
+const MANIFEST_URL: &str = "https://github.com/codedpool/bulbul/releases/download/stt-engine/stt-engine-manifest.json";
+const MANIFEST_SIG_URL: &str = "https://github.com/codedpool/bulbul/releases/download/stt-engine/stt-engine-manifest.json.sig";
+/// The key that signs the manifest: the same one that signs app updates.
+const SIGNING_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCMEQ1M0FFRUNEQkJEQ0IKUldUTHZkdnNybE1OUzRMUXZzS08wM1Q4a0YrNWpaMXM3S2l5VTRsS1ptWVBjZDArMXF4bTJnS3QK";
+/// Manifests are tiny; anything bigger is not what we expect.
+const MAX_MANIFEST_BYTES: usize = 256 * 1024;
+
 pub struct LocalStt {
     catalog: Catalog,
     store: Store,
     installer: Installer,
     downloads: Mutex<HashMap<String, CancelToken>>,
+    engine_dir: PathBuf,
     supervisor: Arc<Supervisor<ProcessLauncher>>,
     worker_path: PathBuf,
 }
@@ -59,7 +69,7 @@ impl LocalStt {
         };
         let worker_path = match std::env::var_os(WORKER_ENV) {
             Some(p) => PathBuf::from(p),
-            None => root.join("engine").join(worker_file_name()),
+            None => root.join("engine").join(engine::worker_file_name()),
         };
         let store = Store::new(root.join("models"));
         let installer = Installer::new(store.clone()).map_err(|e| anyhow!("{e}"))?;
@@ -74,6 +84,7 @@ impl LocalStt {
             store,
             installer,
             downloads: Mutex::new(HashMap::new()),
+            engine_dir: root.join("engine"),
             supervisor,
             worker_path,
         })
@@ -81,14 +92,6 @@ impl LocalStt {
 
     pub fn engine_installed(&self) -> bool {
         self.worker_path.is_file()
-    }
-}
-
-fn worker_file_name() -> &'static str {
-    if cfg!(windows) {
-        "bulbul-stt-worker.exe"
-    } else {
-        "bulbul-stt-worker"
     }
 }
 
@@ -246,6 +249,54 @@ impl LocalStt {
         Ok(())
     }
 
+    /// Downloads and installs the speech engine in the background, reporting
+    /// through the same events as a model (under the id `engine`).
+    pub fn start_engine_install(self: &Arc<Self>, app: AppHandle) -> Result<()> {
+        let token = CancelToken::new();
+        {
+            let mut d = self.downloads.lock().unwrap_or_else(|e| e.into_inner());
+            if d.contains_key(ENGINE_ID) {
+                return Err(anyhow!("The speech engine is already being installed"));
+            }
+            d.insert(ENGINE_ID.to_string(), token.clone());
+        }
+        let this = self.clone();
+        tauri::async_runtime::spawn(async move {
+            let emitter = app.clone();
+            let cb: ProgressFn = Arc::new(move |p: Progress| {
+                let _ = emitter.emit(
+                    "local-model-progress",
+                    ProgressEvent {
+                        model_id: p.model_id,
+                        phase: phase_name(&p.phase),
+                        bytes_done: p.bytes_done,
+                        bytes_total: p.bytes_total,
+                    },
+                );
+            });
+            let result = this.install_engine(&token, cb).await;
+            this.downloads.lock().unwrap_or_else(|e| e.into_inner()).remove(ENGINE_ID);
+            match result {
+                Ok(()) => {
+                    let _ = app.emit("local-model-done", ENGINE_ID.to_string());
+                }
+                Err(e) => {
+                    tracing::warn!("speech engine install failed: {e}");
+                    let _ = app.emit("local-model-error", error_event(ENGINE_ID, &e));
+                }
+            }
+        });
+        Ok(())
+    }
+
+    async fn install_engine(&self, cancel: &CancelToken, on_progress: ProgressFn) -> std::result::Result<(), SttError> {
+        // A running worker holds its own file open (Windows won't let us replace it).
+        self.supervisor.unload().await;
+        let manifest = fetch_manifest().await?;
+        self.installer.install_engine(&manifest, &self.engine_dir, cancel, on_progress).await?;
+        Ok(())
+    }
+
     pub fn cancel_download(&self, id: &str) {
         if let Some(t) = self.downloads.lock().unwrap_or_else(|e| e.into_inner()).get(id) {
             t.cancel();
@@ -285,9 +336,45 @@ impl LocalStt {
     }
 }
 
+/// Fetches the engine manifest and refuses it unless its signature checks out.
+async fn fetch_manifest() -> std::result::Result<EngineManifest, SttError> {
+    let net = |e: reqwest::Error| SttError::Network { what: "the engine manifest".into(), message: e.to_string() };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("Bulbul")
+        .build()
+        .map_err(net)?;
+    let get = |url: &'static str| {
+        let client = client.clone();
+        async move {
+            let resp = client.get(url).send().await.map_err(net)?.error_for_status().map_err(net)?;
+            let bytes = resp.bytes().await.map_err(net)?;
+            if bytes.len() > MAX_MANIFEST_BYTES {
+                return Err(SttError::Engine("the engine manifest is unexpectedly large".into()));
+            }
+            Ok(bytes)
+        }
+    };
+    let manifest = get(MANIFEST_URL).await?;
+    let sig = String::from_utf8_lossy(&get(MANIFEST_SIG_URL).await?).into_owned();
+    engine::verify_manifest(&manifest, &sig, SIGNING_PUBKEY)?;
+    EngineManifest::parse(&manifest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_manifest_key_is_the_one_that_signs_app_updates() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["plugins"]["updater"]["pubkey"].as_str(), Some(SIGNING_PUBKEY));
+    }
+
+    #[test]
+    fn manifest_urls_are_https() {
+        assert!(MANIFEST_URL.starts_with("https://") && MANIFEST_SIG_URL.starts_with("https://"));
+    }
 
     #[test]
     fn error_kinds_map_to_what_the_ui_can_act_on() {
@@ -313,6 +400,6 @@ mod tests {
 
     #[test]
     fn the_worker_file_name_matches_the_platform() {
-        assert_eq!(worker_file_name().ends_with(".exe"), cfg!(windows));
+        assert_eq!(engine::worker_file_name().ends_with(".exe"), cfg!(windows));
     }
 }

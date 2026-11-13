@@ -1444,6 +1444,13 @@ async fn local_engine_status() -> Result<local_stt::EngineStatus, String> {
     Ok(local_stt::EngineStatus { installed: l.engine_installed() })
 }
 
+/// Downloads and installs the speech engine; progress arrives as events
+/// under the id `engine`.
+#[tauri::command]
+async fn install_local_engine(app: AppHandle) -> Result<(), String> {
+    local_stt::get().and_then(|l| l.start_engine_install(app)).map_err(|e| format!("{e:#}"))
+}
+
 /// Starts a background download; progress arrives as events.
 #[tauri::command]
 async fn download_local_model(app: AppHandle, id: String) -> Result<(), String> {
@@ -2815,6 +2822,7 @@ pub fn run() {
             test_llm_endpoint,
             list_local_models,
             local_engine_status,
+            install_local_engine,
             download_local_model,
             cancel_local_model_download,
             delete_local_model,
