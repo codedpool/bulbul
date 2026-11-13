@@ -127,7 +127,9 @@ export default function Overlay() {
   const effectiveMessage = transientReject ? transientReject.message : status.message;
   // States whose message replaces the usual label ("Loading model…" while an
   // on-device model starts up, the backoff time on a rate limit).
-  const showsMessage = effectiveState === "rate_limited" || (effectiveState === "processing" && !!effectiveMessage);
+  const showsMessage =
+    effectiveState === "rate_limited" ||
+    ((effectiveState === "processing" || effectiveState === "listening") && !!effectiveMessage);
 
   // Close dropdown when cursor leaves or a dictation starts.
   useEffect(() => {

@@ -194,7 +194,28 @@ export default function SettingsView({
     };
 
     const commit = (combo) => {
-      const field = recordingHotkeyFor === "polish" ? "polish_hotkey" : "hotkey";
+      const field =
+        recordingHotkeyFor === "polish" ? "polish_hotkey" : recordingHotkeyFor === "command" ? "command_hotkey" : "hotkey";
+      if (recordingHotkeyFor === "command") {
+        // Command mode is registered like the polish hotkey: it needs a real
+        // key, and it can't share a combo with another hold-to-talk hotkey.
+        const parts = combo.split("+");
+        if (["Ctrl", "Shift", "Alt", "Win"].includes(parts[parts.length - 1])) {
+          setRecordingError("Command mode needs a key as well, for example Shift+Alt+C.");
+          reset();
+          return;
+        }
+        const norm = (c) => String(c || "").toLowerCase();
+        if (norm(combo) === norm(config.hotkey) || norm(combo) === norm(config.polish_hotkey || "Shift+Alt+P")) {
+          setRecordingError("That combination is already used for dictation. Pick another.");
+          reset();
+          return;
+        }
+      } else if (combo.toLowerCase() === String(config.command_hotkey || "Shift+Alt+C").toLowerCase() && config.command_mode_enabled !== false) {
+        setRecordingError("That combination is used for command mode. Pick another.");
+        reset();
+        return;
+      }
       updateConfig({ ...config, [field]: combo });
       setRecordingHotkeyFor(null);
       setRecordingError("");
@@ -665,6 +686,7 @@ function PaneHotkeys({
   // clears itself once the grant lands instead of going stale until
   // Settings is reopened.
   const [mouseModeOk, setMouseModeOk] = useState(true);
+  const [commandMouseError, setCommandMouseError] = useState("");
   useEffect(() => {
     if (!IS_MAC) return;
     let active = true;
@@ -710,6 +732,55 @@ function PaneHotkeys({
           onCancel={cancelRecording}
         />
       </Row>
+      <ToggleRow
+        title="Command mode"
+        hint="Hold, say what you want, release. With text selected, your instruction is applied to it and the result replaces it (“make this friendlier”, “translate to Hindi”). With nothing selected, it does what you ask at the cursor (“write a short email asking for Friday off”). The selected text and your instruction go to your cleanup provider."
+        checked={config.command_mode_enabled !== false}
+        onChange={(v) => updateConfig({ ...config, command_mode_enabled: v })}
+      />
+      {config.command_mode_enabled !== false && (
+        <>
+          <Row title="Command hotkey" hint="Hold to speak a command. Release to run it." stack>
+            <HotkeyControl
+              combo={config.command_hotkey || "Shift+Alt+C"}
+              isRecording={recordingHotkeyFor === "command"}
+              error={recordingHotkeyFor === "command" ? recordingError : ""}
+              onStart={() => startRecording("command")}
+              onCancel={cancelRecording}
+            />
+          </Row>
+          <Row
+            title="Command mouse button"
+            hint="Optional. Click to start speaking a command, click again to run it. Pick a different button from Mouse mode's."
+            stack
+          >
+            <MouseButtonRecorder
+              value={config.command_mouse_button || ""}
+              onChange={(v) => {
+                if (config.mouse_mode && v === (config.mouse_button || "middle")) {
+                  setCommandMouseError("That button is already used for Mouse mode.");
+                  return;
+                }
+                setCommandMouseError("");
+                updateConfig({ ...config, command_mouse_button: v });
+              }}
+            />
+            {config.command_mouse_button && (
+              <button
+                type="button"
+                className="text-btn"
+                onClick={() => {
+                  setCommandMouseError("");
+                  updateConfig({ ...config, command_mouse_button: "" });
+                }}
+              >
+                Remove
+              </button>
+            )}
+            {commandMouseError && <p className="err small" role="alert">{commandMouseError}</p>}
+          </Row>
+        </>
+      )}
       <p className="muted small settings-note">
         Transform shortcuts ({IS_MAC ? <><kbd>⌘1</kbd>…<kbd>⌘6</kbd></> : <><kbd>Alt+1</kbd>…<kbd>Alt+6</kbd></>}) for rewriting selected text live on the Transforms page.
       </p>
@@ -727,7 +798,14 @@ function PaneHotkeys({
       >
         <MouseButtonRecorder
           value={config.mouse_button || "middle"}
-          onChange={(v) => updateConfig({ ...config, mouse_button: v })}
+          onChange={(v) => {
+            if (config.command_mode_enabled !== false && v === config.command_mouse_button) {
+              setCommandMouseError("That button is already used for command mode.");
+              return;
+            }
+            setCommandMouseError("");
+            updateConfig({ ...config, mouse_button: v });
+          }}
         />
         {!mouseModeOk && config.mouse_mode && (
           <p className="err small" role="alert">
@@ -947,7 +1025,7 @@ function PanePrivacy({ config, updateConfig }) {
           to Groq, so this is here to read, not to switch off. */}
       <Row
         title="Data sent to Groq"
-        hint="By default, to transcribe and clean up your dictation, Bulbul sends your audio and text to Groq using your own API key. If you pick an on-device model, your audio stays on this computer; with your own server or another provider it goes only to that address. Cleanup text goes to the cleanup provider you chose. About Groq: Groq's docs say API data isn't retained or used for training by default — only brief troubleshooting/abuse logs (up to 30 days), which you can disable with Zero Data Retention in your Groq account. Policies can change, so always check Groq's latest privacy policy."
+        hint="By default, to transcribe and clean up your dictation, Bulbul sends your audio and text to Groq using your own API key. If you pick an on-device model, your audio stays on this computer; with your own server or another provider it goes only to that address. Cleanup text goes to the cleanup provider you chose, and command mode sends the text you've selected, plus your spoken instruction, to that same provider. About Groq: Groq's docs say API data isn't retained or used for training by default — only brief troubleshooting/abuse logs (up to 30 days), which you can disable with Zero Data Retention in your Groq account. Policies can change, so always check Groq's latest privacy policy."
         stack
       >
         <div className="row">
