@@ -316,7 +316,8 @@ html, body, #root {
    did nothing wrong, the recording just didn't make the cut. Same hue
    as processing/rate_limited so the visual vocabulary stays small. */
 .pill-too_short .glyph,
-.pill-silent .glyph { color: #d4a657; }
+.pill-silent .glyph,
+.pill-notice .glyph { color: #d4a657; }
 
 .pill-listening .pill-label { color: #5ec8c0; }
 .pill-processing .pill-label,
@@ -324,7 +325,8 @@ html, body, #root {
 .pill-done .pill-label { color: #5ec8c0; }
 .pill-error .pill-label { color: #d46b6b; }
 .pill-too_short .pill-label,
-.pill-silent .pill-label { color: #d4a657; }
+.pill-silent .pill-label,
+.pill-notice .pill-label { color: #d4a657; }
 
 /* Rejection pills carry a short sentence ("No audio — check mic"),
    so they need the same widened layout as rate_limited. */
@@ -342,6 +344,15 @@ html, body, #root {
   max-width: 180px;
 }
 .pill-rate_limited .pill-label { color: #d4a657; }
+
+/* Any state that shows a sentence instead of its one-word label ("Listening
+   for a command", "Working on it…", "Loading model…") grows to fit it. The
+   overlay window is 240px wide, so stay under that. */
+.expanded .pill.has-message {
+  width: auto;
+  min-width: 96px;
+  max-width: 214px;
+}
 
 .lang-dropdown {
   width: 200px;

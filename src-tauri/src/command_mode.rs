@@ -157,7 +157,7 @@ pub async fn run(
     // Bulbul's own windows have their own text routing (the scratchpad), which
     // command mode doesn't use.
     if foreground_app.as_deref().map(|a| a.to_lowercase().contains("bulbul")).unwrap_or(false) {
-        crate::emit_status(&app, "idle", Some("Command mode works in other apps.".into()));
+        crate::emit_status(&app, "idle", Some("Use it in another app".into()));
         return;
     }
 

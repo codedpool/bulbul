@@ -89,6 +89,8 @@ export default function Overlay() {
         let kind = null;
         if (/too short/i.test(payload.message)) kind = "too_short";
         else if (/(silence|no speech)/i.test(payload.message)) kind = "silent";
+        // A plain notice: shows its own text rather than a fixed label.
+        else if (/another app/i.test(payload.message)) kind = "notice";
         if (kind) setTransientReject({ kind, message: payload.message });
       }
     });
@@ -129,6 +131,7 @@ export default function Overlay() {
   // on-device model starts up, the backoff time on a rate limit).
   const showsMessage =
     effectiveState === "rate_limited" ||
+    effectiveState === "notice" ||
     ((effectiveState === "processing" || effectiveState === "listening") && !!effectiveMessage);
 
   // Close dropdown when cursor leaves or a dictation starts.
@@ -232,7 +235,7 @@ export default function Overlay() {
         )}
 
         <div
-          className={`pill pill-${effectiveState} ${dragging ? "drag-hint" : ""}`}
+          className={`pill pill-${effectiveState} ${showsMessage ? "has-message" : ""} ${dragging ? "drag-hint" : ""}`}
           onPointerDown={onPillPointerDown}
           onPointerUp={onPillPointerUp}
           // Vertical dock never shows the label text (see below) — a tall,
@@ -332,6 +335,7 @@ function renderIcon(state, hovered) {
       return <span className="glyph">!</span>;
     case "too_short":
     case "silent":
+    case "notice":
       return <span className="glyph">!</span>;
     default:
       return hovered ? <MicIcon /> : null;
