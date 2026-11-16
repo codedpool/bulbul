@@ -82,7 +82,7 @@ jobs:
           tagName: linux-dev
           releaseName: 'Bulbul Linux dev build'
           releaseBody: |
-            Rolling Linux dev build from the `v1.1-port` branch. **Not for general use** — the port is incomplete.
+            Rolling Linux dev build from the `${{ github.ref_name }}` branch (commit `${{ github.sha }}`). **Not for general use** — a testing build, things may break.
 
             ## Install (X11 or Wayland)
 
@@ -92,7 +92,11 @@ jobs:
 
             On Ubuntu/Debian the script installs the `.deb` (which pulls the tray dependencies); elsewhere it falls back to the AppImage. Every artifact is minisign-verified before install, and the script prints Wayland/GNOME setup notes when they apply.
 
-            Three formats produced per build: `.AppImage` (universal), `.deb` (Ubuntu/Debian), `.rpm` (Fedora/openSUSE). Each push to `v1.1-port` replaces this release.
+            Three formats are produced per build: `.AppImage` (universal), `.deb` (Ubuntu/Debian), `.rpm` (Fedora/openSUSE).
+
+            If Bulbul is already running, quit it before installing, otherwise the old copy keeps running. The version number inside the app can read the same across several dev builds, so check the commit above to tell builds apart.
+
+            Each dev build replaces this release. Production builds live in tagged `vX.Y.Z` releases.
           releaseDraft: false
           prerelease: true
           includeUpdaterJson: true

@@ -60,9 +60,9 @@ jobs:
           tagName: windows-dev
           releaseName: 'Bulbul Windows dev build'
           releaseBody: |
-            Rolling Windows dev build from the `v1.1.1` branch. **Not for general use** — this is a pre-release for testing the merged desktop + Android v1.1.
+            Rolling Windows dev build from the `${{ github.ref_name }}` branch (commit `${{ github.sha }}`). **Not for general use** — a testing build, things may break.
 
-            Download and run the `.exe` NSIS installer below. Each push to `v1.1.1` replaces this release. Production builds live in tagged `vX.Y.Z` releases.
+            Download and run the `.exe` NSIS installer below. Quit Bulbul first if it is running. Each dev build replaces this release. Production builds live in tagged `vX.Y.Z` releases.
           releaseDraft: false
           prerelease: true
           includeUpdaterJson: true
