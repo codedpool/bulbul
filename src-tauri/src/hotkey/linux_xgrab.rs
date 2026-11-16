@@ -47,13 +47,13 @@ pub fn available() -> bool {
 
 /// Starts the grab thread. `alive` says whether this registration is still
 /// the current one (the thread ends, releasing the grab, once it is not).
-/// `wanted` is the X button number to keep from other apps right now (2 =
-/// middle, 8 = back, 9 = forward), or `None` while Mouse mode is off.
-/// Re-read every cycle, so changing the button in Settings needs no restart.
+/// `wanted` lists the X button numbers to keep from other apps right now (2 =
+/// middle, 8 = back, 9 = forward): empty while no mouse binding is live.
+/// Re-read every cycle, so changing a button in Settings needs no restart.
 pub fn spawn<A, W>(alive: A, wanted: W)
 where
     A: Fn() -> bool + Send + 'static,
-    W: Fn() -> Option<u8> + Send + 'static,
+    W: Fn() -> Vec<u8> + Send + 'static,
 {
     if !available() {
         tracing::debug!("mouse mode: no X11 session, not reserving the button at the display level");
@@ -69,22 +69,24 @@ where
     }
 }
 
-fn run(alive: &dyn Fn() -> bool, wanted: &dyn Fn() -> Option<u8>) -> Result<(), Box<dyn std::error::Error>> {
+fn run(alive: &dyn Fn() -> bool, wanted: &dyn Fn() -> Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
     let (conn, screen_num) = RustConnection::connect(None)?;
     let root = conn.setup().roots[screen_num].root;
-    // `requested` is the button we last tried to hold (so a refused grab is
-    // not retried every cycle); `held` is the one we actually hold.
-    let mut requested: Option<u8> = None;
-    let mut held: Option<u8> = None;
+    // `requested` is the set we last tried to hold (so a refused grab is not
+    // retried every cycle); `held` is the subset we actually hold.
+    let mut requested: Vec<u8> = Vec::new();
+    let mut held: Vec<u8> = Vec::new();
 
     while alive() {
-        let want = wanted();
+        let mut want = wanted();
+        want.sort_unstable();
+        want.dedup();
         if want != requested {
-            requested = want;
-            if let Some(old) = held.take() {
+            requested = want.clone();
+            for old in held.drain(..) {
                 conn.ungrab_button(ButtonIndex::from(old), root, ModMask::ANY)?;
             }
-            if let Some(btn) = want {
+            for &btn in &want {
                 // Any modifier combination: Shift+click and friends are kept
                 // too, matching how Windows suppresses the button.
                 let grab = conn.grab_button(
@@ -101,7 +103,7 @@ fn run(alive: &dyn Fn() -> bool, wanted: &dyn Fn() -> Option<u8>) -> Result<(), 
                 match grab.check() {
                     Ok(()) => {
                         tracing::info!("mouse mode: keeping X button {btn} from other apps");
-                        held = Some(btn);
+                        held.push(btn);
                     }
                     // Another program already holds a grab on this button.
                     // Not fatal: the click still toggles dictation, it just
@@ -116,9 +118,9 @@ fn run(alive: &dyn Fn() -> bool, wanted: &dyn Fn() -> Option<u8>) -> Result<(), 
         thread::sleep(POLL);
     }
 
-    if let Some(old) = held {
+    for old in held {
         let _ = conn.ungrab_button(ButtonIndex::from(old), root, ModMask::ANY);
-        let _ = conn.flush();
     }
+    let _ = conn.flush();
     Ok(())
 }

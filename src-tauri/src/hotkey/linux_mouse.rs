@@ -222,21 +222,18 @@ fn start(tx: Sender<HotkeyEvent>) {
     // on Linux a middle click pastes the selection. On X11, also ask the
     // display to keep the button from other apps. It follows the Settings
     // value and ends with this registration.
-    super::linux_xgrab::spawn(move || is_current(generation), x_button_wanted);
+    super::linux_xgrab::spawn(move || is_current(generation), x_buttons_wanted);
 }
 
-/// The X button number Mouse mode wants kept from other apps right now, or
-/// `None` while the mode is off.
-fn x_button_wanted() -> Option<u8> {
-    if !super::mouse_mode_enabled() {
-        return None;
-    }
-    let btn = MouseButton::from_u8(super::MOUSE_BUTTON.load(Ordering::SeqCst));
-    Some(match btn {
-        MouseButton::Middle => 2,
-        MouseButton::Back => 8,
-        MouseButton::Forward => 9,
-    })
+/// The X button numbers that currently have a Bulbul binding (Mouse mode's
+/// button, and command mode's when it is set), i.e. the ones to keep from
+/// other apps. Empty while no mouse binding is live.
+fn x_buttons_wanted() -> Vec<u8> {
+    [(MouseButton::Middle, 2u8), (MouseButton::Back, 8), (MouseButton::Forward, 9)]
+        .into_iter()
+        .filter(|(btn, _)| super::should_handle_mouse_click(*btn))
+        .map(|(_, x)| x)
+        .collect()
 }
 
 struct LiveGuard;
