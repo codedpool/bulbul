@@ -46,6 +46,8 @@ mod linux_portal;
 mod linux_evdev;
 #[cfg(target_os = "linux")]
 mod linux_mouse;
+#[cfg(target_os = "linux")]
+mod linux_xgrab;
 
 /// Minimum gap between two fires of the same hotkey. Guards against
 /// auto-repeat and spurious event bursts. Used by mod.rs's per-shortcut
