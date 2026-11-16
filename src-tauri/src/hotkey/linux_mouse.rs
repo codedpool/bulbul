@@ -34,7 +34,9 @@
 //!   hotkey/transform edits don't churn grabs.
 //!
 //! If the mirror can't be built or the grab fails, it falls back to
-//! observing clicks without suppressing them.
+//! observing clicks without suppressing them. On an X11 session
+//! `linux_xgrab.rs` additionally keeps the button from other apps whatever
+//! the pointer type, which covers exactly those fallback cases.
 
 use std::collections::HashSet;
 use std::os::fd::{AsRawFd, RawFd};
@@ -214,6 +216,27 @@ fn start(tx: Sender<HotkeyEvent>) {
         }
     }
     tracing::info!("evdev mouse-mode watcher starting on {count} pointing device(s)");
+
+    // Pointers that can't be taken over (touchpads, a VM's absolute pointer)
+    // only get watched above, so the desktop would still act on the click —
+    // on Linux a middle click pastes the selection. On X11, also ask the
+    // display to keep the button from other apps. It follows the Settings
+    // value and ends with this registration.
+    super::linux_xgrab::spawn(move || is_current(generation), x_button_wanted);
+}
+
+/// The X button number Mouse mode wants kept from other apps right now, or
+/// `None` while the mode is off.
+fn x_button_wanted() -> Option<u8> {
+    if !super::mouse_mode_enabled() {
+        return None;
+    }
+    let btn = MouseButton::from_u8(super::MOUSE_BUTTON.load(Ordering::SeqCst));
+    Some(match btn {
+        MouseButton::Middle => 2,
+        MouseButton::Back => 8,
+        MouseButton::Forward => 9,
+    })
 }
 
 struct LiveGuard;
