@@ -208,6 +208,7 @@ class BulbulForegroundService : Service() {
     /// alone.
     private fun processCommandAudio(wav: ByteArray) {
         val appPkg = pendingAppPackage
+        bubbleView?.showProcessing()
         thread(name = "BulbulCommand", isDaemon = true) {
             val started = System.currentTimeMillis()
             val apiKey = getApiKey()
@@ -216,26 +217,31 @@ class BulbulForegroundService : Service() {
             val field = TextInjector.readField()
             if (field == null) {
                 toast("Bulbul: tap into a text field first")
+                bubbleView?.showFailed()
                 return@thread
             }
             val instruction = transcribe(wav, apiKey)?.trim().orEmpty()
             if (instruction.isEmpty()) {
                 toast("Bulbul: couldn't hear a command")
+                bubbleView?.showFailed()
                 return@thread
             }
             val selected = field.selectedText
             if (selected != null && selected.length > Command.MAX_SELECTION_CHARS) {
                 toast("Bulbul: that selection is too long for a command")
+                bubbleView?.showFailed()
                 return@thread
             }
             toast("Bulbul: working on it…")
             val result = Command.run(this, apiKey, instruction, selected)
             if (result == null) {
                 toast("Bulbul: the command didn't work, and your text wasn't changed")
+                bubbleView?.showFailed()
                 return@thread
             }
             val injected = TextInjector.replaceSelection(field, result)
             if (!injected) clipboardFallback(result)
+            bubbleView?.showDone()
             val durationMs = wavDurationMs(wav)
             recordHistory(instruction, result, "command", durationMs, 0, friendlyAppName(appPkg))
             Log.i(TAG, "command done in ${System.currentTimeMillis() - started} ms (selection=${selected?.length ?: 0} chars, injected=$injected)")
@@ -253,6 +259,7 @@ class BulbulForegroundService : Service() {
     /// the audio itself.
     private fun processCapturedAudio(wav: ByteArray) {
         val appPkg = pendingAppPackage
+        bubbleView?.showProcessing()
         thread(name = "BulbulTranscribe", isDaemon = true) {
             val apiKey = getApiKey()
             val transcript = transcribe(wav, apiKey)
@@ -306,9 +313,11 @@ class BulbulForegroundService : Service() {
                 // the words on the clipboard so they're one long-press
                 // away instead of silently lost.
                 if (!injected) clipboardFallback(finalText)
+                if (finalText.isBlank()) bubbleView?.showFailed() else bubbleView?.showDone()
             } else {
                 Log.w(TAG, "transcription failed; saving WAV instead")
                 writeRecording(wav)
+                bubbleView?.showFailed()
             }
         }
     }
@@ -925,6 +934,25 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     private var pulse = 0f
     private var pulser: android.animation.ValueAnimator? = null
 
+    /// What the border shows once recording has stopped: an amber segment
+    /// running round the edge while the words are being worked out, a green
+    /// blink when they land, a solid red border when it failed. The icon
+    /// itself never changes, so the bubble stays glanceable.
+    private enum class After { NONE, PROCESSING, DONE, FAILED }
+    private var after = After.NONE
+    private var sweep = 0f
+    private var flash = 0f
+    private var afterAnimator: android.animation.ValueAnimator? = null
+    private val statePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 6f
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val arcPath = android.graphics.Path()
+    private val arcMeasure = android.graphics.PathMeasure()
+    private val arcSegment = android.graphics.Path()
+    private val clearAfter = Runnable { setAfterNow(After.NONE) }
+
     init {
         setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
@@ -972,6 +1000,7 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     /// thread (the recorder lives off the main thread).
     fun setRecording(active: Boolean, command: Boolean = false) {
         post {
+            if (active) setAfterNow(After.NONE)
             recording = active
             // A different colour while listening for a command, so it's clear
             // that this isn't a dictation.
@@ -987,6 +1016,43 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
             }
             invalidate()
         }
+    }
+
+    /// Border states after recording. Safe from any thread.
+    fun showProcessing() { post { setAfterNow(After.PROCESSING) } }
+    fun showDone() { post { setAfterNow(After.DONE) } }
+    fun showFailed() { post { setAfterNow(After.FAILED) } }
+
+    /// Must run on the main thread.
+    private fun setAfterNow(state: After) {
+        removeCallbacks(clearAfter)
+        afterAnimator?.cancel(); afterAnimator = null
+        after = state
+        when (state) {
+            After.PROCESSING -> {
+                afterAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 1300
+                    repeatCount = android.animation.ValueAnimator.INFINITE
+                    interpolator = android.view.animation.LinearInterpolator()
+                    addUpdateListener { sweep = it.animatedValue as Float; invalidate() }
+                    start()
+                }
+                // Never leave an amber ring running forever if a result
+                // never arrives.
+                postDelayed(clearAfter, 60_000)
+            }
+            After.DONE -> {
+                afterAnimator = android.animation.ValueAnimator.ofFloat(1f, 0f).apply {
+                    duration = 700
+                    addUpdateListener { flash = it.animatedValue as Float; invalidate() }
+                    start()
+                }
+                postDelayed(clearAfter, 700)
+            }
+            After.FAILED -> postDelayed(clearAfter, 10_000)
+            After.NONE -> {}
+        }
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -1023,6 +1089,48 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
             )
             canvas.drawRoundRect(rr, radius + grow, radius + grow, pulsePaint)
         }
+
+        when (after) {
+            After.PROCESSING -> {
+                // An amber segment (about a quarter of the edge) runs round
+                // the tile, over a faint full ring so the path reads.
+                arcPath.rewind()
+                arcPath.addRoundRect(tileRect, radius, radius, android.graphics.Path.Direction.CW)
+                arcMeasure.setPath(arcPath, true)
+                val len = arcMeasure.length
+                statePaint.color = COLOR_PROCESSING
+                statePaint.alpha = 50
+                canvas.drawPath(arcPath, statePaint)
+                statePaint.alpha = 255
+                val start = sweep * len
+                val seg = len * 0.25f
+                arcSegment.rewind()
+                if (start + seg <= len) {
+                    arcMeasure.getSegment(start, start + seg, arcSegment, true)
+                } else {
+                    arcMeasure.getSegment(start, len, arcSegment, true)
+                    arcMeasure.getSegment(0f, start + seg - len, arcSegment, true)
+                }
+                canvas.drawPath(arcSegment, statePaint)
+            }
+            After.DONE -> {
+                statePaint.color = COLOR_DONE
+                statePaint.alpha = (flash * 255).toInt().coerceIn(0, 255)
+                canvas.drawRoundRect(tileRect, radius, radius, statePaint)
+            }
+            After.FAILED -> {
+                statePaint.color = COLOR_RECORDING
+                statePaint.alpha = 255
+                canvas.drawRoundRect(tileRect, radius, radius, statePaint)
+            }
+            After.NONE -> {}
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(clearAfter)
+        afterAnimator?.cancel()
+        super.onDetachedFromWindow()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -1092,6 +1200,9 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
         private val COLOR_RECORDING = Color.parseColor("#EF4444")
         // Teal (the app's accent) while a command is being spoken.
         private val COLOR_COMMAND = Color.parseColor("#2DD4BF")
+        // Amber while the words are being worked out, green when they land.
+        private val COLOR_PROCESSING = Color.parseColor("#F5A524")
+        private val COLOR_DONE = Color.parseColor("#22C55E")
     }
 }
 
