@@ -1003,6 +1003,7 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup, stagedUpdate, inst
       <Row title="Setup wizard" hint="Re-do the first-run flow." stack>
         <div className="row">
           <button onClick={onResetSetup}>Re-run setup wizard</button>
+          <button onClick={() => openUrl("https://bulbultypes.xyz/sponsor")}>Sponsor</button>
         </div>
       </Row>
       <Row
@@ -1023,9 +1024,6 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup, stagedUpdate, inst
           </button>
           <button onClick={() => openUrl("https://bulbultypes.xyz")}>
             Website
-          </button>
-          <button onClick={() => openUrl("https://bulbultypes.xyz/sponsor")}>
-            Sponsor
           </button>
         </div>
       </Row>
