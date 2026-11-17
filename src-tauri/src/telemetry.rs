@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 Romanch Roshan Singh
 
-//! Opt-in anonymous telemetry, posted directly to a Supabase REST endpoint.
+//! Opt-in anonymous telemetry, posted to bulbultypes.xyz.
 //!
 //! Design constraints:
 //! - **Opt-in only.** Caller checks `cfg.telemetry_enabled` before calling
@@ -18,10 +18,10 @@
 //! - **Anon ID is durable and local.** A v4 UUID is generated on first run
 //!   and persisted to `%APPDATA%\Bulbul\telemetry_id`. Resetting the file
 //!   gives the user a fresh identity.
-//! - **The publishable key in the binary is safe by design.** The Supabase
-//!   `events` table has Row-Level Security enabled with an INSERT-only
-//!   policy for the `anon` role; an attacker who extracts the key can only
-//!   add rows, never read or modify others'.
+//! - **No database key in the binary.** Events go to a website endpoint that
+//!   validates them, rate-limits per caller and writes with a key that only
+//!   the server holds. (Older builds posted straight to the database with a
+//!   publishable key; that path is closed once those builds age out.)
 
 use crate::config;
 use parking_lot::Mutex;
@@ -32,14 +32,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use uuid::Uuid;
 
-/// Supabase project URL. Hardcoded — this is public infrastructure, not a
-/// secret. The endpoint is protected by RLS, not by hiding the URL.
-const PROJECT_URL: &str = "https://mpzuaarkdhdykpbkgyrs.supabase.co";
-
-/// Supabase publishable (anon) key. Safe to ship in clients: the project's
-/// `events` table has INSERT-only RLS for the `anon` role, so this key
-/// cannot read or modify existing data.
-const PUBLISHABLE_KEY: &str = "sb_publishable_rGLwve2RSBeHG7mZRXYgSw_YUeJcF0x";
+/// Where events are sent. Public by nature; the endpoint checks every event.
+const ENDPOINT: &str = "https://bulbultypes.xyz/api/telemetry";
 
 /// Maximum events held in the in-memory buffer between flushes. Hit this
 /// and we flush immediately. Set low because each event is small and we'd
@@ -57,7 +51,7 @@ const BUFFER_CAP: usize = 100;
 /// dashboard reasonably fresh.
 const FLUSH_PERIOD: Duration = Duration::from_secs(30);
 
-/// Per-request timeout. Telemetry is best-effort — if Supabase is slow,
+/// Per-request timeout. Telemetry is best-effort — if the endpoint is slow,
 /// the request gives up rather than holding memory.
 const POST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -180,13 +174,8 @@ fn spawn_flush() {
 }
 
 async fn post(events: &[Event]) -> anyhow::Result<()> {
-    let url = format!("{PROJECT_URL}/rest/v1/events");
     let resp = client()
-        .post(&url)
-        .header("apikey", PUBLISHABLE_KEY)
-        .header("Authorization", format!("Bearer {PUBLISHABLE_KEY}"))
-        .header("Content-Type", "application/json")
-        .header("Prefer", "return=minimal")
+        .post(ENDPOINT)
         .json(events)
         .timeout(POST_TIMEOUT)
         .send()

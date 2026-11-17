@@ -27,6 +27,7 @@
 //     bridge is in place)
 
 mod config;
+mod feedback;
 mod local_models;
 
 use config::Config;
@@ -1758,6 +1759,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            feedback::send_feedback,
             // Startup
             get_config,
             save_config,

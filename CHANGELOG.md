@@ -17,6 +17,26 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 - Groq stays the default. Existing setups are untouched.
 
+## [1.2.3]
+
+### Added
+
+- **Write to me** — a note button beside Sponsor lets you send the developer a message with your name, and your email only if you choose to share it. It works on desktop and Android and does not depend on the analytics setting.
+- **A Sponsor button** in the app, and on the About page next to the other support buttons, plus GitHub funding links.
+- **Android bubble states** — the bubble's border now shows what Bulbul is doing: a red pulse while recording, an amber sweep while processing, a green flash when the text lands, and a solid red border with a retry arrow when it failed.
+- **Retry a failed dictation on Android** — tap the red bubble to send the same recording again without speaking twice.
+- **Also copy to clipboard on Android** — every dictation can be copied too, with a short "Copied" toast, so it is one paste away if it landed in the wrong place. On by default; switch it off in Settings.
+
+### Fixed
+
+- **Linux: Mouse mode could freeze the pointer.** The device grab now fails safe and always lets go.
+- **Linux (X11): middle-click no longer also pastes your last selection** while Mouse mode owns that button.
+
+### Changed
+
+- **Android no longer saves failed recordings to disk.** The audio for a retry is held in memory only and is dropped after about ten seconds, when you start another recording, or when the service stops. Recordings saved by earlier versions are removed.
+- **Analytics are sent through bulbultypes.xyz** instead of straight to the database, where every event is validated and rate-limited. The app no longer contains a database key. Analytics remain optional and anonymous.
+
 ## [1.2.2] — 2026-09-26
 
 ### Added
@@ -219,7 +239,8 @@ The first public release. Everything below is in the box.
 - **Local SQLite** — dictation history, dictionary, snippets, transforms, notes all in `%APPDATA%\Bulbul\bulbul.db`
 - **Anonymous usage telemetry** — opt-out — counts, durations, error categories, mode and language. Never your transcripts, audio, dictionary, or the foreground app name. Toggleable in Settings → Privacy
 
-[Unreleased]: https://github.com/codedpool/bulbul/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/codedpool/bulbul/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/codedpool/bulbul/releases/tag/v1.2.3
 [1.2.2]: https://github.com/codedpool/bulbul/releases/tag/v1.2.2
 [1.2.1]: https://github.com/codedpool/bulbul/releases/tag/v1.2.1
 [1.2.0]: https://github.com/codedpool/bulbul/releases/tag/v1.2.0
