@@ -15,6 +15,7 @@ mod mouse_hook;
 mod model_config;
 #[cfg(target_os = "linux")]
 mod linux_env;
+mod feedback;
 mod telemetry;
 mod uia;
 mod window_info;
@@ -2749,6 +2750,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            feedback::send_feedback,
             get_linux_support_info,
             check_accessibility_status_mac,
             prime_accessibility_mac,

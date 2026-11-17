@@ -27,6 +27,7 @@
 //     bridge is in place)
 
 mod config;
+mod feedback;
 
 use config::Config;
 use serde_json::{json, Value};
@@ -1691,6 +1692,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            feedback::send_feedback,
             // Startup
             get_config,
             save_config,

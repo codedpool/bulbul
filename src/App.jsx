@@ -17,6 +17,7 @@ import ScratchpadView from "./views/ScratchpadView.jsx";
 import bulbulMark from "./assets/bulbul-mark.png";
 import OnboardingWizard from "./onboarding/OnboardingWizard.jsx";
 import TooltipProvider from "./components/TooltipProvider.jsx";
+import FeedbackDialog from "./FeedbackDialog.jsx";
 import LinuxSupportBanner from "./LinuxSupportBanner.jsx";
 import HotkeyHealthBanner from "./HotkeyHealthBanner.jsx";
 import { applyTheme } from "./theme.js";
@@ -30,6 +31,15 @@ function HeartIcon({ size = 14 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden style={{ display: "block", overflow: "visible" }}>
       <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+    </svg>
+  );
+}
+
+function NoteIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ display: "block" }}>
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.2 3.6a.5.5 0 0 1-.8-.4V16h-.5A1.5 1.5 0 0 1 4 14.5z" />
+      <path d="M8 9h8M8 12h5" />
     </svg>
   );
 }
@@ -126,6 +136,7 @@ function App() {
     IS_MAC ? null : true,
   );
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false); // "Write to me" dialog
   const [status, setStatus] = useState({ state: "idle" });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -458,6 +469,14 @@ function App() {
               <HeartIcon size={22} />
             </button>
             <button
+              className="m-icon-btn m-note-btn"
+              aria-label="Write to the developer"
+              title="Write to me"
+              onClick={() => setFeedbackOpen(true)}
+            >
+              <NoteIcon size={22} />
+            </button>
+            <button
               className="m-icon-btn"
               aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
               title={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
@@ -521,6 +540,10 @@ function App() {
                   <HeartIcon size={13} />
                   <span>Sponsor</span>
                 </button>
+                <button type="button" className="sponsor-pill note-pill" onClick={() => setFeedbackOpen(true)}>
+                  <NoteIcon size={13} />
+                  <span>Write to me</span>
+                </button>
                 <span className="muted small">v1.2.2 · GPL-3.0</span>
               </div>
             </div>
@@ -539,6 +562,9 @@ function App() {
         section={settingsSection}
         onSectionChange={setSettingsSection}
       />
+      {feedbackOpen && (
+        <FeedbackDialog defaultName={config.display_name || ""} onClose={() => setFeedbackOpen(false)} />
+      )}
       <TooltipProvider />
       </>
     );
@@ -554,6 +580,7 @@ function App() {
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           resolvedTheme={resolvedTheme}
           onToggleTheme={() => setThemePref(resolvedTheme === "dark" ? "light" : "dark")}
+          onOpenFeedback={() => setFeedbackOpen(true)}
         />
         {IS_MAC && (
           <>
@@ -571,6 +598,14 @@ function App() {
           {/* Theme toggle lives at the far top-right on mac, mirroring the
               Win/Linux titlebar placement — independent of sidebar state
               so it's always reachable, collapsed or not. */}
+          <button
+            className="sponsor-pill note-pill mac-floating-note"
+            onClick={() => setFeedbackOpen(true)}
+            title="Write to the developer"
+            aria-label="Write to the developer"
+          >
+            <NoteIcon size={13} />
+          </button>
           <button
             className="sponsor-pill mac-floating-sponsor"
             onClick={openSponsor}
@@ -732,12 +767,15 @@ function App() {
       installUpdate={installUpdate}
       installing={installing}
     />
+    {feedbackOpen && (
+      <FeedbackDialog defaultName={config.display_name || ""} onClose={() => setFeedbackOpen(false)} />
+    )}
     <TooltipProvider />
     </>
   );
 }
 
-function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }) {
+function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme, onOpenFeedback }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const win = getCurrentWindow();
 
@@ -784,6 +822,16 @@ function TitleBar({ sidebarOpen, onToggleSidebar, resolvedTheme, onToggleTheme }
           >
             <HeartIcon size={13} />
             <span>Sponsor</span>
+          </button>
+        )}
+        {!IS_MAC && (
+          <button
+            className="sponsor-pill note-pill tb-note"
+            onClick={onOpenFeedback}
+            title="Write to the developer"
+            aria-label="Write to the developer"
+          >
+            <NoteIcon size={13} />
           </button>
         )}
         <button

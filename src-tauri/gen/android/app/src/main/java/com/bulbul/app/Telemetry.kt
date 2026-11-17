@@ -5,7 +5,7 @@
 //
 // The Android dictation pipeline lives in Kotlin (the foreground service),
 // not in the Rust mobile.rs that only backs the dashboard, so telemetry is
-// posted from here. It writes to the SAME Supabase events table as desktop
+// posted from here. It sends to the SAME bulbultypes.xyz endpoint as desktop
 // with the SAME event shape, so both platforms land in one stream.
 //
 // Rules mirror telemetry.rs exactly:
@@ -35,11 +35,9 @@ import kotlin.concurrent.thread
 object Telemetry {
     private const val TAG = "BulbulTelemetry"
 
-    // Public infrastructure, not secrets — the events table is INSERT-only
-    // RLS for the anon role, so this key can only add rows. Same values as
-    // telemetry.rs so Android events join the desktop stream.
-    private const val PROJECT_URL = "https://mpzuaarkdhdykpbkgyrs.supabase.co"
-    private const val PUBLISHABLE_KEY = "sb_publishable_rGLwve2RSBeHG7mZRXYgSw_YUeJcF0x"
+    // Same endpoint as telemetry.rs. It validates and rate-limits every event;
+    // the app holds no database key.
+    private const val ENDPOINT = "https://bulbultypes.xyz/api/telemetry"
 
     private const val PREFS = "bulbul_telemetry"
     private const val ANON_ID = "anon_id"
@@ -61,15 +59,12 @@ object Telemetry {
                     put("props", props)
                 }
                 val body = JSONArray().put(event).toString()
-                val conn = (URL("$PROJECT_URL/rest/v1/events").openConnection() as HttpURLConnection).apply {
+                val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     doOutput = true
                     connectTimeout = 10_000
                     readTimeout = 10_000
-                    setRequestProperty("apikey", PUBLISHABLE_KEY)
-                    setRequestProperty("Authorization", "Bearer $PUBLISHABLE_KEY")
                     setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Prefer", "return=minimal")
                 }
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val code = conn.responseCode
