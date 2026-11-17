@@ -65,7 +65,7 @@ export default function FeedbackDialog({ defaultName = "", onClose }) {
             <h2 id="fb-title" className="fb-title">Message sent</h2>
             <p className="fb-text">
               Thank you.{" "}
-              {shareEmail ? "If it needs an answer, you'll hear back by email." : "It's been read by a person, not a bot."}
+              {shareEmail ? "I'll reply by email if your message needs an answer." : "I read every message, though without your email I can't reply."}
             </p>
             <div className="fb-actions">
               <button type="button" className="fb-primary" onClick={onClose} autoFocus>
@@ -108,11 +108,11 @@ export default function FeedbackDialog({ defaultName = "", onClose }) {
                 checked={shareEmail}
                 onChange={(e) => setShareEmail(e.target.checked)}
               />
-              <span>Include my email so you can reply</span>
+              <span>Share your email so I can reply</span>
             </label>
             {shareEmail ? (
               <>
-                <label htmlFor="fb-email" className="fb-label">Email</label>
+                <label htmlFor="fb-email" className="fb-label">Your email</label>
                 <input
                   id="fb-email"
                   type="email"
@@ -122,9 +122,10 @@ export default function FeedbackDialog({ defaultName = "", onClose }) {
                   autoComplete="email"
                   onChange={(e) => setEmail(e.target.value)}
                 />
+                <p className="fb-hint">I'll only use it to reply to you.</p>
               </>
             ) : (
-              <p className="fb-hint">Without an email there's no way to reply.</p>
+              <p className="fb-hint">Without your email, I can't reply.</p>
             )}
 
             {error && (

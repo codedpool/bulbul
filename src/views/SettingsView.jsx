@@ -1024,6 +1024,9 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup, stagedUpdate, inst
           <button onClick={() => openUrl("https://bulbultypes.xyz")}>
             Website
           </button>
+          <button onClick={() => openUrl("https://bulbultypes.xyz/sponsor")}>
+            Sponsor
+          </button>
         </div>
       </Row>
       <p className="muted small settings-note">
