@@ -876,6 +876,14 @@ function PanePersonalization({ config, updateConfig }) {
         checked={config.personalize_cleanup === true}
         onChange={(v) => updateConfig({ ...config, personalize_cleanup: v })}
       />
+      {IS_ANDROID && (
+        <ToggleRow
+          title="Also copy to clipboard"
+          hint="Every dictation is copied too, so it is one paste away if it landed in the wrong place. It replaces whatever you had copied."
+          checked={config.copy_result_to_clipboard !== false}
+          onChange={(v) => updateConfig({ ...config, copy_result_to_clipboard: v })}
+        />
+      )}
       <ToggleRow
         title="Learn from my corrections"
         hint="When you edit what Bulbul typed, it remembers and applies the same fix next time. Password fields are always skipped."

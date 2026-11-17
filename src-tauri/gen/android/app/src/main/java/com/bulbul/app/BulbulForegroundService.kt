@@ -229,6 +229,7 @@ class BulbulForegroundService : Service() {
                 // the words on the clipboard so they're one long-press
                 // away instead of silently lost.
                 if (!injected) clipboardFallback(finalText)
+                else if (BulbulConfig.copyResultToClipboard(this)) copyQuietly(finalText)
                 if (finalText.isBlank()) bubbleView?.showFailed() else bubbleView?.showDone()
             } else {
                 Log.w(TAG, "transcription failed; saving WAV instead")
@@ -319,6 +320,28 @@ class BulbulForegroundService : Service() {
         val byteRate = java.nio.ByteBuffer.wrap(wav, 28, 4)
             .order(java.nio.ByteOrder.LITTLE_ENDIAN).int
         return if (byteRate > 0) (wav.size - 44) * 1000L / byteRate else 0
+    }
+
+    /// The "also on the clipboard" copy: the text already landed in the field,
+    /// so this is a quiet safety net — one short toast, no instructions. Marked
+    /// sensitive so Android 13+ doesn't flash the text in its clipboard preview.
+    private fun copyQuietly(text: String) {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            val clip = android.content.ClipData.newPlainText("Bulbul", text)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                clip.description.extras = android.os.PersistableBundle().apply {
+                    putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+            }
+            cm.setPrimaryClip(clip)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(this, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "copy to clipboard failed", t)
+        }
     }
 
     private fun clipboardFallback(text: String) {
