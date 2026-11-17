@@ -93,6 +93,7 @@ class BulbulForegroundService : Service() {
         createNotificationChannel()
         startInForeground()
         recorder = AudioRecorder(this)
+        purgeSavedRecordings()
         showBubble()
         spawnModelConfigRefresh()
     }
@@ -119,10 +120,18 @@ class BulbulForegroundService : Service() {
     /// Tap-to-toggle: first tap starts the recorder, second tap stops
     /// it, transcribes via Groq, and injects the result into the
     /// focused field. If Groq fails for any reason (no API key, no
-    /// network, server error) we fall back to writing the WAV to
-    /// filesDir/recordings/ so the user's audio isn't lost.
+    /// network, server error) the bubble turns red and the audio is held in
+    /// memory so a tap can retry it.
     private fun onBubbleTap() {
         val r = recorder ?: return
+        // Tapping a failed bubble sends the same audio again, so nobody has
+        // to say it twice. The audio lives only in memory (see retryWav).
+        val saved = retryWav
+        if (!r.isRecording() && saved != null) {
+            retryWav = null
+            processCapturedAudio(saved)
+            return
+        }
         if (r.isRecording()) {
             val wav = r.stop()
             bubbleView?.setRecording(false)
@@ -130,6 +139,7 @@ class BulbulForegroundService : Service() {
         } else {
             val ok = r.start()
             if (ok) {
+                retryWav = null
                 pendingAppPackage = BulbulAccessibilityService.targetPackage
                 bubbleView?.setRecording(true)
                 restoreNormalNotification()
@@ -150,6 +160,7 @@ class BulbulForegroundService : Service() {
         val r = recorder ?: return
         if (!r.isRecording()) {
             if (r.start()) {
+                retryWav = null
                 pendingAppPackage = BulbulAccessibilityService.targetPackage
                 bubbleView?.setRecording(true)
                 restoreNormalNotification()
@@ -232,8 +243,8 @@ class BulbulForegroundService : Service() {
                 else if (BulbulConfig.copyResultToClipboard(this)) copyQuietly(finalText)
                 if (finalText.isBlank()) bubbleView?.showFailed() else bubbleView?.showDone()
             } else {
-                Log.w(TAG, "transcription failed; saving WAV instead")
-                writeRecording(wav)
+                Log.w(TAG, "transcription failed; keeping the audio in memory for a retry")
+                holdForRetry(wav)
                 bubbleView?.showFailed()
             }
         }
@@ -458,14 +469,27 @@ class BulbulForegroundService : Service() {
 
     private var cachedDataDir: File? = null
 
-    private fun writeRecording(wav: ByteArray) {
+    /// The last recording that failed to transcribe, held in memory only so a
+    /// tap on the red bubble can send it again. Never written to disk: it is
+    /// dropped when the bubble returns to idle, when a new recording starts,
+    /// after a retry, or when the service dies.
+    @Volatile private var retryWav: ByteArray? = null
+
+    private fun holdForRetry(wav: ByteArray) {
+        retryWav = wav
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (retryWav === wav) retryWav = null
+        }, RETRY_WINDOW_MS)
+    }
+
+    /// Earlier versions saved failed recordings to filesDir/recordings/ and
+    /// never removed them. Bulbul keeps no audio on the phone, so clear any
+    /// left over.
+    private fun purgeSavedRecordings() {
         try {
-            val dir = File(filesDir, "recordings").apply { mkdirs() }
-            val file = File(dir, "${System.currentTimeMillis()}.wav")
-            FileOutputStream(file).use { it.write(wav) }
-            Log.i(TAG, "wrote ${wav.size} bytes to ${file.absolutePath}")
+            File(filesDir, "recordings").deleteRecursively()
         } catch (t: Throwable) {
-            Log.w(TAG, "writing recording failed", t)
+            Log.w(TAG, "clearing old recordings failed", t)
         }
     }
 
@@ -757,6 +781,9 @@ class BulbulForegroundService : Service() {
         private const val CHANNEL_ID = "bulbul.bubble"
         private const val NOTIFICATION_ID = 1001
         private const val NORMAL_TEXT = "Tap the bubble to dictate"
+        // How long a failed recording stays retryable. Matches how long the
+        // bubble shows its red failed border.
+        private const val RETRY_WINDOW_MS = 10_000L
         private const val BUBBLE_SIZE_DP = 56
         private const val SNOOZE_TARGET_DP = 68
         // Mirrors MOBILE_CONFIG_FILE on the Rust side — same file,
@@ -859,6 +886,12 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
     private val arcPath = android.graphics.Path()
     private val arcMeasure = android.graphics.PathMeasure()
     private val arcSegment = android.graphics.Path()
+    private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val arrowRect = android.graphics.RectF()
+    private val arrowPath = android.graphics.Path()
     private val clearAfter = Runnable { setAfterNow(After.NONE) }
 
     init {
@@ -967,7 +1000,7 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
         // launcher foreground uses, so the bubble is literally the app
         // icon.
         val bmp = birdBitmap
-        if (bmp != null && bmp.width > 0 && bmp.height > 0) {
+        if (bmp != null && bmp.width > 0 && bmp.height > 0 && after != After.FAILED) {
             val maxSide = tileRect.width() * BIRD_TILE_FRACTION
             val scale = maxSide / maxOf(bmp.width, bmp.height)
             val hw = bmp.width * scale / 2f
@@ -1022,9 +1055,43 @@ private class BubbleView(context: Context, private val cb: BubbleCallbacks) : Vi
                 statePaint.color = COLOR_RECORDING
                 statePaint.alpha = 255
                 canvas.drawRoundRect(tileRect, radius, radius, statePaint)
+                drawRetryArrow(canvas)
             }
             After.NONE -> {}
         }
+    }
+
+    /// A circular retry arrow in place of the bird: a 280-degree arc with an
+    /// arrowhead at its open end. Tapping the bubble in this state re-sends
+    /// the recording.
+    private fun drawRetryArrow(canvas: Canvas) {
+        val cx = tileRect.centerX()
+        val cy = tileRect.centerY()
+        val r = tileRect.width() * 0.22f
+        arrowPaint.strokeWidth = tileRect.width() * 0.075f
+        arrowPaint.style = Paint.Style.STROKE
+        arrowRect.set(cx - r, cy - r, cx + r, cy + r)
+        // Arc starts at the top right and sweeps clockwise, leaving a gap.
+        val startAngle = -60f
+        val sweepAngle = 280f
+        canvas.drawArc(arrowRect, startAngle, sweepAngle, false, arrowPaint)
+        // Arrowhead at the end of the sweep, pointing along the direction of travel.
+        val endRad = Math.toRadians((startAngle + sweepAngle).toDouble())
+        val ex = cx + r * Math.cos(endRad).toFloat()
+        val ey = cy + r * Math.sin(endRad).toFloat()
+        // Tangent direction for a clockwise sweep at this angle.
+        val tx = -Math.sin(endRad).toFloat()
+        val ty = Math.cos(endRad).toFloat()
+        val nx = -ty
+        val ny = tx
+        val head = r * 0.7f
+        arrowPath.rewind()
+        arrowPath.moveTo(ex + tx * head, ey + ty * head)
+        arrowPath.lineTo(ex + nx * head * 0.75f, ey + ny * head * 0.75f)
+        arrowPath.lineTo(ex - nx * head * 0.75f, ey - ny * head * 0.75f)
+        arrowPath.close()
+        arrowPaint.style = Paint.Style.FILL
+        canvas.drawPath(arrowPath, arrowPaint)
     }
 
     override fun onDetachedFromWindow() {
