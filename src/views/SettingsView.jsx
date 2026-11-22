@@ -880,7 +880,7 @@ function PanePersonalization({ config, updateConfig }) {
         <ToggleRow
           title="Also copy to clipboard"
           hint="Every dictation is copied too, so it is one paste away if it landed in the wrong place. It replaces whatever you had copied."
-          checked={config.copy_result_to_clipboard !== false}
+          checked={config.copy_result_to_clipboard === true}
           onChange={(v) => updateConfig({ ...config, copy_result_to_clipboard: v })}
         />
       )}

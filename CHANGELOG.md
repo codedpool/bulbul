@@ -12,7 +12,7 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 - **A Sponsor button** in the app, and on the About page next to the other support buttons, plus GitHub funding links.
 - **Android bubble states** — the bubble's border now shows what Bulbul is doing: a red pulse while recording, an amber sweep while processing, a green flash when the text lands, and a solid red border with a retry arrow when it failed.
 - **Retry a failed dictation on Android** — tap the red bubble to send the same recording again without speaking twice.
-- **Also copy to clipboard on Android** — every dictation can be copied too, with a short "Copied" toast, so it is one paste away if it landed in the wrong place. On by default; switch it off in Settings.
+- **Also copy to clipboard on Android** — every dictation can be copied too, with a short "Copied" toast, so it is one paste away if it landed in the wrong place. Off by default; switch it on in Settings.
 
 ### Fixed
 

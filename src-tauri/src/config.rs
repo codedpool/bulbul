@@ -257,7 +257,7 @@ pub struct Config {
     pub learn_corrections: bool,
 
     /// Android: also put every finished dictation on the clipboard, so it is
-    /// one paste away if it landed somewhere unexpected. On by default.
+    /// one paste away if it landed somewhere unexpected. Off by default.
     #[serde(default = "default_copy_result_to_clipboard")]
     pub copy_result_to_clipboard: bool,
 
@@ -386,7 +386,7 @@ fn default_language() -> String {
 fn default_style_enabled() -> bool { true }
 fn default_personalize_cleanup() -> bool { false }
 fn default_learn_corrections() -> bool { true }
-fn default_copy_result_to_clipboard() -> bool { true }
+fn default_copy_result_to_clipboard() -> bool { false }
 fn default_theme() -> String { "light".to_string() }
 fn default_telemetry_enabled() -> bool { true }
 fn default_overlay_opacity() -> f32 { 0.65 }

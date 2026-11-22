@@ -256,9 +256,9 @@ object BulbulConfig {
     fun mode(context: Context): String =
         read(context)?.optString("mode", "clean").orEmpty().ifBlank { "clean" }
 
-    /// Also copy every finished dictation to the clipboard (Settings). Default on.
+    /// Also copy every finished dictation to the clipboard (Settings). Default off.
     fun copyResultToClipboard(context: Context): Boolean =
-        read(context)?.optBoolean("copy_result_to_clipboard", true) ?: true
+        read(context)?.optBoolean("copy_result_to_clipboard", false) ?: false
 
     /// Whether to inject recent raw→cleaned examples from the same app into the
     /// cleanup prompt (few-shot personalization). Default OFF on all platforms.
