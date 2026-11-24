@@ -283,6 +283,12 @@ pub struct Config {
     #[serde(default)]
     pub linux_hotkey_migrated: bool,
 
+    /// One-shot marker: true once the old command-mode default (Shift+Alt+C)
+    /// has been moved to the current default on Windows/macOS, so a user who
+    /// deliberately picks Shift+Alt+C afterwards keeps it.
+    #[serde(default)]
+    pub command_hotkey_migrated: bool,
+
     #[serde(default = "default_open_dashboard")]
     pub open_dashboard_on_launch: bool,
 
@@ -500,11 +506,32 @@ fn default_tap_to_talk() -> bool {
 fn default_command_mode_enabled() -> bool {
     true
 }
+/// Command mode's default hotkey, and the one it takes instead when the
+/// first is already the person's dictation hotkey. Windows and macOS keep the
+/// same short two-modifier shape as dictation's Ctrl+Win: Alt+Win, or Ctrl+Win
+/// if dictation was moved onto Alt+Win. Linux needs a real key (Super belongs
+/// to the compositor, and evdev and the portal can't watch a bare chord).
+#[cfg(not(target_os = "linux"))]
+const COMMAND_HOTKEY_DEFAULTS: [&str; 2] = ["Alt+Win", "Ctrl+Win"];
+#[cfg(target_os = "linux")]
+const COMMAND_HOTKEY_DEFAULTS: [&str; 2] = ["Shift+Alt+C", "Ctrl+Alt+C"];
+
 fn default_command_hotkey() -> String {
-    // Shift+Alt+C: same family as the polish hotkey (Shift+Alt+P), so it
-    // never races the modifier-only dictation chord, and it isn't a common
-    // app shortcut.
-    "Shift+Alt+C".to_string()
+    COMMAND_HOTKEY_DEFAULTS[0].to_string()
+}
+
+fn same_hotkey(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+/// The default command hotkey that doesn't collide with `dictation`.
+fn default_command_hotkey_for(dictation: &str) -> String {
+    let first = COMMAND_HOTKEY_DEFAULTS[0];
+    if same_hotkey(first, dictation) {
+        COMMAND_HOTKEY_DEFAULTS[1].to_string()
+    } else {
+        first.to_string()
+    }
 }
 fn default_local_idle_unload_minutes() -> u32 {
     5
@@ -748,6 +775,7 @@ impl Default for Config {
             min_recording_seconds: default_min_seconds(),
             privacy_acknowledged: default_privacy_ack(),
             linux_hotkey_migrated: false,
+            command_hotkey_migrated: false,
             open_dashboard_on_launch: default_open_dashboard(),
             autostart: None,
             display_name: default_display_name(),
@@ -958,6 +986,26 @@ pub(crate) fn migrate(cfg: Config) -> Config {
         }
     }
 
+    // Command mode's first default was Shift+Alt+C, which is three keys. It is
+    // now a short chord (see COMMAND_HOTKEY_DEFAULTS). Only that old default is
+    // moved, once, and the marker keeps a later deliberate pick of it.
+    if !cfg.command_hotkey_migrated {
+        #[cfg(not(target_os = "linux"))]
+        if same_hotkey(&cfg.command_hotkey, "Shift+Alt+C") {
+            tracing::info!("moving the command hotkey off the old Shift+Alt+C default");
+            cfg.command_hotkey = default_command_hotkey_for(&cfg.hotkey);
+        }
+        cfg.command_hotkey_migrated = true;
+    }
+    // Two hold-to-talk hotkeys on one combo can't both work. This can only
+    // arise from a config that predates the field (a default that landed on the
+    // dictation hotkey), never from Settings, which asks before moving either.
+    if same_hotkey(&cfg.command_hotkey, &cfg.hotkey) {
+        let moved = default_command_hotkey_for(&cfg.hotkey);
+        tracing::info!("command hotkey matched dictation ({}); using {moved}", cfg.hotkey);
+        cfg.command_hotkey = moved;
+    }
+
     // The cleanup-model picker was removed in 1.2.0, so a saved `chat_model` is
     // only ever a stale default. Any model we no longer support (e.g. the
     // llama-3.1-8b-instant an updated install carries over, which Groq retires
@@ -989,8 +1037,54 @@ mod tests {
     fn config_from_before_command_mode_gets_the_defaults() {
         let cfg: Config = serde_json::from_str(r#"{"groq_api_key":"gsk_x"}"#).unwrap();
         assert!(cfg.command_mode_enabled, "command mode is on by default");
-        assert_eq!(cfg.command_hotkey, "Shift+Alt+C");
+        assert_eq!(cfg.command_hotkey, super::COMMAND_HOTKEY_DEFAULTS[0]);
         assert_eq!(cfg.command_mouse_button, "", "no mouse button until one is chosen");
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn command_mode_defaults_to_alt_win_beside_dictations_ctrl_win() {
+        let cfg: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(cfg.hotkey, "Ctrl+Win");
+        assert_eq!(cfg.command_hotkey, "Alt+Win");
+    }
+
+    #[test]
+    fn the_default_steps_aside_when_dictation_already_uses_it() {
+        let first = super::COMMAND_HOTKEY_DEFAULTS[0];
+        let second = super::COMMAND_HOTKEY_DEFAULTS[1];
+        assert_eq!(super::default_command_hotkey_for(first), second);
+        assert_eq!(super::default_command_hotkey_for(&first.to_lowercase()), second);
+        assert_eq!(super::default_command_hotkey_for("Ctrl+Shift+Space"), first);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn a_config_whose_dictation_is_alt_win_gets_ctrl_win_for_commands() {
+        let cfg: Config = serde_json::from_str(r#"{"hotkey":"Alt+Win"}"#).unwrap();
+        let cfg = super::migrate(cfg);
+        assert_eq!(cfg.hotkey, "Alt+Win");
+        assert_eq!(cfg.command_hotkey, "Ctrl+Win");
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn the_old_command_default_moves_once_and_a_later_pick_of_it_stays() {
+        let cfg: Config = serde_json::from_str(r#"{"command_hotkey":"Shift+Alt+C"}"#).unwrap();
+        let cfg = super::migrate(cfg);
+        assert_eq!(cfg.command_hotkey, "Alt+Win");
+        assert!(cfg.command_hotkey_migrated);
+
+        let mut again = cfg;
+        again.command_hotkey = "Shift+Alt+C".to_string();
+        let again = super::migrate(again);
+        assert_eq!(again.command_hotkey, "Shift+Alt+C", "a deliberate pick is kept");
+    }
+
+    #[test]
+    fn a_custom_command_hotkey_is_left_alone() {
+        let cfg: Config = serde_json::from_str(r#"{"command_hotkey":"Ctrl+Shift+K"}"#).unwrap();
+        assert_eq!(super::migrate(cfg).command_hotkey, "Ctrl+Shift+K");
     }
 
     #[test]

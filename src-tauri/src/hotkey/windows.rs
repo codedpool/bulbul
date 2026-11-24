@@ -99,6 +99,7 @@ fn is_key_down(vk: i32) -> bool {
 /// the orchestrator doesn't get stuck holding a recording open.
 pub fn stop_native_watchers() {
     crate::keyboard_hook::set_chord_mask(0);
+    crate::keyboard_hook::set_command_mask(0);
 }
 
 /// Register a modifier-only chord (Ctrl+Win, Alt+Win, etc.) with the LL
@@ -112,6 +113,19 @@ pub fn spawn_modifier_chord_watcher(_tx: Sender<HotkeyEvent>, hotkey: ParsedHotk
     crate::keyboard_hook::set_chord_mask(mask);
     tracing::info!(
         "registered dictation (LL keyboard hook): {:?} mask=0b{:04b}",
+        hotkey,
+        mask
+    );
+}
+
+/// Register command mode's modifier-only chord (Alt+Win by default) with the
+/// same LL keyboard hook. The hook tells it apart from the dictation chord, see
+/// `super::pick_chord`.
+pub fn spawn_command_chord_watcher(_tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
+    let mask = crate::keyboard_hook::chord_mask_for(&hotkey);
+    crate::keyboard_hook::set_command_mask(mask);
+    tracing::info!(
+        "registered command mode (LL keyboard hook): {:?} mask=0b{:04b}",
         hotkey,
         mask
     );

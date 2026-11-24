@@ -20,13 +20,13 @@
 
 use core_graphics::event_source::CGEventSourceStateID;
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{HotkeyEvent, ParsedHotkey, FIRE_COOLDOWN_MS};
+use super::{pick_chord, ChordKind, HotkeyEvent, ParsedHotkey, FIRE_COOLDOWN_MS};
 
 /// How often the release poller checks live key state.
 const RELEASE_POLL_MS: u64 = 25;
@@ -143,31 +143,88 @@ fn key_name_to_mac_keycode(name: &str) -> Option<u16> {
     })
 }
 
-/// Holds the AtomicBool that keeps the current modifier-chord watcher
-/// alive. Swapped on every re_register so only one watcher runs at a time.
+/// Holds the AtomicBool that keeps the current dictation modifier-chord
+/// watcher alive. Swapped on every re_register so only one watcher runs at
+/// a time.
 fn modifier_chord_alive_slot() -> &'static Mutex<Option<Arc<AtomicBool>>> {
     static SLOT: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
+/// Same, for command mode's modifier-chord watcher.
+fn command_chord_alive_slot() -> &'static Mutex<Option<Arc<AtomicBool>>> {
+    static SLOT: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+/// The two chords' modifier masks, shared so each watcher can tell whether
+/// the modifiers held right now mean its chord or the other one (Ctrl+Cmd for
+/// dictation and Option+Cmd for command mode both include Cmd).
+static DICTATION_MASK: AtomicU8 = AtomicU8::new(0);
+static COMMAND_MASK: AtomicU8 = AtomicU8::new(0);
+
+/// The live modifier state as a `MOD_*` bitset.
+fn held_mask(state: (bool, bool, bool, bool)) -> u8 {
+    let (ctrl, shift, option, cmd) = state;
+    let mut m = 0u8;
+    if ctrl {
+        m |= super::MOD_CTRL;
+    }
+    if shift {
+        m |= super::MOD_SHIFT;
+    }
+    if option {
+        m |= super::MOD_ALT;
+    }
+    if cmd {
+        m |= super::MOD_META;
+    }
+    m
+}
+
 /// Tear down anything platform-specific from a previous registration.
 /// Called by [`super::re_register`] before installing fresh handlers.
 pub fn stop_native_watchers() {
-    let mut slot = modifier_chord_alive_slot().lock();
-    if let Some(prev) = slot.take() {
-        prev.store(false, Ordering::Relaxed);
+    for slot in [modifier_chord_alive_slot(), command_chord_alive_slot()] {
+        if let Some(prev) = slot.lock().take() {
+            prev.store(false, Ordering::Relaxed);
+        }
     }
+    DICTATION_MASK.store(0, Ordering::Relaxed);
+    COMMAND_MASK.store(0, Ordering::Relaxed);
 }
 
-/// Long-running watcher for a modifier-only chord (e.g. ⌃⌘ held). Polls
-/// modifier state every 25ms. Fires DictationPressed once all required
-/// modifiers have been held for MODIFIER_CHORD_DEBOUNCE_MS, and
-/// DictationReleased the instant any required modifier is released.
-/// Stops when the AtomicBool stored in `modifier_chord_alive_slot()`
-/// flips to false (next re_register swaps it).
+/// Long-running watcher for the dictation modifier-only chord (e.g. ⌃⌘
+/// held). See [`watch_chord`].
 pub fn spawn_modifier_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
+    DICTATION_MASK.store(hotkey.modifier_mask(), Ordering::Relaxed);
+    watch_chord(tx, hotkey, ChordKind::Dictation, modifier_chord_alive_slot());
+}
+
+/// Long-running watcher for command mode's modifier-only chord (⌥⌘ by
+/// default). See [`watch_chord`].
+pub fn spawn_command_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
+    COMMAND_MASK.store(hotkey.modifier_mask(), Ordering::Relaxed);
+    watch_chord(tx, hotkey, ChordKind::Command, command_chord_alive_slot());
+}
+
+/// Polls modifier state every 25ms. Fires the chord's Pressed event once all
+/// its modifiers have been held for MODIFIER_CHORD_DEBOUNCE_MS (and the held
+/// set isn't ambiguous with the other chord, see `pick_chord`), and its
+/// Released event the instant any required modifier is released. Stops when
+/// the AtomicBool stored in `slot` flips to false (next re_register swaps it).
+fn watch_chord(
+    tx: Sender<HotkeyEvent>,
+    hotkey: ParsedHotkey,
+    kind: ChordKind,
+    slot: &'static Mutex<Option<Arc<AtomicBool>>>,
+) {
     let alive = Arc::new(AtomicBool::new(true));
-    *modifier_chord_alive_slot().lock() = Some(alive.clone());
+    *slot.lock() = Some(alive.clone());
+    let (pressed, released) = match kind {
+        ChordKind::Dictation => (HotkeyEvent::DictationPressed, HotkeyEvent::DictationReleased),
+        ChordKind::Command => (HotkeyEvent::CommandPressed, HotkeyEvent::CommandReleased),
+    };
 
     thread::spawn(move || {
         enum State {
@@ -177,11 +234,25 @@ pub fn spawn_modifier_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotke
         }
         let mut state = State::Idle;
         let mut last_fire: Option<Instant> = None;
-        tracing::info!("Mac modifier-chord watcher started for {:?}", hotkey);
+        tracing::info!("Mac modifier-chord watcher started for {:?} ({:?})", hotkey, kind);
 
         while alive.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(RELEASE_POLL_MS));
-            let held = required_mods_held(&hotkey, modifier_state());
+            let mods = modifier_state();
+            let all_held = required_mods_held(&hotkey, mods);
+            // Once pressing, only this chord's own modifiers matter. Before
+            // that, the held set must also mean THIS chord and not the other.
+            let held = match state {
+                State::Pressing => all_held,
+                _ => {
+                    all_held
+                        && pick_chord(
+                            held_mask(mods),
+                            DICTATION_MASK.load(Ordering::Relaxed),
+                            COMMAND_MASK.load(Ordering::Relaxed),
+                        ) == Some(kind)
+                }
+            };
             match state {
                 State::Idle => {
                     if held {
@@ -198,15 +269,15 @@ pub fn spawn_modifier_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotke
                     } else if start.elapsed().as_millis()
                         >= MODIFIER_CHORD_DEBOUNCE_MS as u128
                     {
-                        tracing::debug!("Mac modifier-chord dictation pressed: {:?}", hotkey);
-                        let _ = tx.send(HotkeyEvent::DictationPressed);
+                        tracing::debug!("Mac modifier-chord {:?} pressed: {:?}", kind, hotkey);
+                        let _ = tx.send(pressed.clone());
                         last_fire = Some(Instant::now());
                         state = State::Pressing;
                     }
                 }
                 State::Pressing => {
                     if !held {
-                        let _ = tx.send(HotkeyEvent::DictationReleased);
+                        let _ = tx.send(released.clone());
                         state = State::Idle;
                     }
                 }
@@ -215,9 +286,9 @@ pub fn spawn_modifier_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotke
         // Stopped mid-press → make sure release fires so the orchestrator
         // doesn't get stuck holding a recording open.
         if matches!(state, State::Pressing) {
-            let _ = tx.send(HotkeyEvent::DictationReleased);
+            let _ = tx.send(released.clone());
         }
-        tracing::info!("Mac modifier-chord watcher exited for {:?}", hotkey);
+        tracing::info!("Mac modifier-chord watcher exited for {:?} ({:?})", hotkey, kind);
     });
 }
 

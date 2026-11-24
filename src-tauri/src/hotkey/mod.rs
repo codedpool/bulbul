@@ -398,6 +398,116 @@ impl ParsedHotkey {
             .count();
         count >= 2
     }
+
+    /// The modifiers this hotkey needs, as a `MOD_*` bitset.
+    pub fn modifier_mask(&self) -> u8 {
+        let mut m = 0u8;
+        if self.ctrl {
+            m |= MOD_CTRL;
+        }
+        if self.shift {
+            m |= MOD_SHIFT;
+        }
+        if self.alt {
+            m |= MOD_ALT;
+        }
+        if self.meta {
+            m |= MOD_META;
+        }
+        m
+    }
+}
+
+// ─── Two modifier-only chords at once ───────────────────────────────────
+//
+// Dictation defaults to Ctrl+Win and Command mode to Alt+Win. Both are
+// modifier-only, both share Win, and holding Win+Ctrl+Alt satisfies both, so
+// the watchers need a rule for which one a given set of held modifiers means.
+// The rule lives here, free of any platform code, so the Windows hook and the
+// macOS watcher agree and it can be unit-tested.
+
+pub const MOD_CTRL: u8 = 1 << 0;
+pub const MOD_SHIFT: u8 = 1 << 1;
+pub const MOD_ALT: u8 = 1 << 2;
+pub const MOD_META: u8 = 1 << 3;
+
+/// Which modifier-only chord is meant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChordKind {
+    Dictation,
+    Command,
+}
+
+/// Decides which chord (if any) the currently held modifiers engage.
+/// `dict` and `cmd` are the chords' modifier masks, 0 meaning "no
+/// modifier-only chord is set".
+///
+/// A chord is satisfied when all its modifiers are held. Extra modifiers
+/// are tolerated, as they always were for a single chord. When BOTH are
+/// satisfied (Ctrl+Alt+Win held), only an exact match counts: neither
+/// engages rather than guessing, so rolling through the other chord on
+/// the way to the one you want never starts the wrong recording.
+pub fn pick_chord(held: u8, dict: u8, cmd: u8) -> Option<ChordKind> {
+    let dict_ok = dict != 0 && (held & dict) == dict;
+    let cmd_ok = cmd != 0 && (held & cmd) == cmd;
+    match (dict_ok, cmd_ok) {
+        (true, false) => Some(ChordKind::Dictation),
+        (false, true) => Some(ChordKind::Command),
+        (true, true) => {
+            if held == dict {
+                Some(ChordKind::Dictation)
+            } else if held == cmd {
+                Some(ChordKind::Command)
+            } else {
+                None
+            }
+        }
+        (false, false) => None,
+    }
+}
+
+#[cfg(test)]
+mod chord_tests {
+    use super::*;
+
+    const CW: u8 = MOD_CTRL | MOD_META;
+    const AW: u8 = MOD_ALT | MOD_META;
+
+    #[test]
+    fn each_chord_engages_on_its_own() {
+        assert_eq!(pick_chord(CW, CW, AW), Some(ChordKind::Dictation));
+        assert_eq!(pick_chord(AW, CW, AW), Some(ChordKind::Command));
+    }
+
+    #[test]
+    fn nothing_engages_on_a_partial_hold() {
+        assert_eq!(pick_chord(MOD_META, CW, AW), None);
+        assert_eq!(pick_chord(0, CW, AW), None);
+    }
+
+    #[test]
+    fn holding_both_chords_engages_neither() {
+        assert_eq!(pick_chord(CW | AW, CW, AW), None);
+    }
+
+    #[test]
+    fn a_single_chord_still_tolerates_an_extra_modifier() {
+        assert_eq!(pick_chord(CW | MOD_SHIFT, CW, 0), Some(ChordKind::Dictation));
+        assert_eq!(pick_chord(AW | MOD_SHIFT, 0, AW), Some(ChordKind::Command));
+    }
+
+    #[test]
+    fn an_unset_chord_never_engages() {
+        assert_eq!(pick_chord(CW, 0, 0), None);
+        assert_eq!(pick_chord(0, 0, 0), None);
+    }
+
+    #[test]
+    fn a_modifier_only_hotkey_reports_its_mask() {
+        let h = ParsedHotkey::parse("Alt+Win");
+        assert!(h.is_modifier_chord());
+        assert_eq!(h.modifier_mask(), AW);
+    }
 }
 
 /// Hotkeys the listener watches simultaneously.
@@ -770,10 +880,14 @@ fn re_register(
 
     // Command-mode hotkey: hold to record an instruction, release to run it.
     // Same press / release-poller pattern as polish. On Linux the evdev or
-    // portal registration above already covers it. A command hotkey must have
-    // a non-modifier key (a modifier-only chord can't be registered here).
+    // portal registration above already covers it. A modifier-only command
+    // hotkey (the Windows/macOS default, Alt+Win) can't go through the
+    // global-shortcut plugin, so it's handed to the same native watcher that
+    // owns the dictation chord.
     if evdev_driving || wayland_portal {
         // Handled by evdev / portal above.
+    } else if snapshot.command.is_modifier_chord() {
+        native::spawn_command_chord_watcher(tx.clone(), snapshot.command.clone());
     } else if let Some(cmd_sc) = parsed_to_shortcut(&snapshot.command) {
         let tx_cmd = tx.clone();
         let cmd_parsed = snapshot.command.clone();

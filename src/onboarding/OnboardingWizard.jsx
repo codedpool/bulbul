@@ -16,6 +16,8 @@ import ProviderSetupModal from "../components/ProviderSetup.jsx";
 import { PhoneModelSetupModal } from "../components/LocalModels.jsx";
 import { IS_ANDROID, IS_LINUX, IS_MAC, IS_WINDOWS, META_KEY_NAME } from "../platform.js";
 import { useInPageChordFallback } from "../inPageHotkey.js";
+import HotkeyConflict from "../components/HotkeyConflict.jsx";
+import { commandHotkeyOf, commandModeOn, sameCombo } from "../hotkeyDefaults.js";
 import MouseButtonRecorder, { mouseButtonLabel } from "../components/MouseButtonRecorder.jsx";
 import "./onboarding.css";
 
@@ -1663,6 +1665,9 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
   );
   const [capturing, setCapturing] = useState(false);
   const [captureError, setCaptureError] = useState("");
+  // Set when the combo picked is the one Command mode already has. Nothing is
+  // changed until the person agrees to swap the two.
+  const [conflict, setConflict] = useState(null);
   const [transcript, setTranscript] = useState("");
   // Set of canonical key names ("Ctrl", "Win", "Space"…) currently held
   // down inside the wizard window. We track this purely so we can light
@@ -1815,8 +1820,30 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
 
   const requiredParts = parseChordParts(activeHotkey);
 
+  // Is this combo the one Command mode already holds?
+  const takenByCommand = (combo) =>
+    commandModeOn(config) && sameCombo(combo, commandHotkeyOf(config)) && !sameCombo(combo, config.hotkey);
+
+  async function applySwap({ combo, otherCombo, custom }) {
+    setConflict(null);
+    setTranscript("");
+    if (custom) {
+      setCustomCombo(combo);
+      setSelected(HOTKEY_PRESETS.find((p) => p.value === "custom") || HOTKEY_PRESETS[0]);
+    } else {
+      setSelected(HOTKEY_PRESETS.find((p) => p.value === combo) || HOTKEY_PRESETS[0]);
+    }
+    await updateConfig({ ...config, hotkey: combo, command_hotkey: otherCombo });
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  }
+
   async function choose(value) {
     setTranscript("");
+    if (value !== "custom" && takenByCommand(value)) {
+      setConflict({ combo: value, otherCombo: config.hotkey, custom: false });
+      return;
+    }
+    setConflict(null);
     const next = HOTKEY_PRESETS.find((p) => p.value === value) || HOTKEY_PRESETS[0];
     setSelected(next);
     if (value !== "custom") {
@@ -1844,9 +1871,14 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
     };
 
     const commit = (combo) => {
-      setCustomCombo(combo);
       setCapturing(false);
       setCaptureError("");
+      if (takenByCommand(combo)) {
+        setConflict({ combo, otherCombo: config.hotkey, custom: true });
+        return;
+      }
+      setConflict(null);
+      setCustomCombo(combo);
       updateConfig({ ...config, hotkey: combo });
       setTranscript("");
     };
@@ -1942,6 +1974,14 @@ function StepHotkey({ config, updateConfig, onBack, onNext }) {
             everywhere.
           </p>
         </div>
+      )}
+
+      {conflict && (
+        <HotkeyConflict
+          message={`${formatComboForDisplay(conflict.combo)} is set aside for Command mode, where you hold it and say what to do with your text. Use it for dictation instead, and move Command mode to ${formatComboForDisplay(conflict.otherCombo)}?`}
+          onSwap={() => applySwap(conflict)}
+          onCancel={() => setConflict(null)}
+        />
       )}
 
       <div className="onb-hotkey-grid">

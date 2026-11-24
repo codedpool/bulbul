@@ -45,14 +45,11 @@ use windows::core::PCWSTR;
 
 use tauri::{AppHandle, Emitter};
 
-use crate::hotkey::{HotkeyEvent, ParsedHotkey};
+use crate::hotkey::{pick_chord, ChordKind, HotkeyEvent, ParsedHotkey};
 
 // ─── Modifier bitmask ─────────────────────────────────────────────────
 
-pub const MOD_CTRL: u8 = 1 << 0;
-pub const MOD_SHIFT: u8 = 1 << 1;
-pub const MOD_ALT: u8 = 1 << 2;
-pub const MOD_META: u8 = 1 << 3;
+pub use crate::hotkey::{MOD_ALT, MOD_CTRL, MOD_META, MOD_SHIFT};
 
 /// Build a chord mask from a ParsedHotkey. Returns 0 if it isn't a
 /// modifier-only chord (i.e. it has a non-modifier key, so RegisterHotKey
@@ -61,20 +58,7 @@ pub fn chord_mask_for(h: &ParsedHotkey) -> u8 {
     if h.key.is_some() {
         return 0;
     }
-    let mut m = 0u8;
-    if h.ctrl {
-        m |= MOD_CTRL;
-    }
-    if h.shift {
-        m |= MOD_SHIFT;
-    }
-    if h.alt {
-        m |= MOD_ALT;
-    }
-    if h.meta {
-        m |= MOD_META;
-    }
-    m
+    h.modifier_mask()
 }
 
 // ─── Shared state with the hook callback ──────────────────────────────
@@ -83,14 +67,44 @@ pub fn chord_mask_for(h: &ParsedHotkey) -> u8 {
 /// our own injected events filtered out). Updated on every keystroke.
 static HELD_MODS: AtomicU8 = AtomicU8::new(0);
 
-/// The chord mask we're watching for. 0 = no chord configured (hook is
-/// dormant — it still observes keystrokes to keep `HELD_MODS` fresh but
-/// never suppresses or fires events). Updated by `set_chord_mask`.
+/// The dictation chord mask we're watching for. 0 = no chord configured
+/// (with `COMMAND_MASK` also 0 the hook is dormant: it still observes
+/// keystrokes to keep `HELD_MODS` fresh but never suppresses or fires
+/// events). Updated by `set_chord_mask`.
 static CHORD_MASK: AtomicU8 = AtomicU8::new(0);
 
-/// True while the configured chord is fully held. Drives DictationPressed
-/// / DictationReleased events to the orchestrator.
-static CHORD_ENGAGED: AtomicBool = AtomicBool::new(false);
+/// Command mode's chord mask (Alt+Win by default). Same rules as
+/// `CHORD_MASK`. Updated by `set_command_mask`.
+static COMMAND_MASK: AtomicU8 = AtomicU8::new(0);
+
+/// Which chord is engaged right now (fully held): `ENGAGED_NONE`,
+/// `ENGAGED_DICTATION` or `ENGAGED_COMMAND`. Only one can be at a time.
+/// Drives the Pressed / Released events to the orchestrator.
+static ENGAGED: AtomicU8 = AtomicU8::new(ENGAGED_NONE);
+const ENGAGED_NONE: u8 = 0;
+const ENGAGED_DICTATION: u8 = 1;
+const ENGAGED_COMMAND: u8 = 2;
+
+fn engaged_value(kind: ChordKind) -> u8 {
+    match kind {
+        ChordKind::Dictation => ENGAGED_DICTATION,
+        ChordKind::Command => ENGAGED_COMMAND,
+    }
+}
+
+fn pressed_event(kind: ChordKind) -> HotkeyEvent {
+    match kind {
+        ChordKind::Dictation => HotkeyEvent::DictationPressed,
+        ChordKind::Command => HotkeyEvent::CommandPressed,
+    }
+}
+
+fn released_event(kind: ChordKind) -> HotkeyEvent {
+    match kind {
+        ChordKind::Dictation => HotkeyEvent::DictationReleased,
+        ChordKind::Command => HotkeyEvent::CommandReleased,
+    }
+}
 
 /// One-shot OnceLock holding the mpsc sender from the orchestrator. The
 /// callback fires events through this; it's wrapped in Mutex<Option<>>
@@ -149,16 +163,28 @@ pub fn set_app_handle(app: AppHandle) {
 /// keystroke. If a chord was engaged under the previous mask, the
 /// orchestrator is notified of the release before the new mask kicks in.
 pub fn set_chord_mask(mask: u8) {
-    let prev = CHORD_MASK.swap(mask, Ordering::AcqRel);
+    set_mask(&CHORD_MASK, ChordKind::Dictation, mask);
+}
+
+/// Same as [`set_chord_mask`], for command mode's chord.
+pub fn set_command_mask(mask: u8) {
+    set_mask(&COMMAND_MASK, ChordKind::Command, mask);
+}
+
+fn set_mask(slot: &AtomicU8, kind: ChordKind, mask: u8) {
+    let prev = slot.swap(mask, Ordering::AcqRel);
     if prev == mask {
         return;
     }
-    tracing::info!("keyboard_hook: chord mask set to 0b{:04b}", mask);
+    tracing::info!("keyboard_hook: {:?} chord mask set to 0b{:04b}", kind, mask);
     // If we were mid-chord and the user is changing the binding, force a
     // synthetic release so the orchestrator doesn't get stuck holding a
     // recording open under the old chord.
-    if CHORD_ENGAGED.swap(false, Ordering::AcqRel) {
-        send_event(HotkeyEvent::DictationReleased);
+    if ENGAGED
+        .compare_exchange(engaged_value(kind), ENGAGED_NONE, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        send_event(released_event(kind));
     }
 }
 
@@ -225,7 +251,7 @@ unsafe fn hook_thread_main() {
             // Never churn the hook mid-chord: a re-install has a microscopic
             // window where the releasing KEYUP could be missed and leave a
             // recording stuck open. Wait for the next tick.
-            if !CHORD_ENGAGED.load(Ordering::Acquire) {
+            if ENGAGED.load(Ordering::Acquire) == ENGAGED_NONE {
                 let had_hook = hook.is_some();
                 if let Some(h) = hook.take() {
                     let _ = UnhookWindowsHookEx(h);
@@ -243,7 +269,9 @@ unsafe fn hook_thread_main() {
                 // chord hotkey is actually bound — a key-based hotkey doesn't use
                 // this hook, so a dead hook is irrelevant to it.
                 fails = if hook.is_some() { 0 } else { fails.saturating_add(1) };
-                let alarm = fails >= 2 && CHORD_MASK.load(Ordering::Acquire) != 0;
+                let chord_bound = CHORD_MASK.load(Ordering::Acquire) != 0
+                    || COMMAND_MASK.load(Ordering::Acquire) != 0;
+                let alarm = fails >= 2 && chord_bound;
                 if alarm != alarm_reported {
                     alarm_reported = alarm;
                     emit_hotkey_health(!alarm);
@@ -343,7 +371,8 @@ unsafe extern "system" fn keyboard_hook_proc(
         _ => 0,
     };
 
-    let mask = CHORD_MASK.load(Ordering::Acquire);
+    let dict_mask = CHORD_MASK.load(Ordering::Acquire);
+    let cmd_mask = COMMAND_MASK.load(Ordering::Acquire);
 
     // Snapshot state BEFORE updating, so we can detect transitions
     // (engaged ↔ released) by comparing old vs new modifier sets.
@@ -361,11 +390,27 @@ unsafe extern "system" fn keyboard_hook_proc(
 
     // With no chord configured the hook is purely an observer. Fall
     // through to the OS so other apps keep working normally.
-    if mask == 0 {
+    if dict_mask == 0 && cmd_mask == 0 {
         return CallNextHookEx(None, code, wparam, lparam);
     }
 
-    let was_engaged = CHORD_ENGAGED.load(Ordering::Acquire);
+    // At most one chord is engaged at a time. `kind` is the engaged one,
+    // or, when none is, the one these modifiers newly satisfy (see
+    // `pick_chord` for what happens when both chords could match).
+    let engaged = ENGAGED.load(Ordering::Acquire);
+    let was_engaged = engaged != ENGAGED_NONE;
+    let kind = match engaged {
+        ENGAGED_DICTATION => Some(ChordKind::Dictation),
+        ENGAGED_COMMAND => Some(ChordKind::Command),
+        _ => pick_chord(new_held, dict_mask, cmd_mask),
+    };
+    let Some(kind) = kind else {
+        return CallNextHookEx(None, code, wparam, lparam);
+    };
+    let mask = match kind {
+        ChordKind::Dictation => dict_mask,
+        ChordKind::Command => cmd_mask,
+    };
     let now_engaged = (new_held & mask) == mask && mask != 0;
     let is_chord_mod = (mod_bit & mask) != 0;
 
@@ -422,9 +467,9 @@ unsafe extern "system" fn keyboard_hook_proc(
                 return CallNextHookEx(None, code, wparam, lparam);
             }
         }
-        CHORD_ENGAGED.store(true, Ordering::Release);
-        tracing::debug!("keyboard_hook: chord engaged → sending DictationPressed");
-        send_event(HotkeyEvent::DictationPressed);
+        ENGAGED.store(engaged_value(kind), Ordering::Release);
+        tracing::debug!("keyboard_hook: {:?} chord engaged → sending its Pressed event", kind);
+        send_event(pressed_event(kind));
         if is_chord_mod {
             return LRESULT(1);
         }
@@ -435,8 +480,8 @@ unsafe extern "system" fn keyboard_hook_proc(
     // schedule a state sync to release the Win key cleanly in Windows's
     // own view of the world.
     if was_engaged && !now_engaged {
-        CHORD_ENGAGED.store(false, Ordering::Release);
-        send_event(HotkeyEvent::DictationReleased);
+        ENGAGED.store(ENGAGED_NONE, Ordering::Release);
+        send_event(released_event(kind));
         if is_chord_mod {
             sync_chord_modifier_state_async(mask);
             return LRESULT(1);

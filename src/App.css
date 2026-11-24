@@ -1457,6 +1457,26 @@ kbd {
   line-height: 1.4;
 }
 
+.hotkey-conflict {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--field);
+}
+.hotkey-conflict-text {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.hotkey-conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
 .plus {
   color: var(--text-dim);
   margin: 0 2px;

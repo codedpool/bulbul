@@ -210,6 +210,13 @@ pub fn spawn_modifier_chord_watcher(tx: Sender<HotkeyEvent>, hotkey: ParsedHotke
     });
 }
 
+/// Command mode's hotkey on Linux always has a real key (Super belongs to the
+/// compositor, and evdev and the portal both need a key), so a modifier-only
+/// command chord isn't watched here. The Settings recorder doesn't offer one.
+pub fn spawn_command_chord_watcher(_tx: Sender<HotkeyEvent>, hotkey: ParsedHotkey) {
+    tracing::warn!("a modifier-only command hotkey isn't supported on Linux: {:?}", hotkey);
+}
+
 pub fn spawn_release_poller(
     tx: Sender<HotkeyEvent>,
     hotkey: ParsedHotkey,

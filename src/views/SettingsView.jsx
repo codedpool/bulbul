@@ -8,6 +8,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { applyTheme } from "../theme.js";
 import Combobox from "../components/Combobox.jsx";
 import MouseButtonRecorder from "../components/MouseButtonRecorder.jsx";
+import HotkeyConflict from "../components/HotkeyConflict.jsx";
+import { commandHotkeyOf, commandModeOn, sameCombo } from "../hotkeyDefaults.js";
 import { ProviderSetupPane } from "../components/ProviderSetup.jsx";
 import { LocalModelsPane } from "../components/LocalModels.jsx";
 import { AUTOSTART_LABEL, IS_ANDROID, IS_LINUX, IS_MAC, RELAUNCH_HINT, THEME_FOLLOW_HINT } from "../platform.js";
@@ -131,6 +133,9 @@ export default function SettingsView({
   const [keyError, setKeyError] = useState("");
   const [recordingHotkeyFor, setRecordingHotkeyFor] = useState(null);
   const [recordingError, setRecordingError] = useState("");
+  // Set when the combo just picked is already the other hold-to-talk hotkey
+  // (dictation vs command mode). Nothing changes until the person agrees.
+  const [hotkeyConflict, setHotkeyConflict] = useState(null);
   const [updateState, setUpdateState] = useState({ state: "idle", message: "" });
   const paneRef = useRef(null);
 
@@ -196,26 +201,40 @@ export default function SettingsView({
     const commit = (combo) => {
       const field =
         recordingHotkeyFor === "polish" ? "polish_hotkey" : recordingHotkeyFor === "command" ? "command_hotkey" : "hotkey";
+      const offerSwap = (otherField, otherCombo) => {
+        // The other hotkey would be left without a combo, so offer to give it
+        // the one this is leaving. Never done without asking.
+        setHotkeyConflict({ field, combo, otherField, otherCombo });
+        setRecordingHotkeyFor(null);
+        setRecordingError("");
+      };
       if (recordingHotkeyFor === "command") {
-        // Command mode is registered like the polish hotkey: it needs a real
-        // key, and it can't share a combo with another hold-to-talk hotkey.
+        // A modifier-only chord (Alt+Win) works on Windows and macOS. On Linux
+        // the hotkey needs a real key.
         const parts = combo.split("+");
-        if (["Ctrl", "Shift", "Alt", "Win"].includes(parts[parts.length - 1])) {
+        if (IS_LINUX && ["Ctrl", "Shift", "Alt", "Win"].includes(parts[parts.length - 1])) {
           setRecordingError("Command mode needs a key as well, for example Shift+Alt+C.");
           reset();
           return;
         }
-        const norm = (c) => String(c || "").toLowerCase();
-        if (norm(combo) === norm(config.hotkey) || norm(combo) === norm(config.polish_hotkey || "Shift+Alt+P")) {
-          setRecordingError("That combination is already used for dictation. Pick another.");
+        if (sameCombo(combo, config.polish_hotkey || "Shift+Alt+P")) {
+          setRecordingError("That combination is already used for polish dictation. Pick another.");
           reset();
           return;
         }
-      } else if (combo.toLowerCase() === String(config.command_hotkey || "Shift+Alt+C").toLowerCase() && config.command_mode_enabled !== false) {
+        if (sameCombo(combo, config.hotkey)) {
+          offerSwap("hotkey", commandHotkeyOf(config));
+          return;
+        }
+      } else if (field === "hotkey" && commandModeOn(config) && sameCombo(combo, commandHotkeyOf(config))) {
+        offerSwap("command_hotkey", config.hotkey);
+        return;
+      } else if (commandModeOn(config) && sameCombo(combo, commandHotkeyOf(config))) {
         setRecordingError("That combination is used for command mode. Pick another.");
         reset();
         return;
       }
+      setHotkeyConflict(null);
       updateConfig({ ...config, [field]: combo });
       setRecordingHotkeyFor(null);
       setRecordingError("");
@@ -506,6 +525,8 @@ export default function SettingsView({
                 setRecordingHotkeyFor={setRecordingHotkeyFor}
                 recordingError={recordingError}
                 clearRecordingError={() => setRecordingError("")}
+                hotkeyConflict={hotkeyConflict}
+                setHotkeyConflict={setHotkeyConflict}
               />
             )}
             {active === "personalization" && (
@@ -677,14 +698,39 @@ function PaneHotkeys({
   setRecordingHotkeyFor,
   recordingError,
   clearRecordingError,
+  hotkeyConflict,
+  setHotkeyConflict,
 }) {
   const startRecording = (which) => {
     clearRecordingError?.();
+    setHotkeyConflict(null);
     setRecordingHotkeyFor(which);
   };
   const cancelRecording = () => {
     clearRecordingError?.();
     setRecordingHotkeyFor(null);
+  };
+  // Shown under the row being changed when its new combo is the other
+  // hold-to-talk hotkey's. "Swap them" gives that one the combo this is leaving.
+  const conflictFor = (field) => {
+    if (!hotkeyConflict || hotkeyConflict.field !== field) return null;
+    const label = (c) => formatHotkey(c).join(" + ");
+    const [mine, theirs] =
+      field === "hotkey" ? ["dictation", "Command mode"] : ["Command mode", "dictation"];
+    return (
+      <HotkeyConflict
+        message={`${label(hotkeyConflict.combo)} is already ${theirs === "dictation" ? "your dictation hotkey" : "the Command mode hotkey"}. Use it for ${mine}, and move ${theirs} to ${label(hotkeyConflict.otherCombo)}?`}
+        onSwap={() => {
+          updateConfig({
+            ...config,
+            [hotkeyConflict.field]: hotkeyConflict.combo,
+            [hotkeyConflict.otherField]: hotkeyConflict.otherCombo,
+          });
+          setHotkeyConflict(null);
+        }}
+        onCancel={() => setHotkeyConflict(null)}
+      />
+    );
   };
   // macOS only: Mouse mode's event tap needs a system permission nothing
   // else in Bulbul asks for (the hotkeys poll key state, the overlay polls
@@ -726,6 +772,7 @@ function PaneHotkeys({
           onStart={() => startRecording("dictation")}
           onCancel={cancelRecording}
         />
+        {conflictFor("hotkey")}
       </Row>
       <Row
         title="Polish dictation"
@@ -750,12 +797,13 @@ function PaneHotkeys({
         <>
           <Row title="Command hotkey" hint="Hold to speak a command. Release to run it." stack>
             <HotkeyControl
-              combo={config.command_hotkey || "Shift+Alt+C"}
+              combo={commandHotkeyOf(config)}
               isRecording={recordingHotkeyFor === "command"}
               error={recordingHotkeyFor === "command" ? recordingError : ""}
               onStart={() => startRecording("command")}
               onCancel={cancelRecording}
             />
+            {conflictFor("command_hotkey")}
           </Row>
           <Row
             title="Command mouse button"
