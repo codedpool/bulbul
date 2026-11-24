@@ -119,7 +119,7 @@ jobs:
             "${{ steps.apk.outputs.path }}" \
             --title 'Bulbul Android dev build' \
             --prerelease \
-            --notes 'Rolling Android dev build from the `${{ github.ref_name }}` branch (commit `${{ github.sha }}`). **Not for general use** — a testing build, things may break.
+            --notes '**This is a development build of an upcoming release, not for general use.** It may be unfinished or unstable. Built from commit `${{ github.sha }}`.
 
           Sideload the `.apk` below (arm64 phones). It is debug-signed, so if you previously installed a differently-signed Bulbul you may need to uninstall first. Enabling Accessibility on a sideloaded install still needs the manual steps shown on the app'"'"'s permission screen. Each dev build replaces this release.'
         env:

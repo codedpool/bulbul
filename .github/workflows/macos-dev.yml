@@ -67,7 +67,7 @@ jobs:
           tagName: macos-dev
           releaseName: 'Bulbul macOS dev build'
           releaseBody: |
-            Rolling macOS dev build from the `${{ github.ref_name }}` branch (commit `${{ github.sha }}`). **Not for general use** — a testing build, things may break.
+            **This is a development build of an upcoming release, not for general use.** It may be unfinished or unstable. Built from commit `${{ github.sha }}`.
 
             ## Tester install
 
