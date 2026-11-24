@@ -4,7 +4,7 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
-## [1.2.3]
+## [1.2.3] — 2026-11-24
 
 ### Added
 
