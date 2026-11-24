@@ -119,8 +119,8 @@ jobs:
             "${{ steps.apk.outputs.path }}" \
             --title 'Bulbul Android dev build' \
             --prerelease \
-            --notes 'Rolling Android dev build from the `v1.1.1` branch. **Not for general use** — this is a pre-release for testing the merged desktop + Android v1.1.
+            --notes '**This is a development build of an upcoming release, not for general use.** It may be unfinished or unstable.
 
-          Sideload the `.apk` below (arm64 phones). It is debug-signed, so if you previously installed a differently-signed Bulbul you may need to uninstall first. Enabling Accessibility on a sideloaded install still needs the manual steps shown on the app'"'"'s permission screen. Each push to `v1.1.1` replaces this release.'
+          Sideload the `.apk` below (arm64 phones). It is debug-signed, so if you previously installed a differently-signed Bulbul you may need to uninstall first. Enabling Accessibility on a sideloaded install still needs the manual steps shown on the app'"'"'s permission screen. Each new dev build replaces this release.'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

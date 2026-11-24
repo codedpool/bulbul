@@ -67,7 +67,7 @@ jobs:
           tagName: macos-dev
           releaseName: 'Bulbul macOS dev build'
           releaseBody: |
-            Rolling dev build from the `macos-port` branch. **Not for general use** — the port is incomplete.
+            **This is a development build of an upcoming release, not for general use.** It may be unfinished or unstable.
 
             ## Tester install
 
@@ -75,7 +75,7 @@ jobs:
             curl -fsSL https://bulbultypes.xyz/install-dev.sh | sh
             ```
 
-            Each push to `macos-port` replaces this release. Production builds live in tagged `vX.Y.Z` releases.
+            Each new dev build replaces this release. Production builds live in tagged `vX.Y.Z` releases.
           releaseDraft: false
           prerelease: true
           includeUpdaterJson: true
