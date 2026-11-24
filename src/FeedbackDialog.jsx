@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { IS_ANDROID } from "./platform.js";
 
 const MAX_MESSAGE = 2000;
 const MAX_NAME = 80;
@@ -23,6 +24,21 @@ export default function FeedbackDialog({ defaultName = "", onClose }) {
     // Focus the message when a name is already filled in, otherwise the name.
     document.getElementById(defaultName ? "fb-message" : "fb-name")?.focus();
   }, [defaultName]);
+
+  // When the WebView does report a smaller visible area (keyboard up), keep the
+  // card inside it. Where it doesn't, the CSS cap and top position cover it.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const root = document.documentElement;
+    const apply = () => root.style.setProperty("--fb-vh", `${vv.height}px`);
+    apply();
+    vv.addEventListener("resize", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      root.style.removeProperty("--fb-vh");
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -76,7 +92,7 @@ export default function FeedbackDialog({ defaultName = "", onClose }) {
         ) : (
           <form onSubmit={submit} noValidate>
             <h2 id="fb-title" className="fb-title">Write to me</h2>
-            <p className="fb-text">
+            <p className="fb-text fb-intro">
               Ideas, problems, or just a hello. It goes straight to the person who makes Bulbul.
             </p>
 
@@ -96,7 +112,7 @@ export default function FeedbackDialog({ defaultName = "", onClose }) {
               className="fb-input fb-textarea"
               value={message}
               maxLength={MAX_MESSAGE}
-              rows={5}
+              rows={IS_ANDROID ? 3 : 5}
               onChange={(e) => setMessage(e.target.value)}
             />
             <div className="fb-count" aria-live="off">{message.length} / {MAX_MESSAGE}</div>

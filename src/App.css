@@ -4622,11 +4622,11 @@ html.platform-android .m-sheet-foot .sponsor-pill {
   right: 138px;
   z-index: 10;
 }
-html.platform-android .m-note-btn svg { color: var(--text-muted); }
 html.platform-android .m-sheet-foot .note-pill {
   height: 28px;
-  font-size: 13px;
-  padding: 0 11px 0 9px;
+  width: 34px;
+  padding: 0;
+  justify-content: center;
 }
 
 .fb-backdrop {
@@ -4687,13 +4687,29 @@ html.platform-android .m-sheet-foot .note-pill {
 .fb-secondary { background: var(--fill); color: var(--text-2); }
 .fb-secondary:hover:not(:disabled) { background: var(--fill-active); }
 .fb-done .fb-text { margin-bottom: 4px; }
-html.platform-android .fb-backdrop { align-items: flex-end; padding: 0; }
+/* Phone: a floating card pinned near the top, not a bottom sheet. The keyboard
+   covers the bottom of the screen and this WebView isn't told its height, so a
+   card at the top (and short enough to end above the keyboard) can never be
+   hidden by it. The 52px floor clears the status bar, like the app bar does. */
+html.platform-android .fb-backdrop {
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(52px, calc(env(safe-area-inset-top) + 18px)) 12px 12px;
+}
 html.platform-android .fb-dialog {
   max-width: none;
-  max-height: 92%;
-  border-radius: 16px 16px 0 0;
-  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  max-height: min(62dvh, calc(var(--fb-vh, 100dvh) - 72px), 560px);
+  padding: 16px 16px 14px;
+  border-radius: 16px;
+  box-shadow: 0 18px 50px var(--shadow);
 }
+html.platform-android .fb-title { margin-bottom: 2px; font-size: 17px; }
+html.platform-android .fb-intro { display: none; }
+html.platform-android .fb-label { margin-top: 9px; }
+html.platform-android .fb-textarea { min-height: 78px; }
+html.platform-android .fb-count { margin-top: 2px; }
+html.platform-android .fb-check { margin-top: 8px; }
+html.platform-android .fb-actions { margin-top: 12px; }
 html.platform-android .fb-input { font-size: 16px; }
 @media (prefers-reduced-motion: no-preference) {
   .fb-dialog { animation: fb-in 140ms ease-out; }

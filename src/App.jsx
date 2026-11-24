@@ -473,14 +473,6 @@ function App() {
               <HeartIcon size={22} />
             </button>
             <button
-              className="m-icon-btn m-note-btn"
-              aria-label="Write to the developer"
-              title="Write to me"
-              onClick={() => setFeedbackOpen(true)}
-            >
-              <NoteIcon size={22} />
-            </button>
-            <button
               className="m-icon-btn"
               aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
               title={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
@@ -544,9 +536,14 @@ function App() {
                   <HeartIcon size={13} />
                   <span>Sponsor</span>
                 </button>
-                <button type="button" className="sponsor-pill note-pill" onClick={() => setFeedbackOpen(true)}>
-                  <NoteIcon size={13} />
-                  <span>Write to me</span>
+                <button
+                  type="button"
+                  className="sponsor-pill note-pill"
+                  onClick={() => setFeedbackOpen(true)}
+                  aria-label="Write to me"
+                  title="Write to me"
+                >
+                  <NoteIcon size={15} />
                 </button>
                 <span className="muted small">v1.2.3 · GPL-3.0</span>
               </div>
