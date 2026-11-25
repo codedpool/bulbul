@@ -1,0 +1,5 @@
+# Google Play requires 64-bit Android native libraries to be aligned for 16 KB memory
+# pages (enforced for updates since 2025-11-01). NDK r26 links with 4 KB by default,
+# so ask the linker for 16 KB. Harmless on devices with 4 KB pages.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
