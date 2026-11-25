@@ -10,6 +10,7 @@ const LANGUAGES = [
   { code: "auto", label: "Auto-detect" },
   { code: "en", label: "English" },
   { code: "hi", label: "Hindi" },
+  { code: "hi-Latn", label: "Hinglish" },
   { code: "es", label: "Spanish" },
   { code: "fr", label: "French" },
   { code: "de", label: "German" },
