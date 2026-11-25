@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">Bulbul</string>
     <string name="main_activity_title">Bulbul</string>
-    <string name="accessibility_service_description">Bulbul uses Accessibility to detect when you tap into a text input and to paste cleaned-up transcripts into the focused field. Audio is captured separately and only when you hold or tap the floating bubble.</string>
+    <string name="accessibility_service_description">Bulbul is a voice dictation app. It uses Accessibility to notice when you tap into a text field in another app, to read that field so your dictation is typed at the cursor, to type the dictated text into it, and to notice for a few seconds afterwards if you correct a word so it can suggest a dictionary entry. Text it reads from other apps stays on your phone. Audio is recorded only while you hold or tap the floating bubble.</string>
 </resources>
