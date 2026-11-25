@@ -1604,7 +1604,9 @@ async fn transcribe_dictate_sample(
 
     let lang = cfg.language.trim();
     let lang = if !lang.is_empty() && lang != "auto" {
-        Some(lang.to_string())
+        // Hinglish is a Hindi-script preference for cleanup, not a Whisper
+        // language code — the audio is still Hindi speech either way.
+        Some(if lang == "hi-Latn" { "hi".to_string() } else { lang.to_string() })
     } else {
         None
     };

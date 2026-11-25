@@ -48,7 +48,8 @@ const OVERLAY_POSITIONS = [
 const LANGUAGES = [
   { code: "auto", label: "Auto-detect (English-leaning)" },
   { code: "en", label: "English" },
-  { code: "hi", label: "Hindi / Hinglish" },
+  { code: "hi", label: "Hindi" },
+  { code: "hi-Latn", label: "Hinglish (romanized)" },
   { code: "es", label: "Spanish" },
   { code: "fr", label: "French" },
   { code: "de", label: "German" },
@@ -587,7 +588,7 @@ function PaneGeneral({ config, updateConfig }) {
       </Row>
       <Row
         title="Language"
-        hint="Pick a specific language if you dictate in anything other than English. Auto-detect is solid for English but occasionally flips Hindi audio to Urdu script. Hindi/Hinglish handles mixed English+Hindi automatically."
+        hint="Pick a specific language if you dictate in anything other than English. Auto-detect is solid for English, and always resolves Hindi/Urdu-sounding speech to Hindi in Devanagari script. Pick Hindi for Devanagari, or Hinglish to get everything romanized instead — both handle mixed English+Hindi automatically."
       >
         <Combobox
           value={config.language || "auto"}

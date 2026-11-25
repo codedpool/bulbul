@@ -359,7 +359,7 @@ class BulbulForegroundService : Service() {
             }
             toast("Bulbul: on-device transcription failed, so this recording went to Groq")
         }
-        return if (apiKey.isNotBlank()) GroqClient.transcribe(apiKey, wav) else null
+        return if (apiKey.isNotBlank()) GroqClient.transcribe(apiKey, wav, BulbulConfig.language(this)) else null
     }
 
     private fun toast(message: String) {

@@ -1105,7 +1105,7 @@ function StepApiKey({ config, updateConfig, onBack, onNext }) {
 
 // Languages exposed under "Another language" — same set as the Settings
 // dropdown minus the buckets we already surface as primary radios (English,
-// Hindi/Hinglish) and minus "auto" (its own radio). Alphabetised by display
+// Hindi, Hinglish) and minus "auto" (its own radio). Alphabetised by display
 // label so users can scan to the one they want.
 const OTHER_LANGUAGES = [
   { code: "ar", label: "Arabic" },
@@ -1133,10 +1133,10 @@ const OTHER_LANGUAGES = [
 const OTHER_LANGUAGE_CODES = OTHER_LANGUAGES.map((l) => l.code);
 
 // Map BCP-47 system locale to a wizard "bucket" so we can pre-select a
-// sensible default. Pakistani/Indian Urdu speakers also get suggested
-// Hindi/Hinglish: in practice they want Devanagari output for code-switched
-// Hindustani, and they can flip to Arabic-script Urdu via "Another language"
-// if they really want it. English-locale users get English.
+// sensible default. Pakistani/Indian Urdu speakers also get suggested Hindi:
+// in practice they want Devanagari output for code-switched Hindustani, and
+// can pick Hinglish instead if they'd rather have it romanized. There is no
+// Urdu/Arabic-script option. English-locale users get English.
 function detectDefaultLanguage() {
   const tag = (navigator.language || "en").toLowerCase();
   const primary = tag.split("-")[0];
@@ -1149,6 +1149,7 @@ function detectDefaultLanguage() {
 function codeFromPick(bucket, otherCode) {
   if (bucket === "english") return "en";
   if (bucket === "hindi") return "hi";
+  if (bucket === "hinglish") return "hi-Latn";
   if (bucket === "other") return otherCode || "es";
   return "auto";
 }
@@ -1156,6 +1157,7 @@ function codeFromPick(bucket, otherCode) {
 function bucketFromCode(code) {
   if (code === "en") return "english";
   if (code === "hi") return "hindi";
+  if (code === "hi-Latn") return "hinglish";
   if (code === "auto" || !code) return null;
   return "other";
 }
@@ -1222,9 +1224,16 @@ function StepLanguage({ config, updateConfig, onBack, onNext }) {
         <LangRow
           checked={pick === "hindi"}
           onClick={() => choose("hindi")}
-          label="Hindi / Hinglish"
-          detail="Handles pure Hindi (Devanagari) and code-switched Hinglish. English-only sentences still come out in Latin."
+          label="Hindi"
+          detail="Devanagari script, even if Whisper hears it as Urdu. Code-switched English words still come out in Latin."
           suggested={detected.bucket === "hindi"}
+        />
+        <LangRow
+          checked={pick === "hinglish"}
+          onClick={() => choose("hinglish")}
+          label="Hinglish"
+          detail="Everything romanized in Latin letters — Hindi spelled phonetically, English as spoken."
+          suggested={detected.bucket === "hinglish"}
         />
         <LangRow
           checked={pick === "other"}
@@ -1245,7 +1254,7 @@ function StepLanguage({ config, updateConfig, onBack, onNext }) {
           checked={pick === "auto"}
           onClick={() => choose("auto")}
           label="Auto-detect"
-          detail="English-leaning. Avoid if you dictate in Hindi — it occasionally outputs Urdu/Arabic script for the same audio."
+          detail="English-leaning. Hindi/Urdu-sounding speech is always normalized to Hindi (Devanagari)."
           suggested={detected.bucket === "auto"}
         />
       </div>

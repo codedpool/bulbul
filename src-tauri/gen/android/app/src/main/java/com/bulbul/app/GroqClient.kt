@@ -41,13 +41,13 @@ object GroqClient {
     /// Tries each model in STT_MODELS until one succeeds; returns null only
     /// if every model fails, so the caller can fall back to disk (audio kept
     /// so the user doesn't lose their dictation).
-    fun transcribe(apiKey: String, wav: ByteArray): String? {
+    fun transcribe(apiKey: String, wav: ByteArray, language: String = "auto"): String? {
         if (apiKey.isBlank()) {
             Log.w(TAG, "no API key set; not transcribing")
             return null
         }
         for (model in STT_MODELS) {
-            val text = transcribeWith(apiKey, wav, model)
+            val text = transcribeWith(apiKey, wav, model, language)
             if (text != null) return text
             Log.w(TAG, "STT model $model failed; trying next in chain")
         }
@@ -55,7 +55,7 @@ object GroqClient {
         return null
     }
 
-    private fun transcribeWith(apiKey: String, wav: ByteArray, model: String): String? {
+    private fun transcribeWith(apiKey: String, wav: ByteArray, model: String, language: String): String? {
         return try {
             val url = URL(ENDPOINT)
             val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -70,6 +70,12 @@ object GroqClient {
             DataOutputStream(conn.outputStream).use { out ->
                 writeFormField(out, "model", model)
                 writeFormField(out, "response_format", "json")
+                // Hinglish is a Hindi-script preference for cleanup, not a Whisper
+                // language code — the audio is still Hindi speech either way.
+                val lang = language.trim()
+                if (lang.isNotEmpty() && lang != "auto") {
+                    writeFormField(out, "language", if (lang == "hi-Latn") "hi" else lang)
+                }
                 writeFileField(out, "file", "audio.wav", "audio/wav", wav)
                 out.writeBytes("--$BOUNDARY--$CRLF")
             }
