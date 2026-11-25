@@ -1028,7 +1028,7 @@ function PaneAbout({ checkUpdates, updateState, onResetSetup, stagedUpdate, inst
         </div>
       </Row>
       <p className="muted small settings-note">
-        Bulbul v1.2.3 · GPL-3.0 · made with care · <a
+        Bulbul v1.2.4 · GPL-3.0 · made with care · <a
           href="#"
           onClick={(e) => { e.preventDefault(); openUrl("https://bulbultypes.xyz"); }}
         >bulbultypes.xyz</a>

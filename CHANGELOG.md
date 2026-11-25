@@ -4,6 +4,19 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.2.4] — 2026-11-25
+
+Android, Google Play only. Desktop and the GitHub release stay on 1.2.3.
+
+### Changed
+
+- **Accessibility disclosure** — before Bulbul sends you to Android's Accessibility settings, it now explains what the service does and what is and isn't sent anywhere, and asks you to agree. You can say no and keep using the app; it offers the step again from the banner whenever you want it.
+- The Accessibility service is no longer declared as an accessibility tool, because Bulbul is a general dictation app. Its description in Android settings now says exactly what it does.
+
+### Fixed
+
+- Android no longer writes the text you dictated or corrected into the device log.
+
 ## [1.2.3] — 2026-11-24
 
 ### Added

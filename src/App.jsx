@@ -541,7 +541,7 @@ function App() {
                 >
                   <NoteIcon size={15} />
                 </button>
-                <span className="muted small">v1.2.3 · GPL-3.0</span>
+                <span className="muted small">v1.2.4 · GPL-3.0</span>
               </div>
             </div>
           </div>
@@ -723,7 +723,7 @@ function App() {
             <span className="dot" />
             <span>{statusLabel(status.state)}</span>
           </div>
-          <div className="version muted small">v1.2.3 · GPL-3.0</div>
+          <div className="version muted small">v1.2.4 · GPL-3.0</div>
         </div>
       </aside>
 
