@@ -75,6 +75,29 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Read this version's changelog entry
+        # The release notes (and the `notes` field of latest.json, which is
+        # built from them) come from the matching `## [x.y.z]` entry in
+        # CHANGELOG.md, so no placeholder text ships. All three matrix jobs
+        # read the same file, so they write the same body. Falls back to a
+        # plain pointer if the entry is missing.
+        id: changelog
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          entry="$(awk -v v="$version" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md | sed '/./,$!d' | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')"
+          if [ -z "$entry" ]; then
+            entry="See the [changelog](https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md) for what changed."
+          fi
+          {
+            echo "entry<<CHANGELOG_EOF"
+            echo "$entry"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build + sign + release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -93,9 +116,9 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Bulbul ${{ github.ref_name }}'
           releaseBody: |
-            ## What's new
+            ## What's new in ${{ github.ref_name }}
 
-            (Edit this in the GitHub Releases UI before publishing.)
+            ${{ steps.changelog.outputs.entry }}
 
             ## Install
 
@@ -118,7 +141,7 @@ jobs:
 
             See `latest.json` if you're wiring up auto-updates for a fork.
 
-          # Drafts let you write proper release notes before going public.
+          # Drafts let you check the notes and the builds before going public.
           # Flip to false once you're confident in the pipeline.
           releaseDraft: true
           prerelease: false
