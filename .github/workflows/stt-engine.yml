@@ -1,0 +1,153 @@
+name: Speech engine
+
+# Builds the on-device speech worker for every desktop platform, signs the
+# manifest that lists them, and publishes everything to the `stt-engine`
+# release. The app downloads the worker from there the first time someone
+# picks an on-device model, so this runs only when the worker (or the pinned
+# sherpa-onnx) changes, not with every app release.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: stt-engine
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe: bulbul-stt-worker.exe
+          - platform: windows-aarch64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            exe: bulbul-stt-worker.exe
+          - platform: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            exe: bulbul-stt-worker
+          - platform: macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            exe: bulbul-stt-worker
+          - platform: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            exe: bulbul-stt-worker
+          - platform: linux-aarch64
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            exe: bulbul-stt-worker
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # The sherpa-onnx native archive is fetched by hand and checked against
+      # the hash pinned in the repo, then handed to the build, so the build
+      # never trusts whatever the download host serves.
+      - name: Fetch and verify the native archive
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, sys, urllib.request
+          pins = json.load(open("scripts/stt-engine/sherpa-archives.json"))
+          a = pins["archives"]["${{ matrix.platform }}"]
+          ver = pins["sherpa_onnx_version"]
+          os.makedirs("sherpa-archives", exist_ok=True)
+          dest = os.path.join("sherpa-archives", a["name"])
+          url = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/v{ver}/{a['name']}"
+          urllib.request.urlretrieve(url, dest)
+          h = hashlib.sha256(open(dest, "rb").read()).hexdigest()
+          if h != a["sha256"]:
+              sys.exit(f"{a['name']}: sha256 {h} does not match the pinned {a['sha256']}")
+          print("verified", a["name"])
+          PY
+
+      - name: Build the worker
+        shell: bash
+        working-directory: src-tauri/crates/bulbul-stt-worker
+        env:
+          SHERPA_ONNX_ARCHIVE_DIR: ${{ github.workspace }}/sherpa-archives
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Check the worker runs and speaks our protocol
+        shell: bash
+        run: |
+          out=$(src-tauri/crates/bulbul-stt-worker/target/${{ matrix.target }}/release/${{ matrix.exe }} --version)
+          echo "$out"
+          expected=$(grep -oP 'PROTOCOL_VERSION: u32 = \K[0-9]+' src-tauri/crates/bulbul-local-stt/src/protocol.rs)
+          echo "$out" | grep -q "protocol $expected " || { echo "protocol mismatch"; exit 1; }
+
+      - name: Stage the program
+        shell: bash
+        run: |
+          mkdir -p staged/${{ matrix.platform }}
+          cp src-tauri/crates/bulbul-stt-worker/target/${{ matrix.target }}/release/${{ matrix.exe }} staged/${{ matrix.platform }}/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: worker-${{ matrix.platform }}
+          path: staged/${{ matrix.platform }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staged
+          pattern: worker-*
+
+      - name: Arrange per-platform folders
+        run: |
+          mkdir -p by-platform
+          for d in staged/worker-*; do
+            mv "$d" "by-platform/${d#staged/worker-}"
+          done
+          ls -R by-platform
+
+      - name: Pack and write the manifest
+        run: |
+          python3 scripts/stt-engine/build_manifest.py by-platform release-assets \
+            "https://github.com/${{ github.repository }}/releases/download/stt-engine"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install the signer
+        run: npm install --no-save @tauri-apps/cli
+
+      # Same key that signs app updates; the app already trusts it.
+      - name: Sign the manifest
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri signer sign release-assets/stt-engine-manifest.json
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Worker files carry their version in the name, so older app builds
+          # keep working against their own manifest. Only the manifest and its
+          # signature are replaced, and they are uploaded together.
+          gh release view stt-engine >/dev/null 2>&1 || gh release create stt-engine \
+            --title "Speech engine" --notes "On-device speech worker used by Bulbul. Downloaded by the app when needed." \
+            --prerelease
+          gh release upload stt-engine release-assets/*.gz release-assets/stt-engine-manifest.json release-assets/stt-engine-manifest.json.sig --clobber
