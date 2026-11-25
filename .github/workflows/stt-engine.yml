@@ -34,10 +34,14 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             exe: bulbul-stt-worker
+          # Built on the same Apple Silicon runner the app uses (macos-latest),
+          # cross-compiling for Intel exactly as the app's universal build does.
+          # The built program is then run under Rosetta for the self-test.
           - platform: macos-x86_64
-            os: macos-13
+            os: macos-latest
             target: x86_64-apple-darwin
             exe: bulbul-stt-worker
+            run_prefix: arch -x86_64
           - platform: linux-x86_64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -82,10 +86,15 @@ jobs:
           SHERPA_ONNX_ARCHIVE_DIR: ${{ github.workspace }}/sherpa-archives
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      - name: Make sure Rosetta is available
+        if: matrix.platform == 'macos-x86_64'
+        shell: bash
+        run: /usr/bin/pgrep oahd >/dev/null || softwareupdate --install-rosetta --agree-to-license
+
       - name: Check the worker runs and speaks our protocol
         shell: bash
         run: |
-          out=$(src-tauri/crates/bulbul-stt-worker/target/${{ matrix.target }}/release/${{ matrix.exe }} --version)
+          out=$(${{ matrix.run_prefix }} src-tauri/crates/bulbul-stt-worker/target/${{ matrix.target }}/release/${{ matrix.exe }} --version)
           echo "$out"
           expected=$(sed -n 's/.*PROTOCOL_VERSION: u32 = \([0-9][0-9]*\).*/\1/p' src-tauri/crates/bulbul-local-stt/src/protocol.rs)
           echo "$out" | grep -q "protocol $expected " || { echo "protocol mismatch"; exit 1; }
