@@ -1254,7 +1254,7 @@ function StepLanguage({ config, updateConfig, onBack, onNext }) {
           checked={pick === "auto"}
           onClick={() => choose("auto")}
           label="Auto-detect"
-          detail="English-leaning. Hindi/Urdu-sounding speech is always normalized to Hindi (Devanagari)."
+          detail="English-leaning. Hindi/Urdu-sounding speech comes out as Hinglish (Latin letters) — pick Hindi above if you want Devanagari instead."
           suggested={detected.bucket === "auto"}
         />
       </div>

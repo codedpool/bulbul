@@ -401,8 +401,10 @@ fn script_instruction(cfg: &Config) -> &'static str {
              (Perso-Arabic) script. Keep English words as spoken."
         }
         "auto" => {
-            " Script: if the speech is Hindi or Urdu, always write it in Hindi \
-             (Devanagari), never Urdu (Perso-Arabic) script."
+            " Script: if the speech is Hindi or Urdu, romanize it into Hinglish \
+             (Latin letters) — never Devanagari and never Urdu (Perso-Arabic) \
+             script. This also makes switching between English and Hindi \
+             mid-sentence seamless, since everything stays in Latin script."
         }
         "en" => {
             " Script: if the speaker says something in Hindi or Urdu, romanize \

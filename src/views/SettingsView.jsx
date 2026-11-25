@@ -588,7 +588,7 @@ function PaneGeneral({ config, updateConfig }) {
       </Row>
       <Row
         title="Language"
-        hint="Pick a specific language if you dictate in anything other than English. Auto-detect is solid for English, and always resolves Hindi/Urdu-sounding speech to Hindi in Devanagari script. Pick Hindi for Devanagari, or Hinglish to get everything romanized instead — both handle mixed English+Hindi automatically."
+        hint="Pick a specific language if you dictate in anything other than English. Auto-detect is solid for English, and romanizes Hindi/Urdu-sounding speech into Hinglish (Latin letters) — handy if you switch between English and Hindi mid-sentence. Pick Hindi if you want Devanagari script instead."
       >
         <Combobox
           value={config.language || "auto"}

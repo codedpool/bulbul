@@ -12,12 +12,12 @@ All notable changes to Bulbul are tracked here. Format follows [Keep a Changelog
 - **Another cloud provider for cleanup**, with an OpenAI preset.
 - **Retry on Groq** — if a non-Groq transcription fails and you have a Groq key, that dictation is retried on Groq and you're told. Switch it off in the provider dialog.
 - **Add your own on-device model** from a folder of sherpa-onnx files (advanced), and choose how long an idle model stays in memory.
-- **A Hinglish language option** — everything romanized in Latin script instead of Devanagari. Alongside Hindi, English and Auto-detect, these are the only language choices; speech that sounds like Hindi or Urdu is always written in Hindi, never Urdu script, no matter which of the two you pick.
+- **A Hinglish language option** — everything romanized in Latin script instead of Devanagari. Alongside Hindi, English and Auto-detect, these are the only language choices; speech that sounds like Hindi or Urdu never comes out in Urdu script, no matter which of the two you pick.
 
 ### Changed
 
 - Groq stays the default. Existing setups are untouched.
-- Hindi dictation (and Auto-detect when it hears Hindi/Urdu) is now always written in Hindi script, correcting the cases where Whisper used to render it in Urdu.
+- Hindi dictation is now always written in Devanagari, correcting the cases where Whisper used to render it in Urdu. Auto-detect resolves the same Hindi/Urdu speech to Hinglish (Latin script) instead, so switching between English and Hindi mid-sentence stays seamless.
 
 ## [1.2.4] — 2026-11-25
 
