@@ -135,32 +135,57 @@ object Cleanup {
             "Return ONLY the cleaned text. No preamble, no quotes, no commentary."
     }
 
-    // Extra cleanup-prompt guidance so Hindi speech never comes out in Urdu
+    // Extra cleanup-prompt paragraph so Hindi speech never comes out in Urdu
     // (Perso-Arabic) script — mirrors groq.rs script_instruction(). Whisper
-    // occasionally transcribes Hindi audio in Urdu script since the two are
-    // spoken almost identically; there is no separate Urdu option in Bulbul,
-    // so this always resolves Hindi/Urdu ambiguity to Hindi, in the script
-    // the user actually asked for.
+    // occasionally mishears Hindi audio or transcribes it in Urdu script
+    // since the two are spoken almost identically; there is no separate
+    // Urdu option in Bulbul, so this always resolves Hindi/Urdu ambiguity to
+    // the script the user actually asked for. A standalone paragraph with a
+    // worked example and an explicit override of "preserve every word"
+    // above, since qwen/gpt-oss otherwise read that rule as forbidding any
+    // change to a mis-scripted or mis-transcribed word.
     private fun scriptInstruction(context: Context): String = when (BulbulConfig.language(context)) {
         "hi" ->
-            " Script: write Hindi in Devanagari only, never Urdu (Perso-Arabic) " +
-                "script — if the raw transcript came out in Urdu script, rewrite it " +
-                "in Devanagari with standard Hindi spelling (same words, corrected " +
-                "script, not a translation). Keep any English words or sentences in " +
-                "Latin script exactly as spoken."
+            "\n\nHindi script and spelling: Hindi and Urdu sound almost identical, so " +
+                "Whisper sometimes mishears a word or writes the whole thing in Urdu " +
+                "(Perso-Arabic) script. Figure out the Hindi words actually spoken and " +
+                "write them in Devanagari with standard Hindi spelling — this overrides " +
+                "\"preserve every word\" above; fixing a mis-scripted or mis-transcribed " +
+                "Hindi word is a transcription correction, not paraphrasing or " +
+                "translation. Keep English words/sentences exactly as spoken, in Latin " +
+                "script. Example — raw transcript: \"مجھے کل وقت ملے گا تم کیسے ہو\" -> " +
+                "cleaned: \"मुझे कल समय मिलेगा, तुम कैसे हो?\""
         "hi-Latn" ->
-            " Script: write everything in Latin letters. Romanize Hindi words " +
-                "phonetically (Hinglish) — never Devanagari and never Urdu " +
-                "(Perso-Arabic) script. Keep English words as spoken."
+            "\n\nHindi script and spelling: Hindi and Urdu sound almost identical, so " +
+                "Whisper sometimes mishears a word or writes it in Urdu or Devanagari " +
+                "script. Figure out the words actually spoken and romanize them into " +
+                "Hinglish (Latin letters) with standard spelling — this overrides " +
+                "\"preserve every word\" above; fixing a mis-scripted or mis-transcribed " +
+                "word is a transcription correction, not paraphrasing or translation. " +
+                "Keep English words/sentences exactly as spoken. Example — raw " +
+                "transcript: \"مجھے کل وقت ملے گا تم کیسے ہو\" -> cleaned: \"mujhe kal " +
+                "samay milega, tum kaise ho?\""
         "auto" ->
-            " Script: if the speech is Hindi or Urdu, romanize it into Hinglish " +
-                "(Latin letters) — never Devanagari and never Urdu (Perso-Arabic) " +
-                "script. This also makes switching between English and Hindi " +
-                "mid-sentence seamless, since everything stays in Latin script."
+            "\n\nHindi/Urdu script and spelling: if the speech is Hindi or Urdu, " +
+                "Whisper sometimes mishears a word or writes it in Urdu (Perso-Arabic) " +
+                "or Devanagari script. Figure out the words actually spoken and " +
+                "romanize them into Hinglish (Latin letters) with standard spelling — " +
+                "never output Devanagari or Urdu script. This overrides \"preserve " +
+                "every word\" above; fixing a mis-scripted or mis-transcribed word is " +
+                "a transcription correction, not paraphrasing or translation, and it " +
+                "keeps switching between English and Hindi mid-sentence seamless. " +
+                "Example — raw transcript: \"مجھے کل وقت ملے گا تم کیسے ہو\" -> cleaned: " +
+                "\"mujhe kal samay milega, tum kaise ho?\""
         "en" ->
-            " Script: if the speaker says something in Hindi or Urdu, romanize " +
-                "it into Hinglish (Latin letters) — never Devanagari and never Urdu " +
-                "(Perso-Arabic) script."
+            "\n\nHindi/Urdu script and spelling: if the speaker says something in " +
+                "Hindi or Urdu, Whisper sometimes writes it in Urdu (Perso-Arabic) or " +
+                "Devanagari script, or mishears a word — romanize it into Hinglish " +
+                "(Latin letters) with standard spelling instead. This overrides " +
+                "\"preserve every word\" above for that part; fixing a mis-scripted or " +
+                "mis-transcribed word is a transcription correction, not paraphrasing " +
+                "or translation. Keep English words/sentences exactly as spoken. " +
+                "Example — raw transcript: \"مجھے کل وقت ملے گا تم کیسے ہو\" -> cleaned: " +
+                "\"mujhe kal samay milega, tum kaise ho?\""
         else -> ""
     }
 
