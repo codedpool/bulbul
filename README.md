@@ -62,7 +62,7 @@ The transcript types itself into whatever app has focus — your browser, VS Cod
 | **Open source** | Yes (GPL-3.0) | No |
 | **Where your audio goes** | Groq's API, with your key | Vendor's servers |
 | **Source of truth for your data** | Your machine | Vendor |
-| **Latency** | ~600ms typical | similar |
+| **Latency** | 300–500ms usually | similar |
 | **Custom hotkeys** | Any combo, including modifier-only chords | Limited |
 | **Dictionary / snippets / transforms** | Yes, stored locally | Some, gated by tier |
 
@@ -186,7 +186,7 @@ After installing:
                               inject into the focused app
 ```
 
-The whole loop runs in 400–900ms on a decent connection. Groq is fast.
+The whole loop usually runs in 300–500ms on a decent connection. Groq is fast.
 
 ---
 
