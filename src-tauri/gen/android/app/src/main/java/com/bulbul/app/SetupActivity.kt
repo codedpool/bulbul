@@ -688,6 +688,7 @@ class SetupActivity : Activity() {
             append("Text Bulbul reads from other apps is never uploaded. When you correct a word, the before-and-after is saved only on this phone so Bulbul can suggest a dictionary entry. You can delete these in the app.\n\n")
             heading(this, "What is sent, and only when you use the bubble")
             append("The audio you just recorded and its transcript are sent to Groq, using your own Groq key, to be transcribed and cleaned up. The name of the app you are typing in is included so the tone can match, and, if you leave personalization on, a few of your recent dictations as style examples. Nothing is sold or used for ads.\n\n")
+            append("Some payment apps, including UPI apps, block payments while any accessibility service is on. Turn Bulbul\u2019s Accessibility off in Android Settings before you pay, and back on afterwards.\n\n")
             append("You can turn Accessibility off at any time in Android Settings.")
         }
         val text = TextView(this).apply {
