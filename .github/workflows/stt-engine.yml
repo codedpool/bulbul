@@ -87,7 +87,7 @@ jobs:
         run: |
           out=$(src-tauri/crates/bulbul-stt-worker/target/${{ matrix.target }}/release/${{ matrix.exe }} --version)
           echo "$out"
-          expected=$(grep -oP 'PROTOCOL_VERSION: u32 = \K[0-9]+' src-tauri/crates/bulbul-local-stt/src/protocol.rs)
+          expected=$(sed -n 's/.*PROTOCOL_VERSION: u32 = \([0-9][0-9]*\).*/\1/p' src-tauri/crates/bulbul-local-stt/src/protocol.rs)
           echo "$out" | grep -q "protocol $expected " || { echo "protocol mismatch"; exit 1; }
 
       - name: Stage the program
