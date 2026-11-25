@@ -157,16 +157,13 @@ object CorrectionWatcher {
             if (latest == before) return
 
             val corrected = extractCorrection(injected, before, latest) ?: run {
-                // Debug-only diagnostic dump — truncated so a long field
-                // doesn't flood logcat, but enough to see why a real edit
-                // got rejected (span mismatch, too divergent, etc).
-                fun clip(s: String) = if (s.length > 120) s.take(120) + "…(${s.length} chars)" else s
+                // Deliberately logs lengths only, never the text itself: logcat
+                // is readable over adb and must not carry what someone dictated
+                // or typed.
                 Log.d(
                     TAG,
-                    "correction-watch: field changed but no clean correction extractable\n" +
-                        "  injected: ${clip(injected)}\n" +
-                        "  before:   ${clip(before)}\n" +
-                        "  after:    ${clip(latest)}",
+                    "correction-watch: field changed but no clean correction extractable " +
+                        "(injected=${injected.length} chars, before=${before.length}, after=${latest.length})",
                 )
                 return
             }
@@ -299,7 +296,7 @@ object CorrectionWatcher {
         )
         try {
             file.writeText(pruned.toString())
-            Log.i(TAG, "correction-watch: learned app=$app\n  injected:  $inj\n  corrected: $cor")
+            Log.i(TAG, "correction-watch: learned a correction in $app (${inj.length} -> ${cor.length} chars)")
         } catch (t: Throwable) {
             Log.w(TAG, "writing corrections.json failed", t)
         }

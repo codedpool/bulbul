@@ -57,7 +57,10 @@ class MainActivity : TauriActivity() {
     // dismissible in-app banner (see showPermissionBanner) rather than
     // force-reopening SetupActivity, so the user is never trapped but also
     // never left on a silently non-functional app.
-    if (!hasAllPermissions() || !SetupActivity.heroSeenStatic(this)) {
+    // A person who declined the Accessibility disclosure is not sent back
+    // through setup on every launch; the in-app banner still offers it.
+    val a11yDeclinedOnly = SetupActivity.accessibilityDeclined(this) && hasMicAndOverlay()
+    if ((!hasAllPermissions() && !a11yDeclinedOnly) || !SetupActivity.heroSeenStatic(this)) {
       startActivity(Intent(this, SetupActivity::class.java))
     }
   }
@@ -254,6 +257,10 @@ class MainActivity : TauriActivity() {
       else -> "${missing.dropLast(1).joinToString(", ")}, and ${missing.last()}"
     }
   }
+
+  private fun hasMicAndOverlay(): Boolean =
+    ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+      PackageManager.PERMISSION_GRANTED && Settings.canDrawOverlays(this)
 
   private fun hasAllPermissions(): Boolean {
     val mic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==

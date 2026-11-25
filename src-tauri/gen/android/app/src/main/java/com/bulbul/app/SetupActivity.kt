@@ -61,6 +61,10 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.app.AlertDialog
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.StyleSpan
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -135,9 +139,9 @@ class SetupActivity : Activity() {
             ),
             PermStep(
                 title = "Turn on Accessibility",
-                blurb = "Lets Bulbul see which text field you tapped into and paste cleaned-up transcripts there.",
-                actionLabel = "Open Accessibility settings",
-                onAction = ::openAccessibilitySettings,
+                blurb = "Bulbul reads the text field you tap into so it can type your dictation there. You will see exactly what that means before anything is turned on.",
+                actionLabel = "Review and continue",
+                onAction = ::onAccessibilityAction,
                 isGranted = ::accessibilityGranted,
                 imageRes = R.drawable.onboard_accessibility,
             ),
@@ -642,6 +646,79 @@ class SetupActivity : Activity() {
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 
+    // ---------------- Accessibility: prominent disclosure + consent ----------------
+    //
+    // Google Play requires an in-app disclosure, shown BEFORE the person is
+    // sent to the system Accessibility screen, that says what the service
+    // accesses and why, and that only counts as consent when they take a
+    // clear action (Agree). Tapping outside or pressing Back does nothing; the
+    // only ways out are the two buttons. Declining is a supported path: the app
+    // stays usable, just without typing into other apps, and the same
+    // disclosure comes back if the person later chooses to turn it on.
+    //
+    // KEEP THE WORDING TRUE. Every sentence here maps to code:
+    //  - reads the focused field / watches it ~12s: TextInjector, CorrectionWatcher
+    //  - corrections kept on the phone only: corrections.json, never uploaded
+    //  - audio + transcript go to Groq with the person's own key: GroqClient
+    //  - app name + a few recent dictations as style hints: Cleanup.buildSystemPrompt
+    // If any of that changes, change this text and bump ACCESSIBILITY_DISCLOSURE.
+
+    private fun onAccessibilityAction() {
+        if (disclosureAccepted(this)) {
+            openAccessibilitySettings()
+        } else {
+            showAccessibilityDisclosure()
+        }
+    }
+
+    private fun showAccessibilityDisclosure() {
+        fun heading(sb: SpannableStringBuilder, t: String) {
+            val start = sb.length
+            sb.append(t).append("\n")
+            sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length - 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        val body = SpannableStringBuilder().apply {
+            append("Bulbul is a voice dictation app. To type what you say into other apps, it needs Android\u2019s Accessibility service. Here is exactly what that involves.\n\n")
+            heading(this, "What Bulbul does with it")
+            append("\u2022 Notices when you tap into a text field in another app, so the floating bubble can appear.\n")
+            append("\u2022 Reads the text already in that field, so your dictation is typed at the cursor, and keeps reading it for up to 12 seconds afterwards to notice if you fix a word by hand.\n")
+            append("\u2022 Types your cleaned-up dictation into the field.\n")
+            append("\u2022 Pauses itself on password fields.\n\n")
+            heading(this, "What stays on your phone")
+            append("Text Bulbul reads from other apps is never uploaded. When you correct a word, the before-and-after is saved only on this phone so Bulbul can suggest a dictionary entry. You can delete these in the app.\n\n")
+            heading(this, "What is sent, and only when you use the bubble")
+            append("The audio you just recorded and its transcript are sent to Groq, using your own Groq key, to be transcribed and cleaned up. The name of the app you are typing in is included so the tone can match, and, if you leave personalization on, a few of your recent dictations as style examples. Nothing is sold or used for ads.\n\n")
+            append("Some payment apps, including UPI apps, block payments while any accessibility service is on. Turn Bulbul\u2019s Accessibility off in Android Settings before you pay, and back on afterwards.\n\n")
+            append("You can turn Accessibility off at any time in Android Settings.")
+        }
+        val text = TextView(this).apply {
+            this.text = body
+            textSize = 14f
+            setTextColor(bodyColor)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(dp(22), dp(8), dp(22), dp(8))
+        }
+        val scroll = ScrollView(this).apply { addView(text) }
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+            .setTitle("Bulbul needs Accessibility to type for you")
+            .setView(scroll)
+            .setCancelable(false)
+            .setPositiveButton("Agree and continue") { _, _ ->
+                setDisclosure(this, accepted = true)
+                openAccessibilitySettings()
+            }
+            .setNegativeButton("No thanks") { _, _ ->
+                setDisclosure(this, accepted = false)
+                Toast.makeText(
+                    this,
+                    "Bulbul can\u2019t type into other apps without it. You can turn it on later from the banner in the app.",
+                    Toast.LENGTH_LONG,
+                ).show()
+                finish()
+            }
+            .show()
+    }
+
     private fun dp(value: Int): Int =
         TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics,
@@ -667,6 +744,29 @@ class SetupActivity : Activity() {
         /// consistently; see onboarding-motion-plan.md. Must match
         /// GLOBAL_TOTAL_STEPS in OnboardingWizard.jsx.
         const val TOTAL_ONBOARDING_STEPS = 10
+
+        /// Version of the disclosure wording above. Bump it when the text
+        /// changes in substance so everyone sees the new version once.
+        private const val ACCESSIBILITY_DISCLOSURE = 1
+        private const val KEY_DISCLOSURE = "a11y_disclosure"
+
+        private fun setupPrefs(context: Context) =
+            context.getSharedPreferences("bulbul_setup", Context.MODE_PRIVATE)
+
+        /// True once the person tapped "Agree" on the current wording.
+        fun disclosureAccepted(context: Context): Boolean =
+            setupPrefs(context).getInt(KEY_DISCLOSURE, 0) == ACCESSIBILITY_DISCLOSURE
+
+        /// True when they tapped "No thanks" on the current wording, so
+        /// MainActivity does not force the setup screen back up on every launch.
+        fun accessibilityDeclined(context: Context): Boolean =
+            setupPrefs(context).getInt(KEY_DISCLOSURE, 0) == -ACCESSIBILITY_DISCLOSURE
+
+        private fun setDisclosure(context: Context, accepted: Boolean) {
+            setupPrefs(context).edit()
+                .putInt(KEY_DISCLOSURE, if (accepted) ACCESSIBILITY_DISCLOSURE else -ACCESSIBILITY_DISCLOSURE)
+                .apply()
+        }
 
         /// Walks Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES for
         /// [serviceClass]. There's no API that just answers "is my service
